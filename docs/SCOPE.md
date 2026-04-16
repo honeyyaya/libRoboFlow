@@ -2,6 +2,8 @@
 
 本文档冻结 **CommonVideoSDK** 首版实现范围。未在业务侧最终确认前，以文中「默认假设」为准；变更需更新本文件版本与日期。
 
+**v1 架构主文档**：产品拓扑、会话模型、内嵌信令与状态机以 [ARCHITECTURE.md](ARCHITECTURE.md) 及同系列文档为准；本文侧重 **平台、产物命名与集成约束**。若下文历史表述与架构系列冲突，**以架构文档为准**。
+
 ## 1. 产品标识
 
 | 项 | 取值 |
@@ -43,27 +45,32 @@
 
 若业务要求 minSdk 23 或 26+，在集成前更新本表并回归媒体与权限行为。
 
-## 3. Linux 端媒体能力（发送 / 接收）
+## 3. Linux 端媒体能力（v1）
 
-业务未二选一时，采用分阶段默认，便于并行推进：
+**v1 首版（与 [ARCHITECTURE.md](ARCHITECTURE.md) 一致）**
 
-| 阶段 | Linux 能力 | 说明 |
-|------|------------|------|
-| **Phase 1（首版 SDK 核心）** | **接收** 远端音视频、解码输出（YUV/PCM 或约定缓冲区）、统计与错误回调 | 满足典型「服务端拉流 / 录制 / 分析」 |
-| **Phase 2（可选扩展）** | **发送**：自定义视频帧 / 音频帧注入，或对接 V4L2/ALSA 等采集 | 需要单独里程碑与依赖（无头设备差异大） |
+| 角色 | Linux aarch64 | 说明 |
+|------|----------------|------|
+| **发布进程** | **发送**：默认 **V4L2 + ALSA** 采集，经 RTC 推流；进程内嵌 **WebSocket JSON 信令 v1**（见 [SIGNALING_V1.md](SIGNALING_V1.md)） | 发布进程使用 SDK **发布能力**，非独立「服务端 SDK 产品线」 |
+| **Linux 客户端** | **不支持** | v1 客户端仅为 **Android arm64-v8a 订阅端** |
 
-**当前冻结**：实现与 API 以 **Phase 1 必选、Phase 2 预留扩展点**（见 `include/commonvideo.h` 中占位与文档）为准。
+**历史分阶段表述（仅供参考）**：早期草案曾规划 Linux 以接收为主、发送为 Phase 2；该路线已被 **「Linux 仅发布、Android 仅订阅」** 替代。若代码或旧文档仍提及 Phase 1/2，以实现与架构系列同步结果为准。
+
+**媒体源扩展**：文件 / 网络流等输入为 **Media Source Adapter** 扩展点，见 [MEDIA_SOURCE_ABSTRACTION.md](MEDIA_SOURCE_ABSTRACTION.md)；**不**作为 v1 必选交付。
 
 ## 4. Android 端能力（首版）
 
-- **与 Linux 一致：纯 C++ 宿主**。通过 **NDK** 将本 SDK 编译为 **`libcommonvideo_android.so`**（见 §1.1），业务代码（`.cpp`）直接包含 [`commonvideo.h`](../include/commonvideo.h) 或 [`commonvideo.hpp`](../include/commonvideo.hpp)；**不以 Java/Kotlin/JNI 作为对外主接口**。
+- **纯 C++（Native）宿主，仅订阅角色**。通过 **NDK** 将本 SDK 编译为 **`libcommonvideo_android.so`**（见 §1.1），业务代码（`.cpp`）直接包含 [`commonvideo.h`](../include/commonvideo.h) 或 [`commonvideo.hpp`](../include/commonvideo.hpp)；**不以 Java/Kotlin/JNI 作为对外主接口**。架构见 [ARCHITECTURE_ANDROID_SUBSCRIBER.md](ARCHITECTURE_ANDROID_SUBSCRIBER.md)。
 - 若 App 仍有 Java UI，仅可通过 **极薄 JNI** 将调用转发到自有的 native 层，该 JNI **不属于** 本 SDK 的公开 API 面。
-- 采集 / 渲染：**Camera / `ANativeWindow` / MediaCodec（NDK）** 等在平台适配层（C++）实现；与 Linux 共用 Core，仅平台宏与媒体后端不同。集成说明见 [`docs/CPP_INTEGRATION.md`](CPP_INTEGRATION.md)。
+- **解码输出与渲染**：接收路径的解码与缓冲由 SDK 与宿主 native 约定；渲染可使用 **`ANativeWindow`** 等（由宿主实现）。**v1 不以 Android 作为发布采集端**；发布采集在 Linux **V4L2 + ALSA** 侧。集成说明见 [`docs/CPP_INTEGRATION.md`](CPP_INTEGRATION.md)。
 
 ## 5. 非目标（Out of Scope）— 首版明确不做
 
 - 跨平台 **x86_64**、**Windows**、**iOS**。
-- SDK 内置信令服务器或固定信令协议（仅提供 SDP/ICE 与宿主信令对接边界，见 `docs/SIGNALING.md`）。
+- **Linux 客户端**（v1 无 Linux 订阅 SDK 用法）。
+- **多人 / 房间 / 1 对多**（v1 仅 **1 对 1**，见 [SIGNALING_V1.md](SIGNALING_V1.md)）。
+- **外置信令服务产品**（v1 信令 **内嵌于 Linux 发布进程**；消息格式见 [SIGNALING_V1.md](SIGNALING_V1.md)）。SDP/ICE 与 PeerConnection 职责边界另见 [SIGNALING.md](SIGNALING.md)。
+- **Java/Kotlin 公共 API**。
 - 完整 UI 组件库。
 
 ## 6. 版本与修订
@@ -74,3 +81,4 @@
 | 0.2 | 2026-04-15 | Android / Linux 对外集成统一为 **纯 C++**（C ABI + 可选 `commonvideo.hpp`） |
 | 0.3 | 2026-04-15 | 动态库按平台命名 |
 | 1.0 | 2026-04-15 | 品牌与 API：**CommonVideoSDK**，`commonvideo_*`，`libcommonvideo_{linux,android}.so`；仓库目录统一为 **CommonVideoSDK** |
+| 1.1 | 2026-04-15 | 与 v1 架构文档对齐：Linux 发布 + 内嵌信令；Android 仅订阅；§5 非目标更新 |

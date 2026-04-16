@@ -1,28 +1,26 @@
-# 纯 C++ 集成（Android NDK 与 Linux）
+# C/C++ 集成说明
 
-**CommonVideoSDK** 在 **Android** 与 **Linux** 上采用 **同一套原生实现**：对外稳定 **C ABI**（[`include/commonvideo.h`](../include/commonvideo.h)），宿主以 **C++** 链接带平台后缀的动态库：**`libcommonvideo_linux.so`**（Linux aarch64）、**`libcommonvideo_android.so`**（Android arm64-v8a），详见 [`SCOPE.md`](SCOPE.md) §1.1。可选使用 [`include/commonvideo.hpp`](../include/commonvideo.hpp) 减少样板代码。
+本文档描述宿主如何以 **C ABI**（及可选 C++ 薄封装）集成本 SDK。**行为边界、会话模型、信令与状态机**以架构文档为准，本文不重复展开。
 
-## 1. 原则
+## 文档入口
 
-| 平台 | 集成方式 |
-|------|----------|
-| Linux aarch64 | 业务进程（C++）`target_link_libraries(... commonvideo)`，运行时加载 **`libcommonvideo_linux.so`**（同目录或 `LD_LIBRARY_PATH`）。 |
-| Android arm64-v8a | **NDK**：CMake `add_library` / `ExternalNativeBuild`，将 SDK 作为 `SHARED` 库链入，产物名为 **`libcommonvideo_android.so`**；业务代码为 `.cpp`，**不**要求 Java/Kotlin 参与核心逻辑。 |
+- 索引与阅读顺序：[docs/README.md](README.md)  
+- 总体架构：[ARCHITECTURE.md](ARCHITECTURE.md)  
+- Linux 发布进程：[ARCHITECTURE_PUBLISHER.md](ARCHITECTURE_PUBLISHER.md)  
+- Android 订阅端：[ARCHITECTURE_ANDROID_SUBSCRIBER.md](ARCHITECTURE_ANDROID_SUBSCRIBER.md)  
 
-**Java/Kotlin**：不作为 SDK 的公开 API。若产品 UI 为 Java，可自行编写极薄 JNI 转发到自有 native 模块；该层由业务维护，不在本仓库规范内。
+## 产物与符号
 
-## 2. 线程与回调
+- 动态库命名、平台矩阵见 [SCOPE.md](SCOPE.md) §1、§2。  
+- 对外 C 符号前缀与头文件路径以仓库 `include/` 为准（当前文档化前缀为 `commonvideo_*`）。  
 
-与 C 头文件注释一致：**回调在 SDK 工作线程**触发，**不是** Android 主线程。纯 C++ 宿主应在回调内做轻量处理，或将事件投递到自有单线程/线程池；避免在回调内长时间阻塞或死锁。
+## 宿主职责（概要）
 
-## 3. 构建要点（摘要）
+- **Linux 发布进程**：初始化 runtime、按需启动内嵌 WebSocket 信令、创建媒体源与发布会话；鉴权通过 SDK 提供的验证回调完成（协议字段见 [SIGNALING_V1.md](SIGNALING_V1.md)）。  
+- **Android 订阅端**：初始化 runtime、创建订阅会话、连接发布端信令地址并完成 v1 信令时序；在回调中接收解码后的音视频帧与统计。  
+- **Java/Kotlin UI**：仅可通过宿主自有 JNI 转发到 native；JNI **不属于** SDK 公共 API（见 [ARCHITECTURE_ANDROID_SUBSCRIBER.md](ARCHITECTURE_ANDROID_SUBSCRIBER.md)）。  
 
-- **C++ 标准**：与 Core 一致（建议 **C++17**）。
-- **Android**：`minSdk`、NDK 版本见 [`SCOPE.md`](SCOPE.md)；链接时注意 `-Wl,--exclude-libs,ALL` 等策略与最终 APK 体积由业务决定。
-- **Linux**：与参考发行版 glibc 兼容策略见 `SCOPE.md`。
+## 信令与 WebRTC
 
-详细 CMake 双工具链与产物布局在后续 `docs/BUILD.md`（若已添加）中维护。
-
-## 4. 与信令
-
-信令传输仍由宿主实现；C++ 侧仅调用 `commonvideo_*` 完成 SDP/ICE 与 PeerConnection 状态机，见 [`SIGNALING.md`](SIGNALING.md)。
+- 应用层信令消息格式：**v1 固定为** [SIGNALING_V1.md](SIGNALING_V1.md)。  
+- SDP/ICE 与 PeerConnection 语义：另见 [SIGNALING.md](SIGNALING.md)、[WEBRTC_BASE.md](WEBRTC_BASE.md)。  

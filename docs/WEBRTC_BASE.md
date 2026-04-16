@@ -34,7 +34,7 @@
 
 ## 5. 与信令的关系
 
-libwebrtc **不包含** 应用层信令。本 SDK 在 C API 层只处理 **SDP / ICE candidate** 的生成与设置；传输由宿主完成（`docs/SIGNALING.md`）。
+libwebrtc **不包含** 应用层信令。本 SDK 的 **RTC Core** 在 API 层处理 **SDP / ICE candidate** 的生成与设置。**承载 SDP/ICE 的应用层消息** 在 **v1** 中由 [SIGNALING_V1.md](SIGNALING_V1.md) 规定，并由 **Linux 发布进程内的内嵌信令** 与 **Android 订阅端** 交换；职责划分总览见 [SIGNALING.md](SIGNALING.md)。
 
 ## 6. 修订记录
 
@@ -42,3 +42,4 @@ libwebrtc **不包含** 应用层信令。本 SDK 在 C API 层只处理 **SDP /
 |------|------|------|
 | 0.1 | 2026-04-15 | 初稿：libwebrtc 源码编译为默认基座 |
 | 0.2 | 2026-04-15 | 产物与导出符号对齐 **CommonVideoSDK**（`libcommonvideo_*`、`commonvideo_*`） |
+| 0.3 | 2026-04-15 | §5：与 v1 内嵌信令及 SIGNALING_V1 交叉引用 |
