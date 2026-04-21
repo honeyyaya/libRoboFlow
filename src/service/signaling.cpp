@@ -4,7 +4,7 @@
 
 extern "C" {
 
-robrt_err_t librobrt_svc_send_notice(int32_t index, const void* payload, uint32_t len) {
+robrt_err_t librobrt_svc_send_notice(robrt_notice_index_t index, const void* payload, uint32_t len) {
     auto& s = robrt::service::state();
     std::lock_guard<std::mutex> lk(s.mu);
     if (s.lifecycle != robrt::service::LifecycleState::kConnected) return ROBRT_ERR_STATE;

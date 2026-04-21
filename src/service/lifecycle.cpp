@@ -151,10 +151,11 @@ robrt_err_t librobrt_svc_get_license_info(librobrt_svc_license_info_t* out_info)
 
     auto* info = new (std::nothrow) librobrt_svc_license_info_s();
     if (!info) return ROBRT_ERR_NO_MEM;
-    info->magic       = robrt::service::kMagicLicenseInfo;
-    info->expire_time = 0;
-    info->vendor_id   = s.connect_info.vendor_id;
-    info->product_key = s.connect_info.product_key;
+    info->magic           = robrt::service::kMagicLicenseInfo;
+    info->expire_time_sec = 0;
+    info->loaded          = true;
+    info->vendor_id       = s.connect_info.vendor_id;
+    info->product_key     = s.connect_info.product_key;
     *out_info = info;
     return ROBRT_OK;
 }

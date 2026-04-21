@@ -157,7 +157,56 @@ typedef enum {
     ROBRT_CONN_FAILED       = 4,
 } robrt_connect_state_t;
 
-/* 流状态 */
+/*
+ * 流状态（Client / Service 共用，同名同义）：
+ *   - IDLE
+ *       流对象已存在，但当前未进行媒体收发。
+ *       Service: create_stream 成功后、stop_stream 完成后处于此状态，可再次 start_stream。
+ *       Client: 枚举保留为共享语义；公开拉流句柄通常不会长期停留在该状态。
+ *
+ *   - OPENING
+ *       异步建流 / 启动中。句柄有效，可接受 close_stream / destroy_stream 取消流程。
+ *
+ *   - OPENED
+ *       流已就绪并处于正常媒体收发状态。
+ *
+ *   - CLOSING
+ *       异步关闭中。该状态只表示关闭流程已开始；之后只允许落到 CLOSED。
+ *
+ *   - CLOSED
+ *       正常关闭终态。由 close_stream / destroy_stream / disconnect / uninit 等主动或受控清理触发。
+ *       这是终态；SDK 不再为该 handle 派发新的 stream 回调。
+ *
+ *   - FAILED
+ *       异常失败终态。由协商失败、链路故障、编解码异常等不可恢复错误触发。
+ *       这是终态；SDK 不再为该 handle 派发新的 stream 回调。
+ *
+ * 统一约束：
+ *   - CLOSED 与 FAILED 都是终态，语义不同但都表示该 handle 生命周期结束；
+ *   - 不存在 FAILED -> CLOSED 的二次终态通知；调用方只会收到一个终态；
+ *   - reason 仅在 FAILED 时表示失败原因；其余状态统一为 ROBRT_OK。
+ *
+ * 采集路径切换语义（同一逻辑流内）：
+ *   - “切采集路径 / 切相机 / 切输入源”属于控制面动作，不属于流生命周期动作；
+ *   - 若切换在同一逻辑 stream 内完成且媒体链路可持续复用，则不触发 stream_state
+ *     跳变：不派发 OPENING / CLOSING / CLOSED，仅表现为媒体内容切换，handle 与 index
+ *     保持不变；
+ *   - 切换成功/失败的业务确认应通过控制面消息完成（notice / request-reply / topic），
+ *     而不是复用 stream_state；
+ *   - 只有当切换导致该逻辑流无法继续工作，且 SDK 无法在当前 handle 内恢复时，
+ *     才派发 stream_state(FAILED, reason)。
+ *
+ * 预热缓冲语义（Service 内部实现约束）：
+ *   - 预热缓冲仅适用于 Service 侧 stream 处于 OPENING 的窗口，用于隐藏 WebRTC
+ *     建链、编码器预热、关键帧准备等启动时延；
+ *   - 预热缓冲是每路 stream 的 SDK 内部有界实时队列，对调用方不可见，不引入额外状态；
+ *   - 流从 OPENING 进入 OPENED 后，SDK 按实时策略发送预热缓冲中的可用帧；若部分帧因
+ *     时效性被丢弃，仍不视为接口错误；
+ *   - 流进入 IDLE / CLOSING / CLOSED / FAILED，或发生 stop / destroy / disconnect /
+ *     uninit 时，未消费的预热缓冲全部丢弃；
+ *   - Client 侧不存在对业务可见的“预热缓冲状态”；Client 收到 OPENED 仅表示接收链路
+ *     已就绪，不保证首帧已到达。
+ */
 typedef enum {
     ROBRT_STREAM_IDLE     = 0,
     ROBRT_STREAM_OPENING  = 1,
@@ -200,6 +249,21 @@ typedef struct librobrt_global_config_s*   librobrt_global_config_t;
 /* 共享只读数据对象（回调入参） */
 typedef const struct librobrt_video_frame_s*   librobrt_video_frame_t;
 typedef const struct librobrt_stream_stats_s*  librobrt_stream_stats_t;
+
+/******************************************************************************
+ *                        业务协议 ID 别名（Client / Service 共享）
+ ******************************************************************************/
+/*
+ * 业务协议中的资源 ID：Client 侧 open_stream 与 Service 侧 create_stream 使用
+ * 同一 index 空间，需一一对应。使用 typedef 别名以明确语义，未来可无痛收窄/扩展。
+ * 约束：
+ *   - 建议业务使用非负值；负值保留给 SDK 内部诊断，不保证未来不赋予特殊语义。
+ *   - index 的具体取值范围由业务协议自定义，SDK 不校验上限。
+ *   - 当前 v1 约定：仅支持主路 stream_idx = 0；若未来扩多路，再在保持兼容的前提下
+ *     追加 1, 2, ... 的业务语义。
+ */
+typedef int32_t robrt_stream_index_t;
+typedef int32_t robrt_notice_index_t;
 
 /******************************************************************************
  *                           通用工具 API
