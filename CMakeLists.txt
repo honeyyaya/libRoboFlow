@@ -47,6 +47,8 @@ if(ROBRT_BUILD_SERVICE)
     add_subdirectory(src/service)
 endif()
 
+add_subdirectory(test)
+
 # -------------------------------------------------------------------- summary
 message(STATUS "")
 message(STATUS "robrt SDK ${PROJECT_VERSION}")
