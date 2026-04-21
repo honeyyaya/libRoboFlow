@@ -1,6 +1,6 @@
 /**
  * @file   stream.cpp
- * @brief  open_stream / close_stream / request_keyframe / get_stats
+ * @brief  open_stream / close_stream / get_stats
 **/
 
 #include "robrt/Client/librobrt_client_api.h"
@@ -70,12 +70,6 @@ robrt_err_t librobrt_close_stream(librobrt_stream_handle_t handle) {
     }
     sh->magic = 0;
     ROBRT_LOGI("librobrt_close_stream OK");
-    return ROBRT_OK;
-}
-
-robrt_err_t librobrt_stream_request_keyframe(librobrt_stream_handle_t handle) {
-    if (!handle || handle->magic != robrt::client::kMagicStream) return ROBRT_ERR_PARAM;
-    // TODO: 经信令通道发送 PLI / FIR
     return ROBRT_OK;
 }
 

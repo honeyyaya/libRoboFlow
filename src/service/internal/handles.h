@@ -16,7 +16,6 @@ constexpr uint32_t kMagicStreamParam = 0x52735350;  // 'RsSP'
 constexpr uint32_t kMagicStreamCb    = 0x52734342;  // 'RsCB'
 constexpr uint32_t kMagicStream      = 0x52735348;  // 'RsSH'
 constexpr uint32_t kMagicPushFrame   = 0x52735046;  // 'RsPF'
-constexpr uint32_t kMagicTalkConfig  = 0x52735443;  // 'RsTC'
 constexpr uint32_t kMagicLicenseInfo = 0x52734C49;  // 'RsLI'
 
 }  // namespace robrt::service
@@ -37,11 +36,6 @@ struct librobrt_svc_connect_cb_s {
     librobrt_svc_on_service_req_fn     on_service_req;
     librobrt_svc_on_pull_request_fn    on_pull_request;
     librobrt_svc_on_pull_release_fn    on_pull_release;
-    librobrt_svc_on_talk_start_fn      on_talk_start;
-    librobrt_svc_on_talk_stop_fn       on_talk_stop;
-    librobrt_svc_on_talk_audio_fn      on_talk_audio;
-    librobrt_svc_on_talk_video_fn      on_talk_video;
-    librobrt_svc_on_stream_stats_fn    on_stream_stats;
     void*                              userdata;
 };
 
@@ -61,17 +55,13 @@ struct librobrt_svc_stream_param_s {
     uint32_t           lowest_kbps;
     uint32_t           highest_kbps;
     bool               enable_transcode;
-    bool               enable_audio;
-    robrt_audio_codec_t audio_codec;
-    uint32_t           audio_sample_rate;
-    uint32_t           audio_channel;
-    uint32_t           audio_sample_bit;
 };
 
 struct librobrt_svc_stream_cb_s {
     uint32_t                           magic;
     librobrt_svc_on_stream_state_fn    on_state;
     librobrt_svc_on_encoded_video_fn   on_encoded_video;
+    librobrt_svc_on_stream_stats_fn    on_stream_stats;
     void*                              userdata;
 };
 
@@ -95,16 +85,6 @@ struct librobrt_svc_push_frame_s {
     uint32_t             seq;
     bool                 flush;
     uint32_t             offset;
-};
-
-struct librobrt_svc_talk_config_s {
-    uint32_t             magic;
-    robrt_audio_codec_t  audio_codec;
-    uint32_t             audio_sample_rate;
-    uint32_t             audio_channel;
-    uint32_t             audio_sample_bit;
-    robrt_codec_t        video_codec;
-    uint32_t             video_max_bitrate_kbps;
 };
 
 struct librobrt_svc_license_info_s {

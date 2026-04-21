@@ -1,6 +1,6 @@
 /**
  * @file   frame_impl.h
- * @brief  video_frame / audio_frame / stream_stats 的内部表示
+ * @brief  video_frame / stream_stats 的内部表示
  *
  * 这些对象采用引用计数：SDK 内部线程构造 frame，回调交给业务；业务层
  * 若调用 retain，计数 +1；release 时 -1，归 0 时回收底层内存。
@@ -23,22 +23,6 @@ struct librobrt_video_frame_s {
     robrt_frame_type_t      type;
     uint32_t                width;
     uint32_t                height;
-    uint64_t                pts_ms;
-    uint64_t                utc_ms;
-    uint32_t                seq;
-    int32_t                 stream_index;
-
-    std::vector<uint8_t>    payload;
-};
-
-struct librobrt_audio_frame_s {
-    uint32_t                magic;
-    std::atomic<int32_t>    refcount;
-
-    robrt_audio_codec_t     codec;
-    uint32_t                sample_rate;
-    uint32_t                channel;
-    uint32_t                sample_bit;
     uint64_t                pts_ms;
     uint64_t                utc_ms;
     uint32_t                seq;

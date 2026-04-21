@@ -24,8 +24,6 @@ struct State {
     librobrt_svc_connect_info_s                connect_info{};
     librobrt_svc_connect_cb_s                  connect_cb{};
     bool                                       has_connect_cb = false;
-    librobrt_svc_talk_config_s                 talk_config{};
-    bool                                       has_talk_config = false;
 
     std::unordered_map<librobrt_svc_stream_handle_t,
                        std::shared_ptr<librobrt_svc_stream_s>> streams;

@@ -4,7 +4,6 @@ set(SERVICE_SOURCES
     stream_param.cpp
     stream_cb.cpp
     push_frame.cpp
-    talk_config.cpp
     license_info.cpp
     lifecycle.cpp
     stream.cpp

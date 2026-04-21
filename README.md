@@ -19,7 +19,7 @@ ComVideoSDK
 │   │   ├── internal/                    # 内部 struct 定义（opaque 真身）
 │   │   ├── log/                         # log_config / logger
 │   │   ├── config/                      # signal_config / license_config / global_config
-│   │   ├── frame/                       # video_frame / audio_frame / stream_stats
+│   │   ├── frame/                       # video_frame / stream_stats
 │   │   ├── error/                       # last_error (thread-local)
 │   │   └── util/                        # memory_free / version
 │   ├── core/                            # 内部核心（当前为 stub，待接入 libwebrtc）
@@ -68,9 +68,9 @@ cmake --build build -j
 | 端 | 运行平台 | 动作 | 对应 SDK 函数前缀 |
 |---|---|---|---|
 | **Client**  | Android arm64（native C++，不经 JVM/Context） | 订阅拉流 → 解码前/后帧回调 | `librobrt_` |
-| **Service** | Linux arm64（设备/边缘） | 采集/编码/转码 → 发布 + 反向对讲接收 | `librobrt_svc_` |
+| **Service** | Linux arm64（设备/边缘） | 采集/编码/转码 → 发布订阅端 | `librobrt_svc_` |
 
-共享部分（`log_config` / `signal_config` / `license_config` / `global_config` / `video_frame` / `audio_frame` / `stream_stats` / 内存释放 / 错误与版本 API）前缀统一为 `librobrt_`，两端库各自实现导出。
+共享部分（`log_config` / `signal_config` / `license_config` / `global_config` / `video_frame` / `stream_stats` / 内存释放 / 错误与版本 API）前缀统一为 `librobrt_`，两端库各自实现导出。
 
 ## ABI 策略
 
@@ -93,7 +93,7 @@ set_global_config → init → connect → open_stream* → close_stream* → di
 ### Service
 
 ```
-svc_set_global_config → svc_set_talk_config → svc_init → svc_connect →
+svc_set_global_config → svc_init → svc_connect →
   [on_pull_request → svc_create_stream → svc_start_stream → svc_push_*_frame*] →
   svc_stop_stream → svc_destroy_stream → svc_disconnect → svc_uninit
 ```

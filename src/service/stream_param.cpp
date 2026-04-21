@@ -55,18 +55,6 @@ robrt_err_t librobrt_svc_stream_param_set_dynamic_bitrate(librobrt_svc_stream_pa
 robrt_err_t librobrt_svc_stream_param_set_enable_transcode(librobrt_svc_stream_param_t p, bool e) {
     SVC_SP_CHECK(p); p->enable_transcode = e; return ROBRT_OK;
 }
-robrt_err_t librobrt_svc_stream_param_set_enable_audio(librobrt_svc_stream_param_t p, bool e) {
-    SVC_SP_CHECK(p); p->enable_audio = e; return ROBRT_OK;
-}
-robrt_err_t librobrt_svc_stream_param_set_audio(librobrt_svc_stream_param_t p,
-                                                 robrt_audio_codec_t c, uint32_t sr, uint32_t ch, uint32_t sb) {
-    SVC_SP_CHECK(p);
-    p->audio_codec       = c;
-    p->audio_sample_rate = sr;
-    p->audio_channel     = ch;
-    p->audio_sample_bit  = sb;
-    return ROBRT_OK;
-}
 
 #undef SVC_SP_CHECK
 

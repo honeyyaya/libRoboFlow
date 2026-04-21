@@ -127,24 +127,6 @@ robrt_err_t librobrt_svc_push_video_frame(librobrt_svc_stream_handle_t handle,
     return ROBRT_OK;
 }
 
-robrt_err_t librobrt_svc_push_audio_frame(librobrt_svc_stream_handle_t handle,
-                                           librobrt_svc_push_frame_t frame) {
-    if (!handle || handle->magic != robrt::service::kMagicStream) return ROBRT_ERR_PARAM;
-    if (!frame  || frame->magic  != robrt::service::kMagicPushFrame) return ROBRT_ERR_PARAM;
-    auto& s = robrt::service::state();
-    std::lock_guard<std::mutex> lk(s.mu);
-    auto it = s.streams.find(handle);
-    if (it == s.streams.end()) return ROBRT_ERR_NOT_FOUND;
-    if (!it->second->started)  return ROBRT_ERR_STATE;
-    return ROBRT_OK;
-}
-
-robrt_err_t librobrt_svc_stream_force_keyframe(librobrt_svc_stream_handle_t handle) {
-    if (!handle || handle->magic != robrt::service::kMagicStream) return ROBRT_ERR_PARAM;
-    // TODO
-    return ROBRT_OK;
-}
-
 robrt_err_t librobrt_svc_stream_set_bitrate(librobrt_svc_stream_handle_t handle,
                                              uint32_t bitrate_kbps) {
     if (!handle || handle->magic != robrt::service::kMagicStream) return ROBRT_ERR_PARAM;
