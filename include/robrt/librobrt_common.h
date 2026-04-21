@@ -11,6 +11,51 @@
  *   - 函数签名只增不改；
  *   - 共享函数（如 log_config_*、video_frame_*、string_free 等）在 Client 和 Service 库中
  *     都各自实现/导出一份，以保证两端独立部署时的自包含性。
+ *
+ * ============================================================================
+ *                    线程模型（Threading Model）— 两端通用
+ * ============================================================================
+ *   - 回调统一在 SDK 内部工作线程触发，**不在业务调用线程**。
+ *   - 同一 opaque 对象（connect_cb / stream_cb 等）上的全部回调在 SDK 内部
+ *     保证串行分发；不同对象之间可能并发。
+ *   - 回调内禁止：阻塞 I/O、长耗时业务、调用 init/uninit/connect/disconnect。
+ *   - 回调内允许（白名单）：
+ *       * 所有 getter（video_frame_get_* / stream_stats_get_* / ...）
+ *       * retain / release
+ *       * close_stream / destroy_stream
+ *       * send_notice / reply_to_service_req / svc_service_reply / post_topic
+ *       * log_set_level / log_set_callback
+ *   - `userdata` 在对应 cb 对象 destroy 前保持有效；SDK 不接管其生命周期。
+ *   - 回调 drain 保证：
+ *       * `disconnect` 同步返回后，保证不再有属于该 connect 会话的**新**回调
+ *         被派发；但已经进入 dispatch 队列的回调仍会执行，直至 uninit。
+ *       * `uninit` 同步返回前，SDK **保证**内部工作线程已全部 join、所有回调
+ *         已执行完毕（happens-before uninit 返回）。业务可在 uninit 之后安全
+ *         释放所有 userdata 以及与回调共享的资源，不会产生 UAF。
+ *       * `close_stream` / `destroy_stream` 返回后，属于该 stream 的新回调
+ *         不再触发；已入队回调会在 uninit 前执行完毕。
+ *
+ * ============================================================================
+ *                    所有权与生命周期（Ownership & Lifetime）— 两端通用
+ * ============================================================================
+ *   - xxx_create / xxx_destroy 严格配对。
+ *   - 传入 SDK 的 opaque 配置对象（connect_info / connect_cb / stream_param /
+ *     stream_cb 等）在对应 API（connect / open_stream / create_stream）返回
+ *     ROBRT_OK 的瞬间，SDK 已完成内部拷贝，调用方可立即 destroy。
+ *   - 传入 SDK 的 `const void *payload` / `const char *` 在 API 同步返回前由
+ *     SDK 完成拷贝；API 返回后调用方可释放原 buffer（异步回包类 API 同理）。
+ *   - SDK 通过 out 参数返回的 `char *` / `void *` 必须用 librobrt_string_free /
+ *     librobrt_buffer_free 释放。
+ *   - 回调入参的只读 opaque 句柄（video_frame_t / stream_stats_t）默认仅回调
+ *     栈内有效；需跨栈/跨线程持有必须 retain，使用完 release。
+ *
+ * ============================================================================
+ *                    容量与上限（Limits & Quotas）— 默认值
+ * ============================================================================
+ *   - 一个进程只能运行一份 Client 库（连接单一设备到服务端）。
+ *   - 同一 connect 会话下同时打开的 stream 数量：≤ ROBRT_LIMIT_MAX_STREAMS。
+ *   - 单条 notice / service_req payload：≤ ROBRT_LIMIT_MAX_PAYLOAD_BYTES。
+ *   - 具体数值见下方 ROBRT_LIMIT_* 宏；次版本内稳定，主版本变更会写入发行说明。
 **/
 
 #ifndef __LIBROBRT_COMMON_H__
@@ -56,6 +101,16 @@ typedef int32_t robrt_err_t;
 #define ROBRT_ERR_STREAM_NO_SUBSCRIBER        (-0x2005)
 
 /******************************************************************************
+ *                                 容量常量
+ * 次版本（minor）内稳定；主版本变更会写入发行说明。
+ ******************************************************************************/
+#define ROBRT_LIMIT_MAX_STREAMS               16          /* 单进程并发流上限 */
+#define ROBRT_LIMIT_MAX_PAYLOAD_BYTES         (1u << 20)  /* 单条信令 payload 上限 1 MiB */
+#define ROBRT_LIMIT_MAX_URL_LEN               1024
+#define ROBRT_LIMIT_MAX_DEVICE_ID_LEN         128
+#define ROBRT_LIMIT_MAX_SERVICE_ID_LEN        64
+
+/******************************************************************************
  *                                 枚举
  ******************************************************************************/
 
@@ -84,16 +139,6 @@ typedef enum {
     ROBRT_CODEC_H265    = 0x1002,
     ROBRT_CODEC_MJPEG   = 0x1003,
 } robrt_codec_t;
-
-/* 音频编码 */
-typedef enum {
-    ROBRT_AUDIO_UNKNOWN = 0,
-    ROBRT_AUDIO_PCM     = 1,
-    ROBRT_AUDIO_G711A   = 2,
-    ROBRT_AUDIO_G711U   = 3,
-    ROBRT_AUDIO_AAC     = 4,
-    ROBRT_AUDIO_OPUS    = 5,
-} robrt_audio_codec_t;
 
 /* 视频帧类型 */
 typedef enum {
@@ -154,7 +199,6 @@ typedef struct librobrt_global_config_s*   librobrt_global_config_t;
 
 /* 共享只读数据对象（回调入参） */
 typedef const struct librobrt_video_frame_s*   librobrt_video_frame_t;
-typedef const struct librobrt_audio_frame_s*   librobrt_audio_frame_t;
 typedef const struct librobrt_stream_stats_s*  librobrt_stream_stats_t;
 
 /******************************************************************************
@@ -165,10 +209,27 @@ typedef const struct librobrt_stream_stats_s*  librobrt_stream_stats_t;
 LIBROBRT_API_EXPORT void  librobrt_string_free(char *p);
 LIBROBRT_API_EXPORT void  librobrt_buffer_free(void *p);
 
-/* 错误 / 版本 / 构建信息 */
-LIBROBRT_API_EXPORT const char* librobrt_get_last_error(void);   /* thread-local */
+/**
+ * 错误 / 版本 / 构建信息。
+ *
+ * librobrt_get_last_error():
+ *   - thread-local；仅对**紧邻的上一次同步 API 调用**（在当前线程内返回非 OK 的）
+ *     有意义，返回该调用附加的人类可读诊断字符串。
+ *   - 不覆盖异步失败：通过 on_state / on_stream_state 的 `reason` 参数传递的
+ *     错误**不会**写入 last_error，业务不应在回调内依赖此函数诊断异步原因。
+ *   - 在未产生错误的线程调用返回 ""（空串）或上一次陈旧值，不可作为错误发生的
+ *     判定依据。永远以 API 返回的 robrt_err_t 为准。
+ *   - 返回字符串生命周期持续到当前线程下一次进入任意 librobrt_* API 为止。
+ */
+LIBROBRT_API_EXPORT const char* librobrt_get_last_error(void);
 LIBROBRT_API_EXPORT void        librobrt_get_version(uint32_t *major, uint32_t *minor, uint32_t *patch);
 LIBROBRT_API_EXPORT const char* librobrt_get_build_info(void);
+
+/**
+ * 错误码 → 静态字符串名（如 "ROBRT_ERR_PARAM"），用于日志。
+ * 返回值为静态字符串，调用方不得 free。未知错误码返回 "ROBRT_ERR_UNKNOWN"。
+ */
+LIBROBRT_API_EXPORT const char* librobrt_err_to_string(robrt_err_t err);
 
 /******************************************************************************
  *                           LogConfig（共享）
@@ -198,9 +259,29 @@ LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_set_url        (librobrt_
 /* 仅 Service 端可能用到；Client 端默认 SERVER 模式，不需调用 */
 LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_set_mode       (librobrt_signal_config_t cfg, robrt_signal_mode_t mode);
 LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_set_direct_port(librobrt_signal_config_t cfg, uint16_t port);
+LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_set_connect_timeout_ms(librobrt_signal_config_t cfg,
+                                                                               uint32_t timeout_ms);
+LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_set_keepalive_interval_ms(librobrt_signal_config_t cfg,
+                                                                                  uint32_t interval_ms);
+LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_set_reconnect_enable(librobrt_signal_config_t cfg,
+                                                                             bool enable);
+LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_set_reconnect_backoff_ms(librobrt_signal_config_t cfg,
+                                                                                 uint32_t initial_backoff_ms,
+                                                                                 uint32_t max_backoff_ms);
+/* 0 表示不限重试次数 */
+LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_set_reconnect_max_attempts(librobrt_signal_config_t cfg,
+                                                                                   uint32_t max_attempts);
 
+/*
+ * Getter：写入 buf（含终止 \0）。
+ *   - buf == NULL 或 buf_len == 0：仅探测，out_needed 返回所需长度（含 \0）；
+ *   - buf_len 不足：返回 ROBRT_ERR_TRUNCATED，out_needed 返回所需长度；
+ *   - 字段未设置：返回 ROBRT_ERR_NOT_FOUND。
+ * out_needed 可为 NULL。
+ */
 LIBROBRT_API_EXPORT robrt_err_t librobrt_signal_config_get_url(librobrt_signal_config_t cfg,
-                                                               char *buf, uint32_t buf_len);
+                                                               char *buf, uint32_t buf_len,
+                                                               uint32_t *out_needed);
 
 /******************************************************************************
  *                           LicenseConfig（共享）
@@ -211,6 +292,14 @@ LIBROBRT_API_EXPORT void                      librobrt_license_config_destroy(li
 LIBROBRT_API_EXPORT robrt_err_t librobrt_license_config_set_file  (librobrt_license_config_t cfg, const char *path);
 LIBROBRT_API_EXPORT robrt_err_t librobrt_license_config_set_buffer(librobrt_license_config_t cfg,
                                                                    const void *data, uint32_t len);
+
+/*
+ * 读回当前配置的 license 文件路径；若通过 set_buffer 注入则返回 ROBRT_ERR_NOT_FOUND。
+ * 探测语义与 librobrt_connect_info_get_device_id 一致（见该函数注释）。
+ */
+LIBROBRT_API_EXPORT robrt_err_t librobrt_license_config_get_file(librobrt_license_config_t cfg,
+                                                                  char *buf, uint32_t buf_len,
+                                                                  uint32_t *out_needed);
 
 /******************************************************************************
  *                           GlobalConfig（共享）
@@ -243,25 +332,15 @@ LIBROBRT_API_EXPORT librobrt_video_frame_t librobrt_video_frame_retain (librobrt
 LIBROBRT_API_EXPORT void                   librobrt_video_frame_release(librobrt_video_frame_t f);
 
 /******************************************************************************
- *                           Audio Frame Getter / 生命周期（共享）
- ******************************************************************************/
-LIBROBRT_API_EXPORT robrt_audio_codec_t librobrt_audio_frame_get_codec      (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT const uint8_t*      librobrt_audio_frame_get_data       (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT uint32_t            librobrt_audio_frame_get_data_size  (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT uint32_t            librobrt_audio_frame_get_sample_rate(librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT uint32_t            librobrt_audio_frame_get_channel    (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT uint32_t            librobrt_audio_frame_get_sample_bit (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT uint64_t            librobrt_audio_frame_get_pts_ms     (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT uint64_t            librobrt_audio_frame_get_utc_ms     (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT uint32_t            librobrt_audio_frame_get_seq        (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT int32_t             librobrt_audio_frame_get_index      (librobrt_audio_frame_t f);
-
-LIBROBRT_API_EXPORT librobrt_audio_frame_t librobrt_audio_frame_retain (librobrt_audio_frame_t f);
-LIBROBRT_API_EXPORT void                   librobrt_audio_frame_release(librobrt_audio_frame_t f);
-
-/******************************************************************************
  *                           Stream Stats Getter（共享）
  ******************************************************************************/
+/*
+ * stream_stats 默认仅在当前回调栈或当前 API 调用返回前有效。
+ * 如需跨栈/跨线程持有，必须 retain；使用完成后 release。
+ */
+LIBROBRT_API_EXPORT librobrt_stream_stats_t librobrt_stream_stats_retain (librobrt_stream_stats_t s);
+LIBROBRT_API_EXPORT void                    librobrt_stream_stats_release(librobrt_stream_stats_t s);
+
 LIBROBRT_API_EXPORT uint32_t librobrt_stream_stats_get_duration_ms    (librobrt_stream_stats_t s);
 LIBROBRT_API_EXPORT uint64_t librobrt_stream_stats_get_in_bound_bytes (librobrt_stream_stats_t s);
 LIBROBRT_API_EXPORT uint64_t librobrt_stream_stats_get_in_bound_pkts  (librobrt_stream_stats_t s);
@@ -271,6 +350,11 @@ LIBROBRT_API_EXPORT uint32_t librobrt_stream_stats_get_lost_pkts      (librobrt_
 LIBROBRT_API_EXPORT uint32_t librobrt_stream_stats_get_bitrate_kbps   (librobrt_stream_stats_t s);
 LIBROBRT_API_EXPORT uint32_t librobrt_stream_stats_get_rtt_ms         (librobrt_stream_stats_t s);
 LIBROBRT_API_EXPORT uint32_t librobrt_stream_stats_get_fps            (librobrt_stream_stats_t s);
+
+/* QoS 补充指标（Client 拉流更关心） */
+LIBROBRT_API_EXPORT uint32_t librobrt_stream_stats_get_jitter_ms          (librobrt_stream_stats_t s);
+LIBROBRT_API_EXPORT uint32_t librobrt_stream_stats_get_freeze_count       (librobrt_stream_stats_t s);
+LIBROBRT_API_EXPORT uint32_t librobrt_stream_stats_get_decode_fail_count  (librobrt_stream_stats_t s);
 
 #ifdef __cplusplus
 }

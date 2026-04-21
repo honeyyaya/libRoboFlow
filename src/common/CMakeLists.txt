@@ -11,7 +11,6 @@ add_library(robrt_common OBJECT
     config/global_config.cpp
 
     frame/video_frame.cpp
-    frame/audio_frame.cpp
     frame/stream_stats.cpp
 
     util/memory.cpp

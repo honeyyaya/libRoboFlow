@@ -29,7 +29,6 @@ void librobrt_connect_cb_destroy(librobrt_connect_cb_t cb) {
 SET_CB(on_state,        librobrt_on_connect_state_fn)
 SET_CB(on_notice,       librobrt_on_notice_fn)
 SET_CB(on_service_req,  librobrt_on_service_req_fn)
-SET_CB(on_stream_stats, librobrt_on_stream_stats_fn)
 
 #undef SET_CB
 

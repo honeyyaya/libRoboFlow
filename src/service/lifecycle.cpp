@@ -1,6 +1,6 @@
 /**
  * @file   lifecycle.cpp
- * @brief  Service 端生命周期：set_global_config / set_talk_config /
+ * @brief  Service 端生命周期：set_global_config /
  *         init / uninit / connect / disconnect / get_license_info
 **/
 
@@ -48,21 +48,6 @@ robrt_err_t librobrt_svc_set_global_config(librobrt_global_config_t cfg) {
                             s.global_config.log.cb,
                             s.global_config.log.userdata);
     }
-    return ROBRT_OK;
-}
-
-robrt_err_t librobrt_svc_set_talk_config(librobrt_svc_talk_config_t cfg) {
-    auto& s = robrt::service::state();
-    std::lock_guard<std::mutex> lk(s.mu);
-
-    if (s.lifecycle == robrt::service::LifecycleState::kConnected) {
-        robrt::set_last_error("talk config cannot be modified after connect");
-        return ROBRT_ERR_STATE;
-    }
-    if (!cfg || cfg->magic != robrt::service::kMagicTalkConfig) return ROBRT_ERR_PARAM;
-    s.talk_config     = *cfg;
-    s.talk_config.magic = robrt::service::kMagicTalkConfig;
-    s.has_talk_config = true;
     return ROBRT_OK;
 }
 

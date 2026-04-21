@@ -3,7 +3,7 @@
 > 对应头文件：`include/robrt/Service/librobrt_service_api.h`  
 > 共享头文件：`include/robrt/librobrt_common.h`  
 > 目标平台：Linux arm64（设备/边缘侧）  
-> 内部实现：封装 WebRTC + 编码器后端。Service 端负责**接收业务采集数据 → 编码/透传/转码 → 发布给订阅端**，并处理 Client 侧的对讲、服务请求等反向消息  
+> 内部实现：封装 WebRTC + 编码器后端。Service 端负责**接收业务采集数据 → 编码/透传/转码 → 发布给订阅端**，并处理 Client 侧的业务请求等服务类反向消息  
 > ABI 策略：纯 C 导出 + Opaque Handle + Getter / Setter，与 Client 同构对齐
 
 ---
@@ -17,8 +17,7 @@
 | 反向订阅驱动 | 业务层并不主动发流，而是收到 `on_pull_request` 回调后才开始产帧，避免无订阅者时浪费编码资源 |
 | push 帧零拷贝意图 | `push_frame` 对象 set_data 时 SDK 立即 copy 或引用后入队，接口返回即可释放原 buffer |
 | 编码参数在 Service | 分辨率 / 编码 / 码率 / GOP / RC 等编码器参数**只在 Service 端**设置，Client 端仅能 hint |
-| 对讲为反向通道 | Talk 是 Client → Service 方向，在 `connect_cb` 里通过 `on_talk_*` 回调送到业务；业务侧 SDK 不负责播放 |
-| 函数命名空间 | 与 Client 做符号隔离：所有 Service 专属函数/类型使用 `librobrt_svc_` 前缀；共享部分（log/signal/license/global_config、video_frame、audio_frame、stream_stats）沿用 `librobrt_` |
+| 函数命名空间 | 与 Client 做符号隔离：所有 Service 专属函数/类型使用 `librobrt_svc_` 前缀；共享部分（log/signal/license/global_config、video_frame、stream_stats）沿用 `librobrt_`（音频暂不支持） |
 
 ---
 
@@ -32,9 +31,8 @@ graph LR
         S3[license_config]
         S4[global_config]
         S5[video_frame 只读]
-        S6[audio_frame 只读]
-        S7[stream_stats 只读]
-        S8[错误码 / 枚举 / 内存释放]
+        S6[stream_stats 只读]
+        S7[错误码 / 枚举 / 内存释放]
     end
 
     subgraph ClientSDK["Client（librobrt_*）"]
@@ -43,8 +41,8 @@ graph LR
         C3[stream_param hint]
         C4[stream_cb]
         C5[open_stream / close_stream]
-        C6[send_notice / service_reply]
-        C7[on_video_frame / on_audio_frame]
+        C6[send_notice / reply_to_service_req]
+        C7[on_video_frame]
     end
 
     subgraph ServiceSDK["Service（librobrt_svc_*）"]
@@ -53,11 +51,9 @@ graph LR
         V3[svc_stream_param 编码器]
         V4[svc_stream_cb]
         V5[svc_create/start/stop/destroy_stream]
-        V6[svc_push_video/audio_frame]
-        V7[svc_talk_config]
+        V6[svc_push_video_frame]
         V8[svc_send_notice / svc_post_topic / svc_service_reply]
         V9[on_pull_request / on_pull_release]
-        VA[on_talk_start/stop/audio/video]
         VB[on_service_req]
     end
 
@@ -68,14 +64,12 @@ graph LR
     C6 <-.业务消息.-> V8
     C7 <-.媒体数据.-> V6
     V8 -.业务消息.-> C2
-    VA <-.对讲.-> C6
 ```
 
 关键点：
 - Client 的 `open_stream(index)` 在 Service 侧触发 `on_pull_request(stream_idx)`，业务层可据此惰性启动采集/编码。
 - Client 的 `close_stream` / 主动 `disconnect` → Service 侧触发 `on_pull_release(stream_idx)`。
-- Client 的 `send_notice` / `service_reply` → Service 侧 `on_notice` / 业务对 `on_service_req` 的回复反向亦然。
-- 对讲方向：Client 采集 → 通过 Client 端内部通道 → Service 侧 `on_talk_audio` / `on_talk_video` 回调给业务播放。
+- Client 的 `send_notice` / `librobrt_reply_to_service_req` → Service 侧 `on_notice` / 业务对 `on_service_req` 的回复反向亦然。
 
 ---
 
@@ -86,7 +80,7 @@ graph LR
 ```mermaid
 stateDiagram-v2
     [*] --> UNINIT
-    UNINIT --> CONFIGURED: svc_set_global_config / svc_set_talk_config
+    UNINIT --> CONFIGURED: svc_set_global_config
     CONFIGURED --> INITED: svc_init()
     UNINIT --> INITED: svc_init() [默认配置]
     INITED --> CONNECTED: svc_connect() 成功
@@ -109,7 +103,7 @@ stateDiagram-v2
     DESTROYED --> [*]
     note right of RUNNING
         RUNNING 状态下：
-        - 允许 push_video_frame / push_audio_frame
+        - 允许 push_video_frame
         - 订阅方可收到媒体
     end note
 ```
@@ -141,8 +135,6 @@ sequenceDiagram
     Note over BIZ,CLI: ---- 阶段 1：配置 + 初始化 ----
     BIZ->>SDK: log/signal/license/global_config 构造
     BIZ->>SDK: svc_set_global_config(g)
-    BIZ->>SDK: svc_talk_config_create / set_audio / set_video
-    BIZ->>SDK: svc_set_talk_config(tc)
     BIZ->>SDK: svc_init()
     SDK-->>BIZ: OK
 
@@ -166,7 +158,7 @@ sequenceDiagram
         BIZ->>SDK: svc_push_frame_destroy(pf)
         SDK->>CLI: (编码后帧)
     end
-    SDK-->>BIZ: on_stream_stats(h0, stats)
+    SDK-->>BIZ: on_stream_stats(stats)（h0 对应之 stream_cb）
 
     Note over BIZ,CLI: ---- 阶段 4：Client 退订 → 惰性停止 ----
     CLI->>SDK: (close_stream)
@@ -205,34 +197,7 @@ sequenceDiagram
     SDK-->>BIZ: OK
 ```
 
-### 4.3 对讲反向流：Client 发起对讲，Service 接收音频
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant CLI as 远端 Client
-    participant SDK as librobrt_svc
-    participant BIZ as 业务层（Service 侧）
-    participant SPK as 业务播放器
-
-    CLI->>SDK: (start talk, idx=0)
-    SDK-->>BIZ: on_talk_start(stream_idx=0)
-    BIZ->>SPK: 准备扬声器
-
-    loop 对讲循环
-        CLI->>SDK: (audio frame)
-        SDK-->>BIZ: on_talk_audio(idx=0, frame)
-        BIZ->>SDK: librobrt_audio_frame_get_data / get_pts_ms
-        BIZ->>SPK: 送扬声器播放
-        Note over BIZ: 回调返回后 frame 失效<br/>如需异步播放链路先 retain
-    end
-
-    CLI->>SDK: (stop talk)
-    SDK-->>BIZ: on_talk_stop(stream_idx=0)
-    BIZ->>SPK: 关闭扬声器
-```
-
-### 4.4 Client 服务请求 → Service 异步回包
+### 4.3 Client 服务请求 → Service 异步回包
 
 ```mermaid
 sequenceDiagram
@@ -251,7 +216,7 @@ sequenceDiagram
     SDK->>CLI: service_response(resp)
 ```
 
-### 4.5 订阅端切换 / 引用计数式懒启动
+### 4.4 订阅端切换 / 引用计数式懒启动
 
 ```mermaid
 sequenceDiagram
@@ -278,7 +243,7 @@ sequenceDiagram
     BIZ->>SDK: stop_stream + destroy_stream
 ```
 
-### 4.6 分片推送大帧（push_frame_set_flush / offset）
+### 4.5 分片推送大帧（push_frame_set_flush / offset）
 
 ```mermaid
 sequenceDiagram
@@ -307,14 +272,13 @@ flowchart TB
         U1[svc_init / svc_uninit]
         U2[svc_connect / svc_disconnect]
         U3[svc_create / start / stop / destroy_stream]
-        U4[svc_push_video_frame / svc_push_audio_frame]
+        U4[svc_push_video_frame]
         U5[svc_send_notice / svc_service_reply]
     end
 
     subgraph SDK内部["SDK 内部线程池"]
         T1[Signal]
         T2[Media TX 编码+发送]
-        T3[Media RX 对讲]
         T4[Worker]
     end
 
@@ -322,9 +286,8 @@ flowchart TB
         CB1[on_connect_state / on_bind_state]
         CB2[on_pull_request / on_pull_release]
         CB3[on_service_req / on_notice]
-        CB4[on_talk_start/stop/audio/video]
-        CB5[on_stream_state / on_encoded_video / on_stream_stats]
-        CB6[on_log]
+        CB4[on_stream_state / on_encoded_video / on_stream_stats]
+        CB5[on_log]
     end
 
     U1 -.串行.-> SDK内部
@@ -336,9 +299,8 @@ flowchart TB
     T1 --> CB1
     T1 --> CB2
     T1 --> CB3
-    T3 --> CB4
-    T2 --> CB5
-    T4 --> CB6
+    T2 --> CB4
+    T4 --> CB5
 
     CB2 -.白名单 API.-> U3
     CB3 -.白名单 API.-> U5
@@ -353,9 +315,9 @@ flowchart TB
 | 对象 | 分配方 | 释放方 | 生命周期 |
 |---|---|---|---|
 | `librobrt_*_config_t`（共享 log/signal/license/global） | SDK `create` | 调用方 `destroy` | `svc_set_global_config` 返回后可销毁 |
-| `librobrt_svc_connect_info_t` / `connect_cb_t` / `stream_param_t` / `stream_cb_t` / `talk_config_t` / `push_frame_t` | SDK `svc_*_create` | 调用方 `svc_*_destroy` | 对应 API 返回后可销毁 |
+| `librobrt_svc_connect_info_t` / `connect_cb_t` / `stream_param_t` / `stream_cb_t` / `push_frame_t` | SDK `svc_*_create` | 调用方 `svc_*_destroy` | 对应 API 返回后可销毁 |
 | `librobrt_svc_stream_handle_t` | SDK `create_stream` | SDK `destroy_stream` / `uninit` | 收到 `CLOSED/DESTROYED` 后失效 |
-| `librobrt_video_frame_t` / `librobrt_audio_frame_t`（回调入参） | SDK | SDK（回调返回时） | 仅回调栈内；`retain` 后转为调用方管理 |
+| `librobrt_video_frame_t`（回调入参） | SDK | SDK（回调返回时） | 仅回调栈内；`retain` 后转为调用方管理 |
 | `librobrt_stream_stats_t`（回调/pull 入参） | SDK | SDK | 仅调用栈内 |
 | `librobrt_svc_license_info_t` | SDK（`get_license_info` 出参） | 调用方 `svc_license_info_destroy` | 显式生命周期 |
 | push_frame 里 set_data 的 buffer | 调用方 | 调用方 | SDK 内部 copy，API 返回后可释放 |
@@ -474,8 +436,7 @@ int main(void) {
 | **懒启动（on_pull_request 驱动）** | 避免业务一直采集/编码浪费 CPU；多订阅者共用一路编码流 |
 | **push_frame 对象化** | 字段随编码格式演进会不断增加（HDR、颜色空间、时间基），用对象 + setter 避免长参数列表与签名破坏 |
 | **svc_ 前缀** | 同一进程理论可同时加载 Client/Service（例如远程办公工具），避免符号碰撞 |
-| **共享 video_frame / audio_frame / stream_stats** | 回调消费端逻辑一致，两端共享 getter 能减小集成认知成本 |
-| **talk_config 独立 setter** | 对讲能力由业务决定（决定了能解什么码率/格式），与主媒体参数解耦 |
+| **共享 video_frame / stream_stats** | 回调消费端逻辑一致，两端共享 getter 能减小集成认知成本 |
 | **license_info 为 opaque + getter** | license 字段未来必然扩展（到期时间、配额、功能开关等），避免结构体暴露导致的大小变更 |
 | **post_topic 作为透传通道** | 高频状态（心率/电量/PTZ 位置等）走透传不经业务层信令语义，减少业务实现压力 |
 
@@ -489,7 +450,6 @@ int main(void) {
 | 编码参数仅在 Service | ✅ `svc_stream_param_*` |
 | push_frame 对象化 | ✅ 对象 + 分片 flush/offset |
 | 懒启动回调 | ✅ `on_pull_request` / `on_pull_release` |
-| 对讲反向通道 | ✅ `on_talk_start/stop/audio/video` + `svc_talk_config` |
 | 异步回包 | ✅ `svc_service_reply(req_id, ...)` |
 | 幂等强清理 | ✅ `disconnect` / `uninit` / `destroy_stream` |
 | 共享 common.h | ✅ 错误码 / 枚举 / 共享 config / 共享 frame getter |

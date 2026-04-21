@@ -1,71 +1,49 @@
 /**
  * @file     librobrt_typedef.h
  * @brief    类型定义
+ *
+ * 官方构建支持：GCC / Clang（Linux arm64、Android arm64）。
+ * 该头文件允许在任意 C/C++ 编译器下被消费端 include（仅声明，不实际链接）；
+ * 非 GCC/Clang 下 LIBROBRT_API_EXPORT 与 LIBROBRT_API_DEPRECATED_MSG 退化为空，
+ * 以便跨平台项目能共享同一份头文件进行静态检查或生成 FFI binding。
 **/
 
 #ifndef __LIBROBRT_TYPEDEF_H__
 #define __LIBROBRT_TYPEDEF_H__
 
-/**************************** Include ****************************/
 #include <stdbool.h>
 #include <stdint.h>
-#if defined(_MSC_VER)
-#include <winsock2.h>
-#include <windows.h>
+
+#ifndef LIBROBRT_API_DEPRECATED_MSG
+#if defined(__GNUC__) || defined(__clang__)
+#define LIBROBRT_API_DEPRECATED_MSG(func) \
+    __attribute__((__deprecated__("Use " func " instead")))
+#elif defined(_MSC_VER)
+#define LIBROBRT_API_DEPRECATED_MSG(func) __declspec(deprecated("Use " func " instead"))
+#else
+#define LIBROBRT_API_DEPRECATED_MSG(func)
 #endif
-
-/***************************** Macro *****************************/
-
-#ifdef __GNUC__
-    #ifndef LIBROBRT_API_DEPRECATED_MSG
-    #define LIBROBRT_API_DEPRECATED_MSG(func) __attribute__ ((__deprecated__("Use " func " instead")))
-    #endif
-#elif _MSC_VER
-    #ifndef LIBROBRT_API_DEPRECATED_MSG
-    #define LIBROBRT_API_DEPRECATED_MSG(func) __declspec(deprecated("Use " func " instead"))
-    #endif
-#else 
-#error "not supprt compiler"
 #endif
 
 #ifdef __cplusplus
-    #ifndef LIBROBRT_API_EXPORT
-    #define LIBROBRT_API_EXPORT extern "C"
-    #endif
-    #ifndef LIBROBRT_DEPRECATED_EXPORT
-    #define LIBROBRT_DEPRECATED_EXPORT(func) extern "C"  LIBROBRT_API_DEPRECATED_MSG(func)
-    #endif
+#ifndef LIBROBRT_API_EXPORT
+#define LIBROBRT_API_EXPORT extern "C"
+#endif
+#ifndef LIBROBRT_DEPRECATED_EXPORT
+#define LIBROBRT_DEPRECATED_EXPORT(func) extern "C" LIBROBRT_API_DEPRECATED_MSG(func)
+#endif
 #else
-    #ifndef LIBROBRT_API_EXPORT
-    #define LIBROBRT_API_EXPORT
-    #endif
-    #ifndef LIROBRT_DEPRECATED_EXPORT
-    #define LIROBRT_DEPRECATED_EXPORT(func) LIBROBRT_API_DEPRECATED_MSG(func) 
-    #endif
+#ifndef LIBROBRT_API_EXPORT
+#define LIBROBRT_API_EXPORT
+#endif
+#ifndef LIBROBRT_DEPRECATED_EXPORT
+#define LIBROBRT_DEPRECATED_EXPORT(func) LIBROBRT_API_DEPRECATED_MSG(func)
+#endif
 #endif
 
+/*
+ * 对外 API 统一使用 <stdint.h> / <stdbool.h> 的标准类型
+ * (int32_t / uint32_t / bool / ...)，不再暴露 LIBROBRT_* 别名。
+ */
 
-#ifdef __GNUC__
-    typedef void            LIBROBRT_VOID;
-    typedef void*           LIBROBRT_HANDLE;
-    typedef bool            LIBROBRT_BOOL;
-    typedef char            LIBROBRT_CHAR;
-    typedef unsigned char   LIBROBRT_UCHAR;
-    typedef short           LIBROBRT_SHORT;
-    typedef unsigned short  LIBROBRT_USHORT;
-    typedef int             LIBROBRT_INT;
-    typedef unsigned int    LIBROBRT_UINT;
-    typedef int16_t         LIBROBRT_INT16;
-    typedef uint16_t        LIBROBRT_UINT16;
-    typedef int32_t         LIBROBRT_INT32;
-    typedef uint32_t        LIBROBRT_UINT32;
-    typedef int64_t         LIBROBRT_INT64;
-    typedef int64_t         LIBROBRT_UINT64;
-    typedef long            LIBROBRT_LONG;
-    typedef unsigned long   LIBROBRT_ULONG;
-    typedef float           LIBROBRT_FLOAT;
-    typedef double          LIBROBRT_DOUBLE;
-#else
-#error "not supprt compiler"
-#endif
 #endif /* __LIBROBRT_TYPEDEF_H__ */

@@ -33,6 +33,13 @@ robrt_err_t librobrt_svc_stream_cb_set_on_encoded_video(librobrt_svc_stream_cb_t
     return ROBRT_OK;
 }
 
+robrt_err_t librobrt_svc_stream_cb_set_on_stream_stats(librobrt_svc_stream_cb_t cb,
+                                                        librobrt_svc_on_stream_stats_fn fn) {
+    ROBRT_CHECK_HANDLE(cb, robrt::service::kMagicStreamCb);
+    cb->on_stream_stats = fn;
+    return ROBRT_OK;
+}
+
 robrt_err_t librobrt_svc_stream_cb_set_userdata(librobrt_svc_stream_cb_t cb, void* ud) {
     ROBRT_CHECK_HANDLE(cb, robrt::service::kMagicStreamCb);
     cb->userdata = ud;

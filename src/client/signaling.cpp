@@ -1,6 +1,6 @@
 /**
  * @file   signaling.cpp
- * @brief  send_notice / service_reply
+ * @brief  send_notice / reply_to_service_req
 **/
 
 #include "robrt/Client/librobrt_client_api.h"
@@ -19,8 +19,8 @@ robrt_err_t librobrt_send_notice(int32_t index, const void* payload, uint32_t le
     return ROBRT_OK;
 }
 
-robrt_err_t librobrt_service_reply(uint64_t req_id, robrt_err_t status,
-                                    const void* payload, uint32_t len) {
+robrt_err_t librobrt_reply_to_service_req(uint64_t req_id, robrt_err_t status,
+                                          const void* payload, uint32_t len) {
     auto& s = robrt::client::state();
     std::lock_guard<std::mutex> lk(s.mu);
     if (s.lifecycle != robrt::client::LifecycleState::kConnected) return ROBRT_ERR_STATE;

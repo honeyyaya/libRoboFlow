@@ -31,9 +31,9 @@ robrt_err_t librobrt_stream_cb_set_on_video(librobrt_stream_cb_t cb, librobrt_on
     return ROBRT_OK;
 }
 
-robrt_err_t librobrt_stream_cb_set_on_audio(librobrt_stream_cb_t cb, librobrt_on_audio_frame_fn fn) {
+robrt_err_t librobrt_stream_cb_set_on_stream_stats(librobrt_stream_cb_t cb, librobrt_on_stream_stats_fn fn) {
     ROBRT_CHECK_HANDLE(cb, robrt::client::kMagicStreamCb);
-    cb->on_audio = fn;
+    cb->on_stream_stats = fn;
     return ROBRT_OK;
 }
 

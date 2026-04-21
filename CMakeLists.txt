@@ -21,21 +21,18 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
 endif()
 
-# -------------------------------------------------------------------- warnings
-add_library(robrt_warnings INTERFACE)
+# -------------------------------------------------------------------- warnings (GCC / Clang only — not Windows/MSVC)
 if(MSVC)
-    target_compile_options(robrt_warnings INTERFACE /W4 /permissive-)
-    if(ROBRT_ENABLE_WERROR)
-        target_compile_options(robrt_warnings INTERFACE /WX)
-    endif()
-else()
-    target_compile_options(robrt_warnings INTERFACE
-        -Wall -Wextra -Wpedantic
-        -Wno-unused-parameter
-    )
-    if(ROBRT_ENABLE_WERROR)
-        target_compile_options(robrt_warnings INTERFACE -Werror)
-    endif()
+    message(FATAL_ERROR "robrt targets Linux/Android (arm64) with GCC or Clang; MSVC is not supported.")
+endif()
+
+add_library(robrt_warnings INTERFACE)
+target_compile_options(robrt_warnings INTERFACE
+    -Wall -Wextra -Wpedantic
+    -Wno-unused-parameter
+)
+if(ROBRT_ENABLE_WERROR)
+    target_compile_options(robrt_warnings INTERFACE -Werror)
 endif()
 
 # -------------------------------------------------------------------- subdirs
