@@ -1,0 +1,12 @@
+#ifndef __LIBROBRT_VERSION_H__
+#define __LIBROBRT_VERSION_H__
+
+#define LIBROBRT_MAJOR 0
+#define LIBROBRT_MINOR 9
+#define LIBROBRT_MICRO 4
+#define LIBROBRT_VERSION 0x90004       //共4字节，1字节MAJOR + 1字节MINOR +2字节MICRO 按位拼接
+#define COMMIT_VERSION  "e312ab1c"
+#define COMMIT_TIME     "2025-11-17 15:40:06"
+#define BUILD_TIME      "2025-11-18T14:43:37"
+
+#endif //__LIBROBRT_VERSION_H__
