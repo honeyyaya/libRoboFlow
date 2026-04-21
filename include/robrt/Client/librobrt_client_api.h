@@ -47,12 +47,7 @@ typedef struct librobrt_stream_param_s*    librobrt_stream_param_t;
 typedef struct librobrt_stream_cb_s*       librobrt_stream_cb_t;
 typedef struct librobrt_stream_s*          librobrt_stream_handle_t;
 
-/*
- * 业务协议中的资源 ID（与 Service 的 stream_idx 一一对应）。
- * 使用 typedef 别名以明确语义，未来可无痛收窄/扩展。
- */
-typedef int32_t robrt_stream_index_t;
-typedef int32_t robrt_notice_index_t;
+/* robrt_stream_index_t / robrt_notice_index_t 见 librobrt_common.h（两端共用） */
 
 /******************************************************************************
  *                          ConnectInfo（设备身份 / 凭证）
@@ -92,6 +87,9 @@ typedef void (*librobrt_on_connect_state_fn)(robrt_connect_state_t state,
 /**
  * 通知类消息（单向，不要求回包）
  * @param payload / service_id 仅回调栈内有效；如需跨栈持有，业务层自行深拷贝。
+ *
+ * 建议：若某个 notice_index 被业务定义为“切采集路径 / 切相机”控制命令，则它应只改变对端
+ * 当前 logical stream 的媒体来源，不应导致本端收到 on_stream_state 的伪关闭/伪重开回调。
  */
 typedef void (*librobrt_on_notice_fn)(robrt_notice_index_t index,
                                       const void *payload,
@@ -165,8 +163,13 @@ LIBROBRT_API_EXPORT robrt_err_t librobrt_stream_param_get_open_timeout_ms    (li
  *                          StreamCb
  ******************************************************************************/
 
-/** 流状态变化；reason 在异常状态时为原因错误码
- *  终态：收到 CLOSED / FAILED 后 handle 失效，不得再传入任何 API。
+/*
+ * 流状态变化；状态名语义以 librobrt_common.h 中 robrt_stream_state_t 注释为准。
+ *   - Client 正常路径：OPENING -> OPENED -> CLOSING -> CLOSED
+ *   - Client 异常路径：OPENING / OPENED -> FAILED
+ *   - CLOSED 与 FAILED 均为终态，且二者二选一；不会先 FAILED 再 CLOSED
+ *   - reason 仅在 state == ROBRT_STREAM_FAILED 时为失败原因；其余状态均为 ROBRT_OK
+ *   - 收到终态回调后 handle 失效，不得再传入任何 API
  */
 typedef void (*librobrt_on_stream_state_fn)(librobrt_stream_handle_t handle,
                                             robrt_stream_state_t state,
@@ -266,6 +269,9 @@ LIBROBRT_API_EXPORT robrt_err_t librobrt_disconnect(void);
  * @param out_handle  输出流句柄；ROBRT_OK 时即可用于 close_stream / get_stats。
  *                    在 OPENING 状态下调用 close_stream 合法，SDK 会中止协商并
  *                    最终推送 on_stream_state(CLOSED)。
+ *                    OPENED 仅表示接收链路和解码路径已就绪，不保证首帧已到达；
+ *                    对端若在同一 logical stream 内切换采集路径，本端不应因此收到
+ *                    额外的 OPENING/CLOSING/CLOSED 状态跳变。
  *
  * 失败返回：
  *   - ROBRT_ERR_STATE       当前未 CONNECTED
@@ -279,8 +285,9 @@ LIBROBRT_API_EXPORT robrt_err_t librobrt_open_stream(robrt_stream_index_t index,
 
 /**
  * 关闭订阅流；幂等。
- * 异步：函数返回后流进入 CLOSING，on_stream_state(CLOSED) 才真正释放 handle；
- * 收到 CLOSED 之前 handle 仍可传给其它 API（将返回 ROBRT_ERR_STATE）。
+ * 异步：函数返回后流进入 CLOSING，正常路径最终派发 on_stream_state(CLOSED)。
+ * close_stream 主动关闭路径不产出 FAILED；CLOSED 回调返回后 handle 真正失效。
+ * 收到终态之前 handle 仍可传给其它 API（将返回 ROBRT_ERR_STATE）。
  */
 LIBROBRT_API_EXPORT robrt_err_t librobrt_close_stream(librobrt_stream_handle_t handle);
 

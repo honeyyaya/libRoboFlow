@@ -27,9 +27,9 @@ robrt_err_t require_connected_locked(robrt::service::State& s) {
 
 extern "C" {
 
-robrt_err_t librobrt_svc_create_stream(int32_t stream_idx,
-                                        librobrt_svc_stream_param_t param,
-                                        librobrt_svc_stream_cb_t    cb,
+robrt_err_t librobrt_svc_create_stream(robrt_stream_index_t          stream_idx,
+                                        librobrt_svc_stream_param_t   param,
+                                        librobrt_svc_stream_cb_t      cb,
                                         librobrt_svc_stream_handle_t* out_handle) {
     if (!out_handle) return ROBRT_ERR_PARAM;
     *out_handle = nullptr;

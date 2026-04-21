@@ -2,7 +2,32 @@
 
 #include "internal/handles.h"
 
+#include <cstring>
 #include <new>
+#include <string>
+
+namespace {
+
+robrt_err_t copy_out(const std::string& s, char* buf, uint32_t buf_len, uint32_t* out_needed) {
+    if (s.empty()) return ROBRT_ERR_NOT_FOUND;
+
+    const auto sz     = static_cast<uint32_t>(s.size());
+    const auto needed = sz + 1u;
+    if (out_needed) *out_needed = needed;
+
+    if (!buf || buf_len == 0) return ROBRT_ERR_TRUNCATED;
+    if (buf_len < needed) {
+        const auto n = buf_len - 1u;
+        std::memcpy(buf, s.data(), n);
+        buf[n] = '\0';
+        return ROBRT_ERR_TRUNCATED;
+    }
+    std::memcpy(buf, s.data(), sz);
+    buf[sz] = '\0';
+    return ROBRT_OK;
+}
+
+}  // namespace
 
 extern "C" {
 
@@ -39,5 +64,20 @@ robrt_err_t librobrt_svc_connect_info_set_vendor_id(librobrt_svc_connect_info_t 
     info->vendor_id = v ? v : "";
     return ROBRT_OK;
 }
+
+#define SVC_CI_GET(field)                                                                     \
+    robrt_err_t librobrt_svc_connect_info_get_##field(librobrt_svc_connect_info_t info,       \
+                                                       char* buf, uint32_t buf_len,            \
+                                                       uint32_t* out_needed) {                 \
+        ROBRT_CHECK_HANDLE(info, robrt::service::kMagicConnectInfo);                          \
+        return copy_out(info->field, buf, buf_len, out_needed);                                \
+    }
+
+SVC_CI_GET(device_id)
+SVC_CI_GET(device_secret)
+SVC_CI_GET(product_key)
+SVC_CI_GET(vendor_id)
+
+#undef SVC_CI_GET
 
 }  // extern "C"

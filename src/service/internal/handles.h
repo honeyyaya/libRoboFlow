@@ -55,6 +55,19 @@ struct librobrt_svc_stream_param_s {
     uint32_t           lowest_kbps;
     uint32_t           highest_kbps;
     bool               enable_transcode;
+
+    /* 追踪每个字段是否被 setter 显式赋值过（NOT_FOUND vs 显式 0 的消歧） */
+    bool               has_in_codec;
+    bool               has_out_codec;
+    bool               has_src_size;
+    bool               has_out_size;
+    bool               has_fps;
+    bool               has_gop;
+    bool               has_rc_mode;
+    bool               has_qp;
+    bool               has_bitrate;
+    bool               has_dynamic_bitrate;
+    bool               has_enable_transcode;
 };
 
 struct librobrt_svc_stream_cb_s {
@@ -85,11 +98,23 @@ struct librobrt_svc_push_frame_s {
     uint32_t             seq;
     bool                 flush;
     uint32_t             offset;
+
+    /* 追踪每个字段是否被 setter 显式赋值过 */
+    bool                 has_codec;
+    bool                 has_type;
+    bool                 has_data;
+    bool                 has_size;
+    bool                 has_pts_ms;
+    bool                 has_utc_ms;
+    bool                 has_seq;
+    bool                 has_flush;
+    bool                 has_offset;
 };
 
 struct librobrt_svc_license_info_s {
     uint32_t    magic;
-    uint32_t    expire_time;
+    uint64_t    expire_time_sec;  /* Unix epoch (UTC), 0 = 永久授权 */
+    bool        loaded;           /* false = license 未成功加载 */
     std::string vendor_id;
     std::string product_key;
 };
