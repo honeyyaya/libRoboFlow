@@ -1,15 +1,15 @@
-#ifndef __ROBRT_CORE_THREAD_POOL_H__
-#define __ROBRT_CORE_THREAD_POOL_H__
+#ifndef __RFLOW_CORE_THREAD_POOL_H__
+#define __RFLOW_CORE_THREAD_POOL_H__
 
 #include <functional>
 
-namespace robrt::thread {
+namespace rflow::thread {
 
 bool initialize(int worker_count = 0);
 void shutdown();
 
 void post(std::function<void()> fn);
 
-}  // namespace robrt::thread
+}  // namespace rflow::thread
 
-#endif  // __ROBRT_CORE_THREAD_POOL_H__
+#endif  // __RFLOW_CORE_THREAD_POOL_H__

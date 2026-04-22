@@ -4,18 +4,18 @@
  *
  * 设计约束：
  *   - 一个进程持有一份 factory；按业务 index 管理多路 WebRtcPullStream；
- *   - 与对外 C API（librobrt_open_stream / librobrt_close_stream）一一对应；
+ *   - 与对外 C API（librflow_open_stream / librflow_close_stream）一一对应；
  *   - 当前协议无流级路由字段，**每路流独立一条信令连接**（role 内带 index 以便服务端区分）；
  *     未来若信令协议扩展 stream_id，可改为单连接多路复用。
  *
  * TODO:
- *   - 通过 librobrt_set_global_config 注入 signal_url；目前使用内置默认值。
- *   - 生命周期挂入 robrt::client::State，避免进程级单例。
- *   - 将 FrameSink / StateSink 与 librobrt_stream_cb 打通。
+ *   - 通过 librflow_set_global_config 注入 signal_url；目前使用内置默认值。
+ *   - 生命周期挂入 rflow::client::State，避免进程级单例。
+ *   - 将 FrameSink / StateSink 与 librflow_stream_cb 打通。
  */
 
-#ifndef __ROBRT_CLIENT_IMPL_WEBRTC_PULL_MANAGER_H__
-#define __ROBRT_CLIENT_IMPL_WEBRTC_PULL_MANAGER_H__
+#ifndef __RFLOW_CLIENT_IMPL_WEBRTC_PULL_MANAGER_H__
+#define __RFLOW_CLIENT_IMPL_WEBRTC_PULL_MANAGER_H__
 
 #include <cstdint>
 #include <memory>
@@ -23,12 +23,12 @@
 #include <string>
 #include <unordered_map>
 
-#include "robrt/librobrt_common.h"
+#include "rflow/librflow_common.h"
 
 #include "api/peer_connection_interface.h"
 #include "api/scoped_refptr.h"
 
-namespace robrt::client::impl {
+namespace rflow::client::impl {
 
 class WebRtcPullStream;
 
@@ -40,7 +40,7 @@ class WebRtcPullManager {
     WebRtcPullManager& operator=(const WebRtcPullManager&) = delete;
 
     // 懒初始化 factory；可重复调用。
-    robrt_err_t Init();
+    rflow_err_t Init();
     // 释放全部 stream 与 factory。
     void Shutdown();
 
@@ -48,9 +48,9 @@ class WebRtcPullManager {
     void SetSignalingUrl(std::string url);
 
     // 打开一路订阅流；index 不可重复。
-    robrt_err_t OpenStream(int32_t index, std::shared_ptr<WebRtcPullStream>* out);
+    rflow_err_t OpenStream(int32_t index, std::shared_ptr<WebRtcPullStream>* out);
     // 关闭一路订阅流；幂等。
-    robrt_err_t CloseStream(int32_t index);
+    rflow_err_t CloseStream(int32_t index);
 
     std::shared_ptr<WebRtcPullStream> FindStream(int32_t index);
 
@@ -66,6 +66,6 @@ class WebRtcPullManager {
     std::unordered_map<int32_t, std::shared_ptr<WebRtcPullStream>>  streams_;
 };
 
-}  // namespace robrt::client::impl
+}  // namespace rflow::client::impl
 
-#endif  // __ROBRT_CLIENT_IMPL_WEBRTC_PULL_MANAGER_H__
+#endif  // __RFLOW_CLIENT_IMPL_WEBRTC_PULL_MANAGER_H__

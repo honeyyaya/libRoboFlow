@@ -3,16 +3,16 @@
  * @brief  内部信令通道抽象（WS / 自研 / 直连模式）
 **/
 
-#ifndef __ROBRT_CORE_SIGNAL_H__
-#define __ROBRT_CORE_SIGNAL_H__
+#ifndef __RFLOW_CORE_SIGNAL_H__
+#define __RFLOW_CORE_SIGNAL_H__
 
-#include "robrt/librobrt_common.h"
+#include "rflow/librflow_common.h"
 
-namespace robrt::signal {
+namespace rflow::signal {
 
 bool initialize();
 void shutdown();
 
-}  // namespace robrt::signal
+}  // namespace rflow::signal
 
-#endif  // __ROBRT_CORE_SIGNAL_H__
+#endif  // __RFLOW_CORE_SIGNAL_H__

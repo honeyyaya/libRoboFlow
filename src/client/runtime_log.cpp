@@ -1,17 +1,17 @@
-#include "robrt/Client/librobrt_client_api.h"
+#include "rflow/Client/librflow_client_api.h"
 
 #include "common/internal/logger.h"
 
 extern "C" {
 
-robrt_err_t librobrt_log_set_level(robrt_log_level_t level) {
-    robrt::logger_set_level(level);
-    return ROBRT_OK;
+rflow_err_t librflow_log_set_level(rflow_log_level_t level) {
+    rflow::logger_set_level(level);
+    return RFLOW_OK;
 }
 
-robrt_err_t librobrt_log_set_callback(librobrt_log_cb_fn cb, void* userdata) {
-    robrt::logger_set_callback(cb, userdata);
-    return ROBRT_OK;
+rflow_err_t librflow_log_set_callback(librflow_log_cb_fn cb, void* userdata) {
+    rflow::logger_set_callback(cb, userdata);
+    return RFLOW_OK;
 }
 
 }  // extern "C"

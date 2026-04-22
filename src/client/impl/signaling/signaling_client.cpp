@@ -18,7 +18,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace robrt::client::impl {
+namespace rflow::client::impl {
 
 namespace {
 
@@ -60,7 +60,7 @@ SignalingClient::~SignalingClient() {
 }
 
 bool SignalingClient::Connect() {
-    ROBRT_LOGI("[Signaling] connect %s:%u role=%s", host_.c_str(), port_, role_.c_str());
+    RFLOW_LOGI("[Signaling] connect %s:%u role=%s", host_.c_str(), port_, role_.c_str());
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         if (on_error_) on_error_(std::string("socket: ") + strerror(errno));
@@ -82,7 +82,7 @@ bool SignalingClient::Connect() {
         return false;
     }
     sock_fd_.store(fd, std::memory_order_release);
-    ROBRT_LOGI("[Signaling] tcp connected");
+    RFLOW_LOGI("[Signaling] tcp connected");
 
     std::ostringstream reg;
     reg << "{\"type\":\"register\",\"role\":\"" << role_ << "\"}\n";
@@ -93,7 +93,7 @@ bool SignalingClient::Connect() {
         sock_fd_.store(-1, std::memory_order_release);
         return false;
     }
-    ROBRT_LOGI("[Signaling] registered role=%s", role_.c_str());
+    RFLOW_LOGI("[Signaling] registered role=%s", role_.c_str());
     return true;
 }
 
@@ -142,13 +142,13 @@ void SignalingClient::SendAnswer(const std::string& sdp) {
     oss << "{\"type\":\"answer\",\"sdp\":\"";
     JsonEscape(oss, sdp, /*include_ctrl=*/true);
     oss << "\"}";
-    ROBRT_LOGI("[Signaling] send answer bytes=%zu", sdp.size());
+    RFLOW_LOGI("[Signaling] send answer bytes=%zu", sdp.size());
     SendLine(oss.str());
 }
 
 void SignalingClient::SendIceCandidate(const std::string& mid, int mline_index,
                                        const std::string& candidate) {
-    ROBRT_LOGD("[Signaling] send ice mid=%s mline=%d len=%zu",
+    RFLOW_LOGD("[Signaling] send ice mid=%s mline=%d len=%zu",
                mid.c_str(), mline_index, candidate.size());
     std::ostringstream oss;
     oss << "{\"type\":\"ice\",\"mid\":\"" << mid << "\","
@@ -219,7 +219,7 @@ void SignalingClient::ParseAndDispatch(const std::string& line) {
         line.find("\"type\": \"offer\"") != std::string::npos) {
         std::string sdp;
         if (extract_sdp("\"sdp\":\"", sdp)) {
-            ROBRT_LOGI("[Signaling] recv offer bytes=%zu", sdp.size());
+            RFLOW_LOGI("[Signaling] recv offer bytes=%zu", sdp.size());
             if (on_offer_) on_offer_("offer", sdp);
         }
         return;
@@ -252,10 +252,10 @@ void SignalingClient::ParseAndDispatch(const std::string& line) {
                 }
             }
         }
-        ROBRT_LOGD("[Signaling] recv ice mid=%s mline=%d len=%zu",
+        RFLOW_LOGD("[Signaling] recv ice mid=%s mline=%d len=%zu",
                    mid.c_str(), mline, candidate.size());
         if (on_ice_ && !candidate.empty()) on_ice_(mid, mline, candidate);
     }
 }
 
-}  // namespace robrt::client::impl
+}  // namespace rflow::client::impl

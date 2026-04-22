@@ -3,8 +3,8 @@
  * @brief Android AMediaCodec H.264 解码器实现（从旧工程移植）。
  *
  * 迁移改动：
- *   - 命名空间：webrtc_demo -> robrt::client::impl；
- *   - 日志：__android_log_print / ALOG* -> ROBRT_LOGW / ROBRT_LOGI；
+ *   - 命名空间：webrtc_demo -> rflow::client::impl；
+ *   - 日志：__android_log_print / ALOG* -> RFLOW_LOGW / RFLOW_LOGI；
  *   - 移除对 encoded_tracking_bridge.h / video_decode_sink_timing_bridge.h 的依赖
  *     （旧工程的 E2E 追踪桥接暂未移植）。TODO: 接入 SDK 的 stream_stats / trace 能力。
  */
@@ -43,7 +43,7 @@
 #define AMEDIACODEC_BUFFER_FLAG_KEY_FRAME 1u
 #endif
 
-namespace robrt::client::impl {
+namespace rflow::client::impl {
 
 namespace {
 
@@ -353,7 +353,7 @@ struct AndroidMediaCodecVideoDecoder::Impl {
         }
         codec_ = AMediaCodec_createDecoderByType("video/avc");
         if (!codec_) {
-            ROBRT_LOGW("[mc_dec] AMediaCodec_createDecoderByType failed");
+            RFLOW_LOGW("[mc_dec] AMediaCodec_createDecoderByType failed");
             return false;
         }
         AMediaFormat* format = AMediaFormat_new();
@@ -366,14 +366,14 @@ struct AndroidMediaCodecVideoDecoder::Impl {
         media_status_t st = AMediaCodec_configure(codec_, format, nullptr, nullptr, 0);
         AMediaFormat_delete(format);
         if (st != AMEDIA_OK) {
-            ROBRT_LOGW("[mc_dec] AMediaCodec_configure failed: %d", static_cast<int>(st));
+            RFLOW_LOGW("[mc_dec] AMediaCodec_configure failed: %d", static_cast<int>(st));
             AMediaCodec_delete(codec_);
             codec_ = nullptr;
             return false;
         }
         st = AMediaCodec_start(codec_);
         if (st != AMEDIA_OK) {
-            ROBRT_LOGW("[mc_dec] AMediaCodec_start failed: %d", static_cast<int>(st));
+            RFLOW_LOGW("[mc_dec] AMediaCodec_start failed: %d", static_cast<int>(st));
             AMediaCodec_delete(codec_);
             codec_ = nullptr;
             return false;
@@ -471,13 +471,13 @@ struct AndroidMediaCodecVideoDecoder::Impl {
                         if (delivered_frames) ++(*delivered_frames);
                         // TODO: E2E 耗时追踪已随 encoded_tracking_bridge 移除，后续由 SDK 统一 stats 实现。
                     } else {
-                        ROBRT_LOGW("[mc_dec] NV12->I420 failed w=%d h=%d stride=%d slice=%d color=%d",
+                        RFLOW_LOGW("[mc_dec] NV12->I420 failed w=%d h=%d stride=%d slice=%d color=%d",
                                    out_width_, out_height_, y_stride_, slice_height_,
                                    static_cast<int>(color_format_));
                     }
                 }
             } else if (info.size > 0 && out_width_ > 0 && out_height_ > 0 && cb) {
-                ROBRT_LOGW("[mc_dec] unsupported color format %d",
+                RFLOW_LOGW("[mc_dec] unsupported color format %d",
                            static_cast<int>(color_format_));
             }
 
@@ -503,7 +503,7 @@ struct AndroidMediaCodecVideoDecoder::Impl {
 
         ssize_t in_idx = AMediaCodec_dequeueInputBuffer(codec_, kDequeueInputTimeoutUs);
         if (in_idx < 0) {
-            ROBRT_LOGW("[mc_dec] dequeueInputBuffer failed: %zd", in_idx);
+            RFLOW_LOGW("[mc_dec] dequeueInputBuffer failed: %zd", in_idx);
             DrainOutputs(render_time_ms, rtp_timestamp, kDrainOnInputBackpressureUs,
                          nullptr, video_frame_tracking_id);
             return;
@@ -512,7 +512,7 @@ struct AndroidMediaCodecVideoDecoder::Impl {
         size_t in_cap = 0;
         uint8_t* in_buf = AMediaCodec_getInputBuffer(codec_, static_cast<size_t>(in_idx), &in_cap);
         if (!in_buf || feed_sz > in_cap) {
-            ROBRT_LOGW("[mc_dec] input buffer too small: need=%zu cap=%zu", feed_sz, in_cap);
+            RFLOW_LOGW("[mc_dec] input buffer too small: need=%zu cap=%zu", feed_sz, in_cap);
             AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(in_idx), 0, 0, 0, 0);
             return;
         }
@@ -525,7 +525,7 @@ struct AndroidMediaCodecVideoDecoder::Impl {
         media_status_t st = AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(in_idx),
                                                            0, feed_sz, pts_us, flags);
         if (st != AMEDIA_OK) {
-            ROBRT_LOGW("[mc_dec] queueInputBuffer failed: %d", static_cast<int>(st));
+            RFLOW_LOGW("[mc_dec] queueInputBuffer failed: %d", static_cast<int>(st));
             AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(in_idx), 0, 0, 0, 0);
             return;
         }
@@ -578,7 +578,7 @@ int32_t AndroidMediaCodecVideoDecoder::Decode(const webrtc::EncodedImage& input_
     if (sz == 0 || !input_image.data()) {
         static std::atomic<int> empty_warn{0};
         if (empty_warn.fetch_add(1) < 5) {
-            ROBRT_LOGW("[mc_dec] Decode called empty: sz=%zu", sz);
+            RFLOW_LOGW("[mc_dec] Decode called empty: sz=%zu", sz);
         }
         return WEBRTC_VIDEO_CODEC_ERROR;
     }
@@ -637,4 +637,4 @@ webrtc::VideoDecoder::DecoderInfo AndroidMediaCodecVideoDecoder::GetDecoderInfo(
     return info;
 }
 
-}  // namespace robrt::client::impl
+}  // namespace rflow::client::impl

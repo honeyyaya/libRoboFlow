@@ -5,11 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "robrt/Client/librobrt_client_api.h"
+#include "rflow/Client/librflow_client_api.h"
 
-static void print_err(const char *what, robrt_err_t err) {
-    fprintf(stderr, "%s: %s (%d)\n", what, librobrt_err_to_string(err), (int)err);
-    const char *le = librobrt_get_last_error();
+static void print_err(const char *what, rflow_err_t err) {
+    fprintf(stderr, "%s: %s (%d)\n", what, librflow_err_to_string(err), (int)err);
+    const char *le = librflow_get_last_error();
     if (le && le[0] != '\0') {
         fprintf(stderr, "  last_error: %s\n", le);
     }
@@ -17,41 +17,41 @@ static void print_err(const char *what, robrt_err_t err) {
 
 int main(void) {
     uint32_t maj = 0, min = 0, pat = 0;
-    librobrt_get_version(&maj, &min, &pat);
-    printf("librobrt_client version %u.%u.%u\n", maj, min, pat);
-    const char *build = librobrt_get_build_info();
+    librflow_get_version(&maj, &min, &pat);
+    printf("librflow_client version %u.%u.%u\n", maj, min, pat);
+    const char *build = librflow_get_build_info();
     if (build) {
         printf("%s\n", build);
     }
 
-    librobrt_global_config_t gcfg = librobrt_global_config_create();
+    librflow_global_config_t gcfg = librflow_global_config_create();
     if (!gcfg) {
-        fprintf(stderr, "librobrt_global_config_create failed\n");
+        fprintf(stderr, "librflow_global_config_create failed\n");
         return EXIT_FAILURE;
     }
 
     /* 最小配置：未设置 log/signal/license 时亦可 init（实际连设备前需补全信令等） */
-    robrt_err_t err = librobrt_set_global_config(gcfg);
-    librobrt_global_config_destroy(gcfg);
+    rflow_err_t err = librflow_set_global_config(gcfg);
+    librflow_global_config_destroy(gcfg);
     gcfg = NULL;
-    if (err != ROBRT_OK) {
-        print_err("librobrt_set_global_config", err);
+    if (err != RFLOW_OK) {
+        print_err("librflow_set_global_config", err);
         return EXIT_FAILURE;
     }
 
-    err = librobrt_init();
-    if (err != ROBRT_OK) {
-        print_err("librobrt_init", err);
+    err = librflow_init();
+    if (err != RFLOW_OK) {
+        print_err("librflow_init", err);
         return EXIT_FAILURE;
     }
-    printf("librobrt_init OK\n");
+    printf("librflow_init OK\n");
 
-    err = librobrt_uninit();
-    if (err != ROBRT_OK) {
-        print_err("librobrt_uninit", err);
+    err = librflow_uninit();
+    if (err != RFLOW_OK) {
+        print_err("librflow_uninit", err);
         return EXIT_FAILURE;
     }
-    printf("librobrt_uninit OK\n");
+    printf("librflow_uninit OK\n");
 
     return EXIT_SUCCESS;
 }

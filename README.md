@@ -6,14 +6,14 @@
 ComVideoSDK
 ├── CMakeLists.txt                       # 顶层构建入口
 ├── include/
-│   └── robrt/
-│       ├── librobrt_version.h           # 版本号宏
-│       ├── librobrt_typedef.h           # 平台/导出宏/基础类型
-│       ├── librobrt_common.h            # Client & Service 共享：错误码/枚举/共享 opaque
+│   └── rflow/
+│       ├── librflow_version.h           # 版本号宏
+│       ├── librflow_typedef.h           # 平台/导出宏/基础类型
+│       ├── librflow_common.h            # Client & Service 共享：错误码/枚举/共享 opaque
 │       ├── Client/
-│       │   └── librobrt_client_api.h
+│       │   └── librflow_client_api.h
 │       └── Service/
-│           └── librobrt_service_api.h
+│           └── librflow_service_api.h
 ├── src/
 │   ├── common/                          # 共享 opaque 对象的 C ABI 胶水层
 │   │   ├── internal/                    # 内部 struct 定义（opaque 真身）
@@ -26,10 +26,10 @@ ComVideoSDK
 │   │   ├── rtc/                         # WebRTC 封装
 │   │   ├── signal/                      # 信令通道
 │   │   └── thread/                      # 线程池
-│   ├── client/                          # Android arm64 → librobrt_client.so
+│   ├── client/                          # Android arm64 → librflow_client.so
 │   │   ├── CMakeLists.txt
 │   │   └── internal/                    # Client 专属 opaque 真身 + 全局 state
-│   └── service/                         # Linux arm64 → librobrt_svc.so
+│   └── service/                         # Linux arm64 → librflow_svc.so
 │       ├── CMakeLists.txt
 │       └── internal/                    # Service 专属 opaque 真身 + 全局 state
 ├── docs/
@@ -45,39 +45,39 @@ ComVideoSDK
 ```bash
 cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Release \
-    -DROBRT_BUILD_CLIENT=ON \
-    -DROBRT_BUILD_SERVICE=ON
+    -DRFLOW_BUILD_CLIENT=ON \
+    -DRFLOW_BUILD_SERVICE=ON
 cmake --build build -j
 ```
 
 产物：
-- `build/src/client/librobrt_client.so` — Client（Android arm64）
-- `build/src/service/librobrt_svc.so`   — Service（Linux arm64）
+- `build/src/client/librflow_client.so` — Client（Android arm64）
+- `build/src/service/librflow_svc.so`   — Service（Linux arm64）
 
 常用选项：
 
 | 选项 | 默认 | 含义 |
 |---|---|---|
-| `ROBRT_BUILD_CLIENT`  | ON  | 生成 `librobrt_client` |
-| `ROBRT_BUILD_SERVICE` | ON  | 生成 `librobrt_svc` |
-| `ROBRT_BUILD_SHARED`  | ON  | `SHARED=.so` / `OFF=.a` |
-| `ROBRT_ENABLE_WERROR` | OFF | `-Werror` |
+| `RFLOW_BUILD_CLIENT`  | ON  | 生成 `librflow_client` |
+| `RFLOW_BUILD_SERVICE` | ON  | 生成 `librflow_svc` |
+| `RFLOW_BUILD_SHARED`  | ON  | `SHARED=.so` / `OFF=.a` |
+| `RFLOW_ENABLE_WERROR` | OFF | `-Werror` |
 
 ## 角色分工
 
 | 端 | 运行平台 | 动作 | 对应 SDK 函数前缀 |
 |---|---|---|---|
-| **Client**  | Android arm64（native C++，不经 JVM/Context） | 订阅拉流 → 解码前/后帧回调 | `librobrt_` |
-| **Service** | Linux arm64（设备/边缘） | 采集/编码/转码 → 发布订阅端 | `librobrt_svc_` |
+| **Client**  | Android arm64（native C++，不经 JVM/Context） | 订阅拉流 → 解码前/后帧回调 | `librflow_` |
+| **Service** | Linux arm64（设备/边缘） | 采集/编码/转码 → 发布订阅端 | `librflow_svc_` |
 
-共享部分（`log_config` / `signal_config` / `license_config` / `global_config` / `video_frame` / `stream_stats` / 内存释放 / 错误与版本 API）前缀统一为 `librobrt_`，两端库各自实现导出。
+共享部分（`log_config` / `signal_config` / `license_config` / `global_config` / `video_frame` / `stream_stats` / 内存释放 / 错误与版本 API）前缀统一为 `librflow_`，两端库各自实现导出。
 
 ## ABI 策略
 
 1. 全部对外类型为 **opaque 指针**：`typedef struct xxx_s* xxx_t;`
 2. 配置对象：`create` / `destroy` + `set_*` / `get_*`
 3. 回调信息对象（frame / stats）：**只读 opaque 句柄 + `get_*`**，栈内有效；跨栈持有用 `retain` / `release`
-4. 错误码分段：通用 `0x0xxx` / 连接 `0x1xxx` / 流 `0x2xxx`；错误文本走 **thread-local** `librobrt_get_last_error()`
+4. 错误码分段：通用 `0x0xxx` / 连接 `0x1xxx` / 流 `0x2xxx`；错误文本走 **thread-local** `librflow_get_last_error()`
 5. 枚举 **只增不改**；函数签名 **只增不改**；添加能力用新函数名
 6. 每个 opaque 结构体在内部实现中带 `magic` 字段，便于野指针检测（见 `src/common/internal/handle.h`）
 

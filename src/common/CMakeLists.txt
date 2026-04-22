@@ -1,6 +1,6 @@
 # src/common — Client / Service 共享实现
 # 生成对象库，由 client / service 目标各自链接
-add_library(robrt_common OBJECT
+add_library(rflow_common OBJECT
     error/last_error.cpp
 
     log/log_config.cpp
@@ -17,11 +17,11 @@ add_library(robrt_common OBJECT
     util/version.cpp
 )
 
-target_include_directories(robrt_common
+target_include_directories(rflow_common
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(robrt_common PRIVATE robrt_warnings)
+target_link_libraries(rflow_common PRIVATE rflow_warnings)
