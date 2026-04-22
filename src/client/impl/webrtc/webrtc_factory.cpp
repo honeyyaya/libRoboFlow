@@ -15,7 +15,7 @@
 #include "rtc_base/thread.h"
 
 #if defined(WEBRTC_ANDROID)
-#  include "android_hw_video_decoder_factory.h"
+#  include "decoder/android/android_hw_video_decoder_factory.h"
 #endif
 
 namespace robrt::client::impl {

@@ -1,8 +1,8 @@
 #include "webrtc_pull_manager.h"
 
-#include "signaling_client.h"
-#include "webrtc_factory.h"
-#include "webrtc_pull_stream.h"
+#include "signaling/signaling_client.h"
+#include "webrtc/webrtc_factory.h"
+#include "webrtc/webrtc_pull_stream.h"
 
 #include "common/internal/logger.h"
 
