@@ -6,15 +6,15 @@
  * 一个 magic 字段，便于调试时检测野指针。
 **/
 
-#ifndef __ROBRT_INTERNAL_HANDLE_H__
-#define __ROBRT_INTERNAL_HANDLE_H__
+#ifndef __RFLOW_INTERNAL_HANDLE_H__
+#define __RFLOW_INTERNAL_HANDLE_H__
 
 #include <atomic>
 #include <cstdint>
 
-#include "robrt/librobrt_common.h"
+#include "rflow/librflow_common.h"
 
-namespace robrt {
+namespace rflow {
 
 constexpr uint32_t kMagicLogConfig     = 0x52624C47;  // 'RbLG'
 constexpr uint32_t kMagicSignalConfig  = 0x52625347;  // 'RbSG'
@@ -23,12 +23,12 @@ constexpr uint32_t kMagicGlobalConfig  = 0x52624743;  // 'RbGC'
 constexpr uint32_t kMagicVideoFrame    = 0x52625646;  // 'RbVF'
 constexpr uint32_t kMagicStreamStats   = 0x52625354;  // 'RbST'
 
-#define ROBRT_CHECK_HANDLE(ptr, expected_magic)                  \
+#define RFLOW_CHECK_HANDLE(ptr, expected_magic)                  \
     do {                                                         \
         if ((ptr) == nullptr || (ptr)->magic != (expected_magic)) \
-            return ROBRT_ERR_PARAM;                              \
+            return RFLOW_ERR_PARAM;                              \
     } while (0)
 
-}  // namespace robrt
+}  // namespace rflow
 
-#endif  // __ROBRT_INTERNAL_HANDLE_H__
+#endif  // __RFLOW_INTERNAL_HANDLE_H__

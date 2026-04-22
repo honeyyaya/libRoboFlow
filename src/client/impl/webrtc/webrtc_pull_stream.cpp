@@ -20,7 +20,7 @@
 #include "rtc_base/thread.h"
 #include "system_wrappers/include/field_trial.h"
 
-namespace robrt::client::impl {
+namespace rflow::client::impl {
 
 namespace {
 
@@ -96,7 +96,7 @@ class WebRtcPullStream::FrameAdapter final
             sink = owner_->frame_sink_;
         }
         if (sink) sink(frame);
-        // TODO: 在这里对接 librobrt_stream_cb::on_video，走 SDK 统一分发线程。
+        // TODO: 在这里对接 librflow_stream_cb::on_video，走 SDK 统一分发线程。
     }
 
  private:
@@ -112,7 +112,7 @@ class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnecti
     void OnDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface>) override {}
 
     void OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState s) override {
-        ROBRT_LOGD("[pull idx=%d] IceGatheringState=%d", stream_->index_, static_cast<int>(s));
+        RFLOW_LOGD("[pull idx=%d] IceGatheringState=%d", stream_->index_, static_cast<int>(s));
     }
 
     void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override {
@@ -126,18 +126,18 @@ class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnecti
     void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState s) override {
         using PCS = webrtc::PeerConnectionInterface::PeerConnectionState;
         if (s == PCS::kConnected) {
-            stream_->EmitState(ROBRT_STREAM_OPENED, ROBRT_OK);
-            // TODO: 启动 stats 采集（robrt_stream_stats_t 周期派发）。
+            stream_->EmitState(RFLOW_STREAM_OPENED, RFLOW_OK);
+            // TODO: 启动 stats 采集（rflow_stream_stats_t 周期派发）。
         } else if (s == PCS::kFailed) {
-            stream_->EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_CONN_FAIL);
+            stream_->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_FAIL);
         } else if (s == PCS::kDisconnected || s == PCS::kClosed) {
-            stream_->EmitState(ROBRT_STREAM_CLOSED, ROBRT_OK);
+            stream_->EmitState(RFLOW_STREAM_CLOSED, RFLOW_OK);
         }
     }
 
     void OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState s) override {
         if (s == webrtc::PeerConnectionInterface::kIceConnectionFailed) {
-            ROBRT_LOGW("[pull idx=%d] ICE connection failed", stream_->index_);
+            RFLOW_LOGW("[pull idx=%d] ICE connection failed", stream_->index_);
         }
     }
 
@@ -194,7 +194,7 @@ void WebRtcPullStream::SetStateSink(StateSink sink) {
     state_sink_ = std::move(sink);
 }
 
-void WebRtcPullStream::EmitState(robrt_stream_state_t state, robrt_err_t reason) {
+void WebRtcPullStream::EmitState(rflow_stream_state_t state, rflow_err_t reason) {
     stream_state_.store(state, std::memory_order_release);
     StateSink s;
     {
@@ -218,18 +218,18 @@ bool WebRtcPullStream::Start() {
         HandleRemoteIceCandidate(mid, mline, cand);
     });
     signaling_->SetOnError([this](const std::string& err) {
-        ROBRT_LOGW("[pull idx=%d] signaling error: %s", index_, err.c_str());
-        EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_CONN_NETWORK);
+        RFLOW_LOGW("[pull idx=%d] signaling error: %s", index_, err.c_str());
+        EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_NETWORK);
     });
 
-    EmitState(ROBRT_STREAM_OPENING, ROBRT_OK);
+    EmitState(RFLOW_STREAM_OPENING, RFLOW_OK);
     if (!signaling_->Start()) {
-        ROBRT_LOGE("[pull idx=%d] signaling start failed", index_);
+        RFLOW_LOGE("[pull idx=%d] signaling start failed", index_);
         signaling_.reset();
-        EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_CONN_NETWORK);
+        EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_NETWORK);
         return false;
     }
-    ROBRT_LOGI("[pull idx=%d] signaling started, waiting for offer...", index_);
+    RFLOW_LOGI("[pull idx=%d] signaling started, waiting for offer...", index_);
     return true;
 }
 
@@ -255,7 +255,7 @@ void WebRtcPullStream::Close() {
         peer_connection_->Close();
         peer_connection_ = nullptr;
     }
-    EmitState(ROBRT_STREAM_CLOSED, ROBRT_OK);
+    EmitState(RFLOW_STREAM_CLOSED, RFLOW_OK);
 }
 
 void WebRtcPullStream::EnsureFactoryFieldTrials() {
@@ -271,7 +271,7 @@ void WebRtcPullStream::EnsureFactoryFieldTrials() {
 void WebRtcPullStream::CreatePeerConnectionLocked() {
     EnsureFactoryFieldTrials();
     if (!factory_) {
-        ROBRT_LOGE("[pull idx=%d] factory null", index_);
+        RFLOW_LOGE("[pull idx=%d] factory null", index_);
         return;
     }
 
@@ -292,9 +292,9 @@ void WebRtcPullStream::CreatePeerConnectionLocked() {
     webrtc::PeerConnectionDependencies deps(observer_.get());
     auto result = factory_->CreatePeerConnectionOrError(config, std::move(deps));
     if (!result.ok()) {
-        ROBRT_LOGE("[pull idx=%d] CreatePeerConnection failed: %s",
+        RFLOW_LOGE("[pull idx=%d] CreatePeerConnection failed: %s",
                    index_, result.error().message());
-        EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_FAIL);
+        EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
         return;
     }
     peer_connection_ = result.MoveValue();
@@ -302,7 +302,7 @@ void WebRtcPullStream::CreatePeerConnectionLocked() {
 
 void WebRtcPullStream::HandleOffer(const std::string& type, const std::string& sdp) {
     if (closed_.load(std::memory_order_acquire)) return;
-    ROBRT_LOGI("[pull idx=%d] recv offer, creating answer...", index_);
+    RFLOW_LOGI("[pull idx=%d] recv offer, creating answer...", index_);
 
     pending_remote_ice_.clear();
     remote_description_applied_     = false;
@@ -317,9 +317,9 @@ void WebRtcPullStream::HandleOffer(const std::string& type, const std::string& s
     webrtc::SdpType sdp_type = SdpTypeFromOfferAnswerString(type);
     auto remote = webrtc::CreateSessionDescription(sdp_type, sdp, &err);
     if (!remote) {
-        ROBRT_LOGE("[pull idx=%d] parse remote sdp failed: %s",
+        RFLOW_LOGE("[pull idx=%d] parse remote sdp failed: %s",
                    index_, err.description.c_str());
-        EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_PARAM);
+        EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_PARAM);
         return;
     }
 
@@ -327,11 +327,11 @@ void WebRtcPullStream::HandleOffer(const std::string& type, const std::string& s
         [this](webrtc::RTCError error) {
             pending_set_remote_observer_ = nullptr;
             if (!error.ok()) {
-                ROBRT_LOGE("[pull idx=%d] SetRemoteDescription failed: %s",
+                RFLOW_LOGE("[pull idx=%d] SetRemoteDescription failed: %s",
                            index_, error.message());
                 remote_description_applied_ = false;
                 pending_remote_ice_.clear();
-                EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_FAIL);
+                EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 return;
             }
             remote_description_applied_ = true;
@@ -359,43 +359,43 @@ void WebRtcPullStream::DoCreateAnswerAfterSetRemote() {
                std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
             pending_create_answer_observer_ = nullptr;
             if (!e.ok() || !desc) {
-                ROBRT_LOGE("[pull idx=%d] CreateAnswer failed: %s",
+                RFLOW_LOGE("[pull idx=%d] CreateAnswer failed: %s",
                            index_, e.ok() ? "desc null" : e.message());
-                EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_FAIL);
+                EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 return;
             }
             std::string answer_sdp;
             if (!desc->ToString(&answer_sdp) || answer_sdp.empty()) {
-                ROBRT_LOGE("[pull idx=%d] answer sdp ToString failed", index_);
-                EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_FAIL);
+                RFLOW_LOGE("[pull idx=%d] answer sdp ToString failed", index_);
+                EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 return;
             }
-            ROBRT_LOGI("[pull idx=%d] CreateAnswer ok, sdp_bytes=%zu",
+            RFLOW_LOGI("[pull idx=%d] CreateAnswer ok, sdp_bytes=%zu",
                        index_, answer_sdp.size());
 
             pending_set_local_observer_ = webrtc::make_ref_counted<SetLocalDescObserver>(
                 [this, answer_sdp]() {
                     pending_set_local_observer_ = nullptr;
                     if (!signaling_) {
-                        ROBRT_LOGW("[pull idx=%d] SetLocal ok but signaling gone", index_);
+                        RFLOW_LOGW("[pull idx=%d] SetLocal ok but signaling gone", index_);
                         return;
                     }
                     signaling_->SendAnswer(answer_sdp);
-                    ROBRT_LOGI("[pull idx=%d] answer sent", index_);
+                    RFLOW_LOGI("[pull idx=%d] answer sent", index_);
                 },
                 [this](webrtc::RTCError er) {
                     pending_set_local_observer_ = nullptr;
-                    ROBRT_LOGE("[pull idx=%d] SetLocalDescription failed: %s",
+                    RFLOW_LOGE("[pull idx=%d] SetLocalDescription failed: %s",
                                index_, er.message());
-                    EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_FAIL);
+                    EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 });
             peer_connection_->SetLocalDescription(pending_set_local_observer_.get(),
                                                    desc.release());
         },
         [this](webrtc::RTCError e) {
             pending_create_answer_observer_ = nullptr;
-            ROBRT_LOGE("[pull idx=%d] CreateAnswer OnFailure: %s", index_, e.message());
-            EmitState(ROBRT_STREAM_FAILED, ROBRT_ERR_FAIL);
+            RFLOW_LOGE("[pull idx=%d] CreateAnswer OnFailure: %s", index_, e.message());
+            EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
         });
     peer_connection_->CreateAnswer(pending_create_answer_observer_.get(),
                                    webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
@@ -408,21 +408,21 @@ void WebRtcPullStream::AddRemoteIceCandidateNow(const std::string& mid, int mlin
     webrtc::IceCandidateInterface* cand =
         webrtc::CreateIceCandidate(mid, mline_index, candidate, &err);
     if (!cand) {
-        ROBRT_LOGW("[pull idx=%d] CreateIceCandidate failed: %s mid=%s mline=%d",
+        RFLOW_LOGW("[pull idx=%d] CreateIceCandidate failed: %s mid=%s mline=%d",
                    index_, err.description.c_str(), mid.c_str(), mline_index);
         return;
     }
     bool ok = peer_connection_->AddIceCandidate(cand);
     delete cand;
     if (!ok) {
-        ROBRT_LOGW("[pull idx=%d] AddIceCandidate returned false mid=%s mline=%d",
+        RFLOW_LOGW("[pull idx=%d] AddIceCandidate returned false mid=%s mline=%d",
                    index_, mid.c_str(), mline_index);
     }
 }
 
 void WebRtcPullStream::FlushPendingRemoteIceCandidates() {
     if (pending_remote_ice_.empty()) return;
-    ROBRT_LOGD("[pull idx=%d] flush pending ice, n=%zu",
+    RFLOW_LOGD("[pull idx=%d] flush pending ice, n=%zu",
                index_, pending_remote_ice_.size());
     for (const auto& p : pending_remote_ice_) {
         AddRemoteIceCandidateNow(p.mid, p.mline_index, p.candidate);
@@ -434,11 +434,11 @@ void WebRtcPullStream::HandleRemoteIceCandidate(const std::string& mid, int mlin
                                                  const std::string& candidate) {
     if (!peer_connection_ || !remote_description_applied_) {
         pending_remote_ice_.push_back(PendingRemoteIce{mid, mline_index, candidate});
-        ROBRT_LOGD("[pull idx=%d] enqueue remote ice, size=%zu",
+        RFLOW_LOGD("[pull idx=%d] enqueue remote ice, size=%zu",
                    index_, pending_remote_ice_.size());
         return;
     }
     AddRemoteIceCandidateNow(mid, mline_index, candidate);
 }
 
-}  // namespace robrt::client::impl
+}  // namespace rflow::client::impl

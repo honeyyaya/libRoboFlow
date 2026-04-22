@@ -1,16 +1,16 @@
-#include "robrt/librobrt_common.h"
-#include "robrt/librobrt_version.h"
+#include "rflow/librflow_common.h"
+#include "rflow/librflow_version.h"
 
 extern "C" {
 
-void librobrt_get_version(uint32_t* major, uint32_t* minor, uint32_t* patch) {
-    if (major) *major = LIBROBRT_MAJOR;
-    if (minor) *minor = LIBROBRT_MINOR;
-    if (patch) *patch = LIBROBRT_MICRO;
+void librflow_get_version(uint32_t* major, uint32_t* minor, uint32_t* patch) {
+    if (major) *major = LIBRFLOW_MAJOR;
+    if (minor) *minor = LIBRFLOW_MINOR;
+    if (patch) *patch = LIBRFLOW_MICRO;
 }
 
-const char* librobrt_get_build_info(void) {
-    return "robrt "
+const char* librflow_get_build_info(void) {
+    return "rflow "
 #ifdef COMMIT_VERSION
            COMMIT_VERSION
 #else

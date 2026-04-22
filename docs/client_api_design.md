@@ -1,6 +1,6 @@
 # Client SDK 对外接口设计文档
 
-> 对应头文件：`include/robrt/Client/librobrt_client_api.h`  
+> 对应头文件：`include/rflow/Client/librflow_client_api.h`  
 > 目标平台：Android arm64（native C++，不经 JVM / Context），Linux arm64 次级  
 > 内部实现：封装 WebRTC。Client 端仅负责**订阅拉流 + 解码前/后帧回调**，**不做编码**（编码在 Service 端）  
 > ABI 策略：纯 C 导出 + Opaque Handle + Getter / Setter → 结构体布局永不暴露，字段随便加
@@ -16,7 +16,7 @@
 | set / get | 字段读写经 accessor 完成；未来增字段只加函数，不破 ABI |
 | 回调对象也 opaque | `video_frame` / `stream_stats` 只读 opaque 句柄，靠 getter 取值（音频暂不支持） |
 | 幂等强清理 | `uninit` / `disconnect` / `close_stream` 必须幂等；上层无需保证关闭顺序 |
-| 回调线程独立 | 所有回调在 SDK 内部工作线程触发；回调内**禁止阻塞**、**禁止调用 SDK 同步 API**（仅 `close_stream` / `retain` / `release` / `librobrt_reply_to_service_req` 等白名单函数安全） |
+| 回调线程独立 | 所有回调在 SDK 内部工作线程触发；回调内**禁止阻塞**、**禁止调用 SDK 同步 API**（仅 `close_stream` / `retain` / `release` / `librflow_reply_to_service_req` 等白名单函数安全） |
 | 内存所有权明确 | 入参 SDK 只读；出参字符串/buffer 由 SDK 分配，配套 `_free` |
 | 错误码分段 | 通用 `0x0xxx` / 连接 `0x1xxx` / 流 `0x2xxx`；错误文本走 thread-local 的 `get_last_error` |
 
@@ -93,7 +93,7 @@ stateDiagram-v2
     CONNECTED --> UNINIT: uninit() [内部先 disconnect]
 ```
 
-### 3.2 连接状态（robrt_connect_state_t）
+### 3.2 连接状态（rflow_connect_state_t）
 
 ```mermaid
 stateDiagram-v2
@@ -106,7 +106,7 @@ stateDiagram-v2
     DISCONNECTED --> [*]
 ```
 
-### 3.3 流状态（robrt_stream_state_t）
+### 3.3 流状态（rflow_stream_state_t）
 
 ```mermaid
 stateDiagram-v2
@@ -131,7 +131,7 @@ stateDiagram-v2
 sequenceDiagram
     autonumber
     participant APP as 业务层
-    participant SDK as librobrt_client
+    participant SDK as librflow_client
 
     Note over APP,SDK: ---- 阶段 1：配置 + 初始化 ----
     APP->>SDK: log_config_create()
@@ -150,13 +150,13 @@ sequenceDiagram
     APP->>SDK: set_global_config(g_cfg)
     APP->>SDK: log_config_destroy / signal_config_destroy / ...
     APP->>SDK: init()
-    SDK-->>APP: ROBRT_OK
+    SDK-->>APP: RFLOW_OK
 
     Note over APP,SDK: ---- 阶段 2：建立连接 ----
     APP->>SDK: connect_info_create / set_device_id / set_device_secret
     APP->>SDK: connect_cb_create / set_on_state / set_on_notice / ...
     APP->>SDK: connect(info, cb)
-    SDK-->>APP: ROBRT_OK
+    SDK-->>APP: RFLOW_OK
     SDK-->>APP: on_state(CONNECTING)
     SDK-->>APP: on_state(CONNECTED)
     APP->>SDK: connect_info_destroy / connect_cb_destroy
@@ -165,7 +165,7 @@ sequenceDiagram
     APP->>SDK: stream_param_create / set_preferred_codec(H264)
     APP->>SDK: stream_cb_create / set_on_video / set_on_state
     APP->>SDK: open_stream(index=0, param, cb, &h)
-    SDK-->>APP: ROBRT_OK, handle=h
+    SDK-->>APP: RFLOW_OK, handle=h
     SDK-->>APP: on_stream_state(h, OPENING)
     SDK-->>APP: on_stream_state(h, OPENED)
     loop 媒体循环
@@ -181,7 +181,7 @@ sequenceDiagram
     APP->>SDK: disconnect()
     SDK-->>APP: on_state(DISCONNECTED)
     APP->>SDK: uninit()
-    SDK-->>APP: ROBRT_OK
+    SDK-->>APP: RFLOW_OK
 ```
 
 ### 4.2 异常场景：上层只调 uninit（幂等强清理）
@@ -190,7 +190,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant APP as 业务层
-    participant SDK as librobrt_client
+    participant SDK as librflow_client
 
     APP->>SDK: init()
     APP->>SDK: connect(...)
@@ -207,7 +207,7 @@ sequenceDiagram
     SDK->>SDK: 内部 disconnect
     SDK-->>APP: on_state(DISCONNECTED)
     SDK->>SDK: 释放全局资源
-    SDK-->>APP: ROBRT_OK
+    SDK-->>APP: RFLOW_OK
 ```
 
 ### 4.3 服务端下发请求消息（on_service_req 异步回包）
@@ -216,7 +216,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant SRV as 远端 Service
-    participant SDK as librobrt_client
+    participant SDK as librflow_client
     participant APP as 业务层
     participant BIZ as 业务工作线程
 
@@ -225,7 +225,7 @@ sequenceDiagram
     APP->>BIZ: 丢到业务线程处理
     Note over APP,SDK: on_service_req 立刻返回，回调线程不阻塞
     BIZ-->>BIZ: 业务处理...
-    BIZ->>SDK: librobrt_reply_to_service_req(req_id=42, OK, resp, len)
+    BIZ->>SDK: librflow_reply_to_service_req(req_id=42, OK, resp, len)
     SDK->>SRV: service_response(resp)
 ```
 
@@ -235,7 +235,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant APP as 业务层
-    participant SDK as librobrt_client
+    participant SDK as librflow_client
 
     APP->>SDK: connect(...)
     SDK-->>APP: on_state(CONNECTING)
@@ -243,7 +243,7 @@ sequenceDiagram
     SDK-->>APP: on_state(FAILED, reason=CONN_NETWORK)
     APP->>SDK: disconnect()
     Note over SDK: 幂等，内部已是 idle<br/>直接返回 OK
-    SDK-->>APP: ROBRT_OK
+    SDK-->>APP: RFLOW_OK
 ```
 
 ### 4.5 视频帧跨线程持有（零拷贝）
@@ -310,8 +310,8 @@ flowchart TB
 |---|---|
 | 全局 API | `set_global_config` / `init` / `uninit` / `connect` / `disconnect` **必须同一线程串行** |
 | 流 API | `open_stream` / `close_stream` / `get_stats` 线程安全，可并发 |
-| 信令 API | `send_notice` / `librobrt_reply_to_service_req` 线程安全，可并发 |
-| 回调内 | **禁止**阻塞；**禁止**回调 init/connect 等同步状态变更 API；**允许**：`close_stream`、`retain`/`release`、`librobrt_reply_to_service_req`、所有 getter |
+| 信令 API | `send_notice` / `librflow_reply_to_service_req` 线程安全，可并发 |
+| 回调内 | **禁止**阻塞；**禁止**回调 init/connect 等同步状态变更 API；**允许**：`close_stream`、`retain`/`release`、`librflow_reply_to_service_req`、所有 getter |
 
 ---
 
@@ -320,12 +320,12 @@ flowchart TB
 | 对象 | 分配方 | 释放方 | 生命周期 |
 |---|---|---|---|
 | `xxx_config_t` / `connect_info_t` / `connect_cb_t` / `stream_param_t` / `stream_cb_t` | SDK `create` | 调用方 `destroy` | `set_*` / `connect` / `open_stream` 返回后即可 destroy（SDK 已 copy） |
-| `open_stream` 的 `param` 参数 | — | — | 可为 NULL；等价于 `stream_param_create()` 后未改任何 setter 的默认 hint，**次版本内**默认集合稳定，字段见 `librobrt_client_api.h` |
+| `open_stream` 的 `param` 参数 | — | — | 可为 NULL；等价于 `stream_param_create()` 后未改任何 setter 的默认 hint，**次版本内**默认集合稳定，字段见 `librflow_client_api.h` |
 | `stream_handle_t` | SDK (`open_stream` 出参) | SDK (`close_stream` / `disconnect` / `uninit`) | 调用方收到 `CLOSED` 后不得再使用 |
 | `video_frame_t` | SDK（回调入参） | SDK（回调返回时） | 仅回调栈内；`retain` 后转为调用方管理，必须 `release` |
 | `stream_stats_t` | SDK（回调 / pull 出参） | SDK | 默认仅当前回调栈 / API 返回前有效；`retain` 后转为调用方管理，必须 `release` |
 | 入参 `const char*` / 指针 | 调用方 | 调用方 | SDK 内部 copy；API 返回后即可释放 |
-| SDK 返回的 `char*` / `void*` | SDK | 调用方 `librobrt_string_free` / `librobrt_buffer_free` | 按函数文档 |
+| SDK 返回的 `char*` / `void*` | SDK | 调用方 `librflow_string_free` / `librflow_buffer_free` | 按函数文档 |
 
 ---
 
@@ -334,9 +334,9 @@ flowchart TB
 ```mermaid
 flowchart LR
     A[API 调用] --> B{返回值}
-    B -->|ROBRT_OK| S[成功]
+    B -->|RFLOW_OK| S[成功]
     B -->|非 0| E[失败]
-    E --> F[librobrt_get_last_error]
+    E --> F[librflow_get_last_error]
     F --> G[thread-local 错误文本]
     E --> H{错误码段}
     H -->|0x0xxx| H1[通用：param / state / no_mem]
@@ -346,7 +346,7 @@ flowchart LR
 
 约定：
 - 错误码只增不改；删除/复用错误码视为破坏 ABI
-- 回调统一返回 `void`；业务反馈走专用 API（如 `librobrt_reply_to_service_req`）
+- 回调统一返回 `void`；业务反馈走专用 API（如 `librflow_reply_to_service_req`）
 
 ---
 
@@ -354,10 +354,10 @@ flowchart LR
 
 | 演进需求 | 允许做法 |
 |---|---|
-| 给 `log_config` 加新字段 | 加 `librobrt_log_config_set_xxx / get_xxx` 函数，旧 API 不动 |
-| 给 `video_frame` 加新字段 | 加 `librobrt_video_frame_get_xxx` 函数 |
-| 新增订阅模式 | 加 `librobrt_open_stream_v2(...)`（带新参数），旧 `open_stream` 保持行为 |
-| 新增回调事件 | 会话级加 `librobrt_connect_cb_set_on_xxx`；流级加 `librobrt_stream_cb_set_on_xxx`；未注册时不触发 |
+| 给 `log_config` 加新字段 | 加 `librflow_log_config_set_xxx / get_xxx` 函数，旧 API 不动 |
+| 给 `video_frame` 加新字段 | 加 `librflow_video_frame_get_xxx` 函数 |
+| 新增订阅模式 | 加 `librflow_open_stream_v2(...)`（带新参数），旧 `open_stream` 保持行为 |
+| 新增回调事件 | 会话级加 `librflow_connect_cb_set_on_xxx`；流级加 `librflow_stream_cb_set_on_xxx`；未注册时不触发 |
 | 新增错误码 | 在段内追加，老调用方收到未知码时应归类为通用 `FAIL` |
 | 新增枚举值 | 追加末尾，`_UNKNOWN=0` 保持；调用方必须容忍未知值 |
 
@@ -372,66 +372,66 @@ flowchart LR
 ## 9. 快速上手示例（C）
 
 ```c
-#include "robrt/Client/librobrt_client_api.h"
+#include "rflow/Client/librflow_client_api.h"
 #include <stdio.h>
 
-static void on_log(robrt_log_level_t lv, const char *msg, void *ud) {
+static void on_log(rflow_log_level_t lv, const char *msg, void *ud) {
     fprintf(stderr, "[%d] %s\n", lv, msg);
 }
 
-static void on_conn_state(robrt_connect_state_t s, robrt_err_t r, void *ud) {
+static void on_conn_state(rflow_connect_state_t s, rflow_err_t r, void *ud) {
     printf("conn state=%d reason=%d\n", s, r);
 }
 
-static void on_video(librobrt_stream_handle_t h,
-                     librobrt_video_frame_t f, void *ud) {
-    uint32_t w  = librobrt_video_frame_get_width(f);
-    uint32_t sz = librobrt_video_frame_get_data_size(f);
-    const uint8_t *p = librobrt_video_frame_get_data(f);
+static void on_video(librflow_stream_handle_t h,
+                     librflow_video_frame_t f, void *ud) {
+    uint32_t w  = librflow_video_frame_get_width(f);
+    uint32_t sz = librflow_video_frame_get_data_size(f);
+    const uint8_t *p = librflow_video_frame_get_data(f);
     (void)w; (void)sz; (void)p;
 }
 
 int main(void) {
-    librobrt_log_config_t    log = librobrt_log_config_create();
-    librobrt_log_config_set_level(log, ROBRT_LOG_INFO);
-    librobrt_log_config_set_callback(log, on_log, NULL);
+    librflow_log_config_t    log = librflow_log_config_create();
+    librflow_log_config_set_level(log, RFLOW_LOG_INFO);
+    librflow_log_config_set_callback(log, on_log, NULL);
 
-    librobrt_global_config_t g = librobrt_global_config_create();
-    librobrt_global_config_set_log(g, log);
+    librflow_global_config_t g = librflow_global_config_create();
+    librflow_global_config_set_log(g, log);
 
-    librobrt_set_global_config(g);
-    librobrt_log_config_destroy(log);
-    librobrt_global_config_destroy(g);
+    librflow_set_global_config(g);
+    librflow_log_config_destroy(log);
+    librflow_global_config_destroy(g);
 
-    librobrt_init();
+    librflow_init();
 
-    librobrt_connect_info_t info = librobrt_connect_info_create();
-    librobrt_connect_info_set_device_id(info, "device-001");
-    librobrt_connect_info_set_device_secret(info, "secret-xxx");
+    librflow_connect_info_t info = librflow_connect_info_create();
+    librflow_connect_info_set_device_id(info, "device-001");
+    librflow_connect_info_set_device_secret(info, "secret-xxx");
 
-    librobrt_connect_cb_t cb = librobrt_connect_cb_create();
-    librobrt_connect_cb_set_on_state(cb, on_conn_state);
+    librflow_connect_cb_t cb = librflow_connect_cb_create();
+    librflow_connect_cb_set_on_state(cb, on_conn_state);
 
-    librobrt_connect(info, cb);
-    librobrt_connect_info_destroy(info);
-    librobrt_connect_cb_destroy(cb);
+    librflow_connect(info, cb);
+    librflow_connect_info_destroy(info);
+    librflow_connect_cb_destroy(cb);
 
-    librobrt_stream_param_t sp = librobrt_stream_param_create();
-    librobrt_stream_param_set_preferred_codec(sp, ROBRT_CODEC_H264);
+    librflow_stream_param_t sp = librflow_stream_param_create();
+    librflow_stream_param_set_preferred_codec(sp, RFLOW_CODEC_H264);
 
-    librobrt_stream_cb_t scb = librobrt_stream_cb_create();
-    librobrt_stream_cb_set_on_video(scb, on_video);
+    librflow_stream_cb_t scb = librflow_stream_cb_create();
+    librflow_stream_cb_set_on_video(scb, on_video);
 
-    librobrt_stream_handle_t h = NULL;
-    librobrt_open_stream(0, sp, scb, &h);
-    librobrt_stream_param_destroy(sp);
-    librobrt_stream_cb_destroy(scb);
+    librflow_stream_handle_t h = NULL;
+    librflow_open_stream(0, sp, scb, &h);
+    librflow_stream_param_destroy(sp);
+    librflow_stream_cb_destroy(scb);
 
     /* ... 业务运行 ... */
 
-    librobrt_close_stream(h);
-    librobrt_disconnect();
-    librobrt_uninit();
+    librflow_close_stream(h);
+    librflow_disconnect();
+    librflow_uninit();
     return 0;
 }
 ```
@@ -445,7 +445,7 @@ int main(void) {
 | `on_connect_state` | **connect_cb** | 连接状态在首路 `open_stream` 之前就会出现，不能绑在开流上。 |
 | `on_notice` / `on_service_req` | **connect_cb** | 会话级信令；通知/请求可能在**尚未开流**或**跨多路**（`index` 仅路由），放 stream 会漏消息或被迫开「空流」。 |
 | `on_video_frame` / `on_stream_state` / `on_stream_stats` | **stream_cb** | **某一路**媒体实例；`on_stream_stats(handle, stats, ...)` 显式带 handle，避免多路并行时归属歧义。 |
-| `on_log` | **全局 / 线程池** | 见 `librobrt_log_set_callback`。 |
+| `on_log` | **全局 / 线程池** | 见 `librflow_log_set_callback`。 |
 
 **结论**：connect 只承载**会话/信令**；**流维**统计与帧、状态一并放在 **stream_cb**。
 
@@ -459,10 +459,10 @@ int main(void) {
 | M-1 frame 生命周期明确 + retain/release | ✅ 默认回调栈内，提供 retain/release |
 | A-1 / A-3 首字段 / struct_size | ✅ 不再需要（全 opaque） |
 | L-2 / L-3 disconnect / uninit 幂等强清理 | ✅ 文档 §3.1 / §4.2 |
-| N-2 notice / service_req 拆分 + 异步 reply | ✅ `on_notice` + `on_service_req` + `librobrt_reply_to_service_req` |
+| N-2 notice / service_req 拆分 + 异步 reply | ✅ `on_notice` + `on_service_req` + `librflow_reply_to_service_req` |
 | N-4 stream_state / stats 补齐 | ✅ `stream_cb`：state / video / stats（音频暂不支持） |
 | E-2 回调返回 void | ✅ 所有回调 `void` |
-| N-6 命名统一 snake_case，去 `Robort` | ✅ 全 `robrt_` / `librobrt_` |
+| N-6 命名统一 snake_case，去 `Robort` | ✅ 全 `rflow_` / `librflow_` |
 | 开放问题 1（运行期切 signal url） | ❌ 按决策不做 |
 | 开放问题 2（镜头动态变化回调） | ❌ 按决策不做 |
 | 开放问题 3（license 运行期续期） | ❌ 按决策不做 |

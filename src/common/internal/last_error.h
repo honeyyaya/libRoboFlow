@@ -1,13 +1,13 @@
-#ifndef __ROBRT_INTERNAL_LAST_ERROR_H__
-#define __ROBRT_INTERNAL_LAST_ERROR_H__
+#ifndef __RFLOW_INTERNAL_LAST_ERROR_H__
+#define __RFLOW_INTERNAL_LAST_ERROR_H__
 
 #include <string>
 
-namespace robrt {
+namespace rflow {
 
 void set_last_error(const std::string& msg);
 void set_last_error(const char* msg);
 
-}  // namespace robrt
+}  // namespace rflow
 
-#endif  // __ROBRT_INTERNAL_LAST_ERROR_H__
+#endif  // __RFLOW_INTERNAL_LAST_ERROR_H__

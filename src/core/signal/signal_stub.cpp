@@ -2,15 +2,15 @@
 
 #include "common/internal/logger.h"
 
-namespace robrt::signal {
+namespace rflow::signal {
 
 bool initialize() {
-    ROBRT_LOGI("signal::initialize (stub)");
+    RFLOW_LOGI("signal::initialize (stub)");
     return true;
 }
 
 void shutdown() {
-    ROBRT_LOGI("signal::shutdown (stub)");
+    RFLOW_LOGI("signal::shutdown (stub)");
 }
 
-}  // namespace robrt::signal
+}  // namespace rflow::signal

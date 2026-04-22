@@ -38,7 +38,7 @@ void worker_loop() {
 
 }  // namespace
 
-namespace robrt::thread {
+namespace rflow::thread {
 
 bool initialize(int worker_count) {
     if (!g_workers.empty()) return true;
@@ -48,7 +48,7 @@ bool initialize(int worker_count) {
     }
     g_stop.store(false);
     for (int i = 0; i < worker_count; ++i) g_workers.emplace_back(worker_loop);
-    ROBRT_LOGI("thread_pool: %d workers started", worker_count);
+    RFLOW_LOGI("thread_pool: %d workers started", worker_count);
     return true;
 }
 
@@ -63,7 +63,7 @@ void shutdown() {
     }
     g_workers.clear();
     std::queue<std::function<void()>>().swap(g_tasks);
-    ROBRT_LOGI("thread_pool: shutdown");
+    RFLOW_LOGI("thread_pool: shutdown");
 }
 
 void post(std::function<void()> fn) {
@@ -75,4 +75,4 @@ void post(std::function<void()> fn) {
     g_cv.notify_one();
 }
 
-}  // namespace robrt::thread
+}  // namespace rflow::thread

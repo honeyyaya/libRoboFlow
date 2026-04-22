@@ -1,4 +1,4 @@
-#include "robrt/Service/librobrt_service_api.h"
+#include "rflow/Service/librflow_service_api.h"
 
 #include "internal/handles.h"
 
@@ -6,44 +6,44 @@
 
 extern "C" {
 
-librobrt_svc_stream_cb_t librobrt_svc_stream_cb_create(void) {
-    auto* p = new (std::nothrow) librobrt_svc_stream_cb_s();
+librflow_svc_stream_cb_t librflow_svc_stream_cb_create(void) {
+    auto* p = new (std::nothrow) librflow_svc_stream_cb_s();
     if (!p) return nullptr;
-    p->magic = robrt::service::kMagicStreamCb;
+    p->magic = rflow::service::kMagicStreamCb;
     return p;
 }
 
-void librobrt_svc_stream_cb_destroy(librobrt_svc_stream_cb_t cb) {
-    if (!cb || cb->magic != robrt::service::kMagicStreamCb) return;
+void librflow_svc_stream_cb_destroy(librflow_svc_stream_cb_t cb) {
+    if (!cb || cb->magic != rflow::service::kMagicStreamCb) return;
     cb->magic = 0;
     delete cb;
 }
 
-robrt_err_t librobrt_svc_stream_cb_set_on_state(librobrt_svc_stream_cb_t cb,
-                                                 librobrt_svc_on_stream_state_fn fn) {
-    ROBRT_CHECK_HANDLE(cb, robrt::service::kMagicStreamCb);
+rflow_err_t librflow_svc_stream_cb_set_on_state(librflow_svc_stream_cb_t cb,
+                                                 librflow_svc_on_stream_state_fn fn) {
+    RFLOW_CHECK_HANDLE(cb, rflow::service::kMagicStreamCb);
     cb->on_state = fn;
-    return ROBRT_OK;
+    return RFLOW_OK;
 }
 
-robrt_err_t librobrt_svc_stream_cb_set_on_encoded_video(librobrt_svc_stream_cb_t cb,
-                                                         librobrt_svc_on_encoded_video_fn fn) {
-    ROBRT_CHECK_HANDLE(cb, robrt::service::kMagicStreamCb);
+rflow_err_t librflow_svc_stream_cb_set_on_encoded_video(librflow_svc_stream_cb_t cb,
+                                                         librflow_svc_on_encoded_video_fn fn) {
+    RFLOW_CHECK_HANDLE(cb, rflow::service::kMagicStreamCb);
     cb->on_encoded_video = fn;
-    return ROBRT_OK;
+    return RFLOW_OK;
 }
 
-robrt_err_t librobrt_svc_stream_cb_set_on_stream_stats(librobrt_svc_stream_cb_t cb,
-                                                        librobrt_svc_on_stream_stats_fn fn) {
-    ROBRT_CHECK_HANDLE(cb, robrt::service::kMagicStreamCb);
+rflow_err_t librflow_svc_stream_cb_set_on_stream_stats(librflow_svc_stream_cb_t cb,
+                                                        librflow_svc_on_stream_stats_fn fn) {
+    RFLOW_CHECK_HANDLE(cb, rflow::service::kMagicStreamCb);
     cb->on_stream_stats = fn;
-    return ROBRT_OK;
+    return RFLOW_OK;
 }
 
-robrt_err_t librobrt_svc_stream_cb_set_userdata(librobrt_svc_stream_cb_t cb, void* ud) {
-    ROBRT_CHECK_HANDLE(cb, robrt::service::kMagicStreamCb);
+rflow_err_t librflow_svc_stream_cb_set_userdata(librflow_svc_stream_cb_t cb, void* ud) {
+    RFLOW_CHECK_HANDLE(cb, rflow::service::kMagicStreamCb);
     cb->userdata = ud;
-    return ROBRT_OK;
+    return RFLOW_OK;
 }
 
 }  // extern "C"

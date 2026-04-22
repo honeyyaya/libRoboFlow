@@ -1,14 +1,14 @@
-#ifndef __ROBRT_SERVICE_HANDLES_H__
-#define __ROBRT_SERVICE_HANDLES_H__
+#ifndef __RFLOW_SERVICE_HANDLES_H__
+#define __RFLOW_SERVICE_HANDLES_H__
 
 #include <atomic>
 #include <string>
 #include <vector>
 
-#include "robrt/Service/librobrt_service_api.h"
+#include "rflow/Service/librflow_service_api.h"
 #include "common/internal/handle.h"
 
-namespace robrt::service {
+namespace rflow::service {
 
 constexpr uint32_t kMagicConnectInfo = 0x52735349;  // 'RsSI'
 constexpr uint32_t kMagicConnectCb   = 0x52735343;  // 'RsSC'
@@ -18,9 +18,9 @@ constexpr uint32_t kMagicStream      = 0x52735348;  // 'RsSH'
 constexpr uint32_t kMagicPushFrame   = 0x52735046;  // 'RsPF'
 constexpr uint32_t kMagicLicenseInfo = 0x52734C49;  // 'RsLI'
 
-}  // namespace robrt::service
+}  // namespace rflow::service
 
-struct librobrt_svc_connect_info_s {
+struct librflow_svc_connect_info_s {
     uint32_t    magic;
     std::string device_id;
     std::string device_secret;
@@ -28,26 +28,26 @@ struct librobrt_svc_connect_info_s {
     std::string vendor_id;
 };
 
-struct librobrt_svc_connect_cb_s {
+struct librflow_svc_connect_cb_s {
     uint32_t                           magic;
-    librobrt_svc_on_connect_state_fn   on_state;
-    librobrt_svc_on_bind_state_fn      on_bind_state;
-    librobrt_svc_on_notice_fn          on_notice;
-    librobrt_svc_on_service_req_fn     on_service_req;
-    librobrt_svc_on_pull_request_fn    on_pull_request;
-    librobrt_svc_on_pull_release_fn    on_pull_release;
+    librflow_svc_on_connect_state_fn   on_state;
+    librflow_svc_on_bind_state_fn      on_bind_state;
+    librflow_svc_on_notice_fn          on_notice;
+    librflow_svc_on_service_req_fn     on_service_req;
+    librflow_svc_on_pull_request_fn    on_pull_request;
+    librflow_svc_on_pull_release_fn    on_pull_release;
     void*                              userdata;
 };
 
-struct librobrt_svc_stream_param_s {
+struct librflow_svc_stream_param_s {
     uint32_t           magic;
-    robrt_codec_t      in_codec;
-    robrt_codec_t      out_codec;
+    rflow_codec_t      in_codec;
+    rflow_codec_t      out_codec;
     uint32_t           src_w, src_h;
     uint32_t           out_w, out_h;
     uint32_t           fps;
     uint32_t           gop;
-    robrt_rc_mode_t    rc_mode;
+    rflow_rc_mode_t    rc_mode;
     uint32_t           qp;
     uint32_t           bitrate_kbps;
     uint32_t           max_bitrate_kbps;
@@ -70,27 +70,27 @@ struct librobrt_svc_stream_param_s {
     bool               has_enable_transcode;
 };
 
-struct librobrt_svc_stream_cb_s {
+struct librflow_svc_stream_cb_s {
     uint32_t                           magic;
-    librobrt_svc_on_stream_state_fn    on_state;
-    librobrt_svc_on_encoded_video_fn   on_encoded_video;
-    librobrt_svc_on_stream_stats_fn    on_stream_stats;
+    librflow_svc_on_stream_state_fn    on_state;
+    librflow_svc_on_encoded_video_fn   on_encoded_video;
+    librflow_svc_on_stream_stats_fn    on_stream_stats;
     void*                              userdata;
 };
 
-struct librobrt_svc_stream_s {
+struct librflow_svc_stream_s {
     uint32_t                     magic;
     int32_t                      stream_idx;
     std::atomic<int32_t>         state;
-    librobrt_svc_stream_param_s  param;
-    librobrt_svc_stream_cb_s     cb;
+    librflow_svc_stream_param_s  param;
+    librflow_svc_stream_cb_s     cb;
     bool                         started;
 };
 
-struct librobrt_svc_push_frame_s {
+struct librflow_svc_push_frame_s {
     uint32_t             magic;
-    robrt_codec_t        codec;
-    robrt_frame_type_t   type;
+    rflow_codec_t        codec;
+    rflow_frame_type_t   type;
     std::vector<uint8_t> data;
     uint32_t             width, height;
     uint64_t             pts_ms;
@@ -111,7 +111,7 @@ struct librobrt_svc_push_frame_s {
     bool                 has_offset;
 };
 
-struct librobrt_svc_license_info_s {
+struct librflow_svc_license_info_s {
     uint32_t    magic;
     uint64_t    expire_time_sec;  /* Unix epoch (UTC), 0 = 永久授权 */
     bool        loaded;           /* false = license 未成功加载 */
@@ -119,4 +119,4 @@ struct librobrt_svc_license_info_s {
     std::string product_key;
 };
 
-#endif  // __ROBRT_SERVICE_HANDLES_H__
+#endif  // __RFLOW_SERVICE_HANDLES_H__

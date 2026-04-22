@@ -6,12 +6,12 @@
  * 由 WebRtcPullStream / WebRtcPullManager 按会话独立持有。
  *
  * TODO:
- *   - 接入 robrt signal_config（url / 重连策略 / keepalive）；
- *   - 错误通过 robrt_err_t 向上透传，而非仅字符串回调。
+ *   - 接入 rflow signal_config（url / 重连策略 / keepalive）；
+ *   - 错误通过 rflow_err_t 向上透传，而非仅字符串回调。
  */
 
-#ifndef __ROBRT_CLIENT_IMPL_SIGNALING_CLIENT_H__
-#define __ROBRT_CLIENT_IMPL_SIGNALING_CLIENT_H__
+#ifndef __RFLOW_CLIENT_IMPL_SIGNALING_CLIENT_H__
+#define __RFLOW_CLIENT_IMPL_SIGNALING_CLIENT_H__
 
 #include <atomic>
 #include <cstdint>
@@ -20,7 +20,7 @@
 #include <string>
 #include <thread>
 
-namespace robrt::client::impl {
+namespace rflow::client::impl {
 
 class SignalingClient {
  public:
@@ -68,6 +68,6 @@ class SignalingClient {
     std::unique_ptr<std::thread> reader_thread_;
 };
 
-}  // namespace robrt::client::impl
+}  // namespace rflow::client::impl
 
-#endif  // __ROBRT_CLIENT_IMPL_SIGNALING_CLIENT_H__
+#endif  // __RFLOW_CLIENT_IMPL_SIGNALING_CLIENT_H__

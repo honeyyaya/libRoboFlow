@@ -1,7 +1,7 @@
 # Service SDK 对外接口设计文档
 
-> 对应头文件：`include/robrt/Service/librobrt_service_api.h`  
-> 共享头文件：`include/robrt/librobrt_common.h`  
+> 对应头文件：`include/rflow/Service/librflow_service_api.h`  
+> 共享头文件：`include/rflow/librflow_common.h`  
 > 目标平台：Linux arm64（设备/边缘侧）  
 > 内部实现：封装 WebRTC + 编码器后端。Service 端负责**接收业务采集数据 → 编码/透传/转码 → 发布给订阅端**，并处理 Client 侧的业务请求等服务类反向消息  
 > ABI 策略：纯 C 导出 + Opaque Handle + Getter / Setter，与 Client 同构对齐
@@ -17,7 +17,7 @@
 | 反向订阅驱动 | 业务层并不主动发流，而是收到 `on_pull_request` 回调后才开始产帧，避免无订阅者时浪费编码资源 |
 | push 帧零拷贝意图 | `push_frame` 对象 set_data 时 SDK 立即 copy 或引用后入队，接口返回即可释放原 buffer |
 | 编码参数在 Service | 分辨率 / 编码 / 码率 / GOP / RC 等编码器参数**只在 Service 端**设置，Client 端仅能 hint |
-| 函数命名空间 | 与 Client 做符号隔离：所有 Service 专属函数/类型使用 `librobrt_svc_` 前缀；共享部分（log/signal/license/global_config、video_frame、stream_stats）沿用 `librobrt_`（音频暂不支持） |
+| 函数命名空间 | 与 Client 做符号隔离：所有 Service 专属函数/类型使用 `librflow_svc_` 前缀；共享部分（log/signal/license/global_config、video_frame、stream_stats）沿用 `librflow_`（音频暂不支持） |
 
 ---
 
@@ -25,7 +25,7 @@
 
 ```mermaid
 graph LR
-    subgraph 共享["共享（librobrt_common.h）"]
+    subgraph 共享["共享（librflow_common.h）"]
         S1[log_config]
         S2[signal_config]
         S3[license_config]
@@ -35,7 +35,7 @@ graph LR
         S7[错误码 / 枚举 / 内存释放]
     end
 
-    subgraph ClientSDK["Client（librobrt_*）"]
+    subgraph ClientSDK["Client（librflow_*）"]
         C1[connect_info]
         C2[connect_cb]
         C3[stream_param hint]
@@ -45,7 +45,7 @@ graph LR
         C7[on_video_frame]
     end
 
-    subgraph ServiceSDK["Service（librobrt_svc_*）"]
+    subgraph ServiceSDK["Service（librflow_svc_*）"]
         V1[svc_connect_info]
         V2[svc_connect_cb]
         V3[svc_stream_param 编码器]
@@ -69,7 +69,7 @@ graph LR
 关键点：
 - Client 的 `open_stream(index)` 在 Service 侧触发 `on_pull_request(stream_idx)`，业务层可据此惰性启动采集/编码。
 - Client 的 `close_stream` / 主动 `disconnect` → Service 侧触发 `on_pull_release(stream_idx)`。
-- Client 的 `send_notice` / `librobrt_reply_to_service_req` → Service 侧 `on_notice` / 业务对 `on_service_req` 的回复反向亦然。
+- Client 的 `send_notice` / `librflow_reply_to_service_req` → Service 侧 `on_notice` / 业务对 `on_service_req` 的回复反向亦然。
 
 ---
 
@@ -129,7 +129,7 @@ stateDiagram-v2
 sequenceDiagram
     autonumber
     participant BIZ as 业务层
-    participant SDK as librobrt_svc
+    participant SDK as librflow_svc
     participant CLI as 远端 Client
 
     Note over BIZ,CLI: ---- 阶段 1：配置 + 初始化 ----
@@ -179,7 +179,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant BIZ as 业务层
-    participant SDK as librobrt_svc
+    participant SDK as librflow_svc
 
     BIZ->>SDK: svc_init()
     BIZ->>SDK: svc_connect(...)
@@ -203,7 +203,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant CLI as 远端 Client
-    participant SDK as librobrt_svc
+    participant SDK as librflow_svc
     participant BIZ as 业务回调线程
     participant WRK as 业务工作线程
 
@@ -223,7 +223,7 @@ sequenceDiagram
     autonumber
     participant C1 as Client A
     participant C2 as Client B
-    participant SDK as librobrt_svc
+    participant SDK as librflow_svc
     participant BIZ as 业务层
 
     C1->>SDK: open_stream(0)
@@ -249,7 +249,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant BIZ as 业务层
-    participant SDK as librobrt_svc
+    participant SDK as librflow_svc
 
     Note over BIZ: 一帧 H264 I 帧 = 1.8MB，分 3 片
 
@@ -314,12 +314,12 @@ flowchart TB
 
 | 对象 | 分配方 | 释放方 | 生命周期 |
 |---|---|---|---|
-| `librobrt_*_config_t`（共享 log/signal/license/global） | SDK `create` | 调用方 `destroy` | `svc_set_global_config` 返回后可销毁 |
-| `librobrt_svc_connect_info_t` / `connect_cb_t` / `stream_param_t` / `stream_cb_t` / `push_frame_t` | SDK `svc_*_create` | 调用方 `svc_*_destroy` | 对应 API 返回后可销毁 |
-| `librobrt_svc_stream_handle_t` | SDK `create_stream` | SDK `destroy_stream` / `uninit` | 收到 `CLOSED/DESTROYED` 后失效 |
-| `librobrt_video_frame_t`（回调入参） | SDK | SDK（回调返回时） | 仅回调栈内；`retain` 后转为调用方管理 |
-| `librobrt_stream_stats_t`（回调/pull 入参） | SDK | SDK | 仅调用栈内 |
-| `librobrt_svc_license_info_t` | SDK（`get_license_info` 出参） | 调用方 `svc_license_info_destroy` | 显式生命周期 |
+| `librflow_*_config_t`（共享 log/signal/license/global） | SDK `create` | 调用方 `destroy` | `svc_set_global_config` 返回后可销毁 |
+| `librflow_svc_connect_info_t` / `connect_cb_t` / `stream_param_t` / `stream_cb_t` / `push_frame_t` | SDK `svc_*_create` | 调用方 `svc_*_destroy` | 对应 API 返回后可销毁 |
+| `librflow_svc_stream_handle_t` | SDK `create_stream` | SDK `destroy_stream` / `uninit` | 收到 `CLOSED/DESTROYED` 后失效 |
+| `librflow_video_frame_t`（回调入参） | SDK | SDK（回调返回时） | 仅回调栈内；`retain` 后转为调用方管理 |
+| `librflow_stream_stats_t`（回调/pull 入参） | SDK | SDK | 仅调用栈内 |
+| `librflow_svc_license_info_t` | SDK（`get_license_info` 出参） | 调用方 `svc_license_info_destroy` | 显式生命周期 |
 | push_frame 里 set_data 的 buffer | 调用方 | 调用方 | SDK 内部 copy，API 返回后可释放 |
 
 ---
@@ -329,9 +329,9 @@ flowchart TB
 ```mermaid
 flowchart LR
     A[svc_* API] --> B{返回值}
-    B -->|ROBRT_OK| S[成功]
+    B -->|RFLOW_OK| S[成功]
     B -->|非 0| E[失败]
-    E --> F[librobrt_get_last_error]
+    E --> F[librflow_get_last_error]
     F --> G[thread-local 文本]
     E --> H{分段}
     H -->|0x0xxx| H1[通用]
@@ -340,8 +340,8 @@ flowchart LR
 ```
 
 Service 专属错误码扩展（位于 0x2xxx 段）：
-- `ROBRT_ERR_STREAM_ENCODER_FAIL` — 编码器初始化/编码失败
-- `ROBRT_ERR_STREAM_NO_SUBSCRIBER` — 无订阅者时尝试某些只读状态操作
+- `RFLOW_ERR_STREAM_ENCODER_FAIL` — 编码器初始化/编码失败
+- `RFLOW_ERR_STREAM_NO_SUBSCRIBER` — 无订阅者时尝试某些只读状态操作
 
 ---
 
@@ -359,70 +359,70 @@ Service 专属错误码扩展（位于 0x2xxx 段）：
 ## 9. 快速上手示例（C）
 
 ```c
-#include "robrt/Service/librobrt_service_api.h"
+#include "rflow/Service/librflow_service_api.h"
 #include <stdio.h>
 #include <string.h>
 
-static librobrt_svc_stream_handle_t g_h0 = NULL;
+static librflow_svc_stream_handle_t g_h0 = NULL;
 
 static void on_pull_req(int32_t idx, void *ud) {
     if (idx != 0 || g_h0) return;
 
-    librobrt_svc_stream_param_t p = librobrt_svc_stream_param_create();
-    librobrt_svc_stream_param_set_in_codec (p, ROBRT_CODEC_NV12);
-    librobrt_svc_stream_param_set_out_codec(p, ROBRT_CODEC_H264);
-    librobrt_svc_stream_param_set_src_size (p, 1920, 1080);
-    librobrt_svc_stream_param_set_out_size (p, 1920, 1080);
-    librobrt_svc_stream_param_set_fps      (p, 30);
-    librobrt_svc_stream_param_set_gop      (p, 60);
-    librobrt_svc_stream_param_set_rc_mode  (p, ROBRT_RC_CBR);
-    librobrt_svc_stream_param_set_bitrate  (p, 4000, 6000);
+    librflow_svc_stream_param_t p = librflow_svc_stream_param_create();
+    librflow_svc_stream_param_set_in_codec (p, RFLOW_CODEC_NV12);
+    librflow_svc_stream_param_set_out_codec(p, RFLOW_CODEC_H264);
+    librflow_svc_stream_param_set_src_size (p, 1920, 1080);
+    librflow_svc_stream_param_set_out_size (p, 1920, 1080);
+    librflow_svc_stream_param_set_fps      (p, 30);
+    librflow_svc_stream_param_set_gop      (p, 60);
+    librflow_svc_stream_param_set_rc_mode  (p, RFLOW_RC_CBR);
+    librflow_svc_stream_param_set_bitrate  (p, 4000, 6000);
 
-    librobrt_svc_create_stream(idx, p, NULL, &g_h0);
-    librobrt_svc_stream_param_destroy(p);
-    librobrt_svc_start_stream(g_h0);
+    librflow_svc_create_stream(idx, p, NULL, &g_h0);
+    librflow_svc_stream_param_destroy(p);
+    librflow_svc_start_stream(g_h0);
 }
 
 static void on_pull_rel(int32_t idx, void *ud) {
     if (idx != 0 || !g_h0) return;
-    librobrt_svc_stop_stream(g_h0);
-    librobrt_svc_destroy_stream(g_h0);
+    librflow_svc_stop_stream(g_h0);
+    librflow_svc_destroy_stream(g_h0);
     g_h0 = NULL;
 }
 
 int main(void) {
-    librobrt_global_config_t g = librobrt_global_config_create();
-    librobrt_svc_set_global_config(g);
-    librobrt_global_config_destroy(g);
+    librflow_global_config_t g = librflow_global_config_create();
+    librflow_svc_set_global_config(g);
+    librflow_global_config_destroy(g);
 
-    librobrt_svc_init();
+    librflow_svc_init();
 
-    librobrt_svc_connect_info_t info = librobrt_svc_connect_info_create();
-    librobrt_svc_connect_info_set_device_id    (info, "dev-001");
-    librobrt_svc_connect_info_set_device_secret(info, "secret-xxx");
+    librflow_svc_connect_info_t info = librflow_svc_connect_info_create();
+    librflow_svc_connect_info_set_device_id    (info, "dev-001");
+    librflow_svc_connect_info_set_device_secret(info, "secret-xxx");
 
-    librobrt_svc_connect_cb_t cb = librobrt_svc_connect_cb_create();
-    librobrt_svc_connect_cb_set_on_pull_request(cb, on_pull_req);
-    librobrt_svc_connect_cb_set_on_pull_release(cb, on_pull_rel);
+    librflow_svc_connect_cb_t cb = librflow_svc_connect_cb_create();
+    librflow_svc_connect_cb_set_on_pull_request(cb, on_pull_req);
+    librflow_svc_connect_cb_set_on_pull_release(cb, on_pull_rel);
 
-    librobrt_svc_connect(info, cb);
-    librobrt_svc_connect_info_destroy(info);
-    librobrt_svc_connect_cb_destroy(cb);
+    librflow_svc_connect(info, cb);
+    librflow_svc_connect_info_destroy(info);
+    librflow_svc_connect_cb_destroy(cb);
 
     /* 假设上层每 33ms 推一帧 */
     /* while (running) {
-           librobrt_svc_push_frame_t pf = librobrt_svc_push_frame_create();
-           librobrt_svc_push_frame_set_codec  (pf, ROBRT_CODEC_NV12);
-           librobrt_svc_push_frame_set_size   (pf, 1920, 1080);
-           librobrt_svc_push_frame_set_data   (pf, yuv_buf, yuv_len);
-           librobrt_svc_push_frame_set_pts_ms (pf, now_ms);
-           librobrt_svc_push_video_frame(g_h0, pf);
-           librobrt_svc_push_frame_destroy(pf);
+           librflow_svc_push_frame_t pf = librflow_svc_push_frame_create();
+           librflow_svc_push_frame_set_codec  (pf, RFLOW_CODEC_NV12);
+           librflow_svc_push_frame_set_size   (pf, 1920, 1080);
+           librflow_svc_push_frame_set_data   (pf, yuv_buf, yuv_len);
+           librflow_svc_push_frame_set_pts_ms (pf, now_ms);
+           librflow_svc_push_video_frame(g_h0, pf);
+           librflow_svc_push_frame_destroy(pf);
        }
     */
 
-    librobrt_svc_disconnect();
-    librobrt_svc_uninit();
+    librflow_svc_disconnect();
+    librflow_svc_uninit();
     return 0;
 }
 ```

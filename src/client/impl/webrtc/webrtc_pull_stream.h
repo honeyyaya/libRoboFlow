@@ -10,8 +10,8 @@
  *   - stats 暂不实现（TODO）。
  */
 
-#ifndef __ROBRT_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__
-#define __ROBRT_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__
+#ifndef __RFLOW_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__
+#define __RFLOW_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__
 
 #include <atomic>
 #include <cstdint>
@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-#include "robrt/librobrt_common.h"
+#include "rflow/librflow_common.h"
 
 #include "api/jsep.h"
 #include "api/media_stream_interface.h"
@@ -31,14 +31,14 @@
 #include "api/video/video_frame.h"
 #include "api/video/video_sink_interface.h"
 
-namespace robrt::client::impl {
+namespace rflow::client::impl {
 
 class SignalingClient;
 
 class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
  public:
     using FrameSink = std::function<void(const webrtc::VideoFrame& frame)>;
-    using StateSink = std::function<void(robrt_stream_state_t state, robrt_err_t reason)>;
+    using StateSink = std::function<void(rflow_stream_state_t state, rflow_err_t reason)>;
 
     WebRtcPullStream(int32_t index,
                      webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
@@ -75,7 +75,7 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
                                   const std::string& candidate);
     void FlushPendingRemoteIceCandidates();
 
-    void EmitState(robrt_stream_state_t state, robrt_err_t reason);
+    void EmitState(rflow_stream_state_t state, rflow_err_t reason);
 
     const int32_t     index_;
     const std::string signaling_url_;
@@ -102,7 +102,7 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
     std::vector<PendingRemoteIce> pending_remote_ice_;
     bool                          remote_description_applied_ = false;
 
-    std::atomic<int32_t> stream_state_{ROBRT_STREAM_IDLE};
+    std::atomic<int32_t> stream_state_{RFLOW_STREAM_IDLE};
     std::atomic<bool>    closed_{false};
 
     std::mutex mu_;
@@ -110,6 +110,6 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
     StateSink  state_sink_;
 };
 
-}  // namespace robrt::client::impl
+}  // namespace rflow::client::impl
 
-#endif  // __ROBRT_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__
+#endif  // __RFLOW_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__

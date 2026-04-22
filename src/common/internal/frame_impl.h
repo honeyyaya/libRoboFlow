@@ -6,8 +6,8 @@
  * 若调用 retain，计数 +1；release 时 -1，归 0 时回收底层内存。
 **/
 
-#ifndef __ROBRT_INTERNAL_FRAME_IMPL_H__
-#define __ROBRT_INTERNAL_FRAME_IMPL_H__
+#ifndef __RFLOW_INTERNAL_FRAME_IMPL_H__
+#define __RFLOW_INTERNAL_FRAME_IMPL_H__
 
 #include <atomic>
 #include <cstdint>
@@ -15,12 +15,12 @@
 
 #include "handle.h"
 
-struct librobrt_video_frame_s {
+struct librflow_video_frame_s {
     uint32_t                magic;
     std::atomic<int32_t>    refcount;
 
-    robrt_codec_t           codec;
-    robrt_frame_type_t      type;
+    rflow_codec_t           codec;
+    rflow_frame_type_t      type;
     uint32_t                width;
     uint32_t                height;
     uint64_t                pts_ms;
@@ -31,7 +31,7 @@ struct librobrt_video_frame_s {
     std::vector<uint8_t>    payload;
 };
 
-struct librobrt_stream_stats_s {
+struct librflow_stream_stats_s {
     uint32_t magic;
 
     uint32_t duration_ms;
@@ -45,4 +45,4 @@ struct librobrt_stream_stats_s {
     uint32_t fps;
 };
 
-#endif  // __ROBRT_INTERNAL_FRAME_IMPL_H__
+#endif  // __RFLOW_INTERNAL_FRAME_IMPL_H__
