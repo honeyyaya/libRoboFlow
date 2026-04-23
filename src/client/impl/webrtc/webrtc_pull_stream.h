@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "rflow/librflow_common.h"
+#include "core/signal/session.h"
 
 #include "api/jsep.h"
 #include "api/media_stream_interface.h"
@@ -33,9 +34,8 @@
 
 namespace rflow::client::impl {
 
-class SignalingClient;
-
-class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
+class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream>,
+                         private rflow::signal::SessionDelegate {
  public:
     using FrameSink = std::function<void(const webrtc::VideoFrame& frame)>;
     using StateSink = std::function<void(rflow_stream_state_t state, rflow_err_t reason)>;
@@ -64,7 +64,10 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
     class FrameAdapter;
     friend class PeerConnectionObserverImpl;
 
-    void HandleOffer(const std::string& type, const std::string& sdp);
+    void OnSignalMessage(const rflow::signal::Message& msg) override;
+    void OnSignalError(std::string_view error) override;
+
+    void HandleOffer(const std::string& sdp);
     void HandleRemoteIceCandidate(const std::string& mid, int mline_index,
                                   const std::string& candidate);
 
@@ -82,7 +85,7 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
 
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
 
-    std::unique_ptr<SignalingClient>                    signaling_;
+    std::unique_ptr<rflow::signal::Session>             signaling_;
     std::unique_ptr<PeerConnectionObserverImpl>         observer_;
     webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
     std::unique_ptr<FrameAdapter>                       frame_adapter_;

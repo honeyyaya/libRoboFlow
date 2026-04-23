@@ -18,18 +18,10 @@
 #include "api/rtp_transceiver_interface.h"
 #include "api/set_remote_description_observer_interface.h"
 #include "rtc_base/thread.h"
+
 namespace rflow::client::impl {
 
 namespace {
-
-webrtc::SdpType SdpTypeFromOfferAnswerString(const std::string& t) {
-    auto opt = webrtc::SdpTypeFromString(t);
-    if (opt) return *opt;
-    if (t == "offer")    return webrtc::SdpType::kOffer;
-    if (t == "answer")   return webrtc::SdpType::kAnswer;
-    if (t == "pranswer") return webrtc::SdpType::kPrAnswer;
-    return webrtc::SdpType::kOffer;
-}
 
 class SetRemoteDescObserver : public webrtc::SetRemoteDescriptionObserverInterface {
  public:
@@ -52,9 +44,12 @@ class CreateAnswerObserver : public webrtc::CreateSessionDescriptionObserver {
         : cb_(std::move(cb)), fail_(std::move(fail)) {}
 
     void OnSuccess(webrtc::SessionDescriptionInterface* desc) override {
-        if (cb_) cb_(webrtc::RTCError::OK(),
-                     std::unique_ptr<webrtc::SessionDescriptionInterface>(desc));
+        if (cb_) {
+            cb_(webrtc::RTCError::OK(),
+                std::unique_ptr<webrtc::SessionDescriptionInterface>(desc));
+        }
     }
+
     void OnFailure(webrtc::RTCError error) override {
         if (fail_) fail_(std::move(error));
     }
@@ -69,19 +64,21 @@ class SetLocalDescObserver : public webrtc::SetSessionDescriptionObserver {
     SetLocalDescObserver(std::function<void()> ok, std::function<void(webrtc::RTCError)> fail)
         : ok_(std::move(ok)), fail_(std::move(fail)) {}
 
-    void OnSuccess() override { if (ok_) ok_(); }
+    void OnSuccess() override {
+        if (ok_) ok_();
+    }
+
     void OnFailure(webrtc::RTCError error) override {
         if (fail_) fail_(std::move(error));
     }
 
  private:
-    std::function<void()>                 ok_;
+    std::function<void()> ok_;
     std::function<void(webrtc::RTCError)> fail_;
 };
 
 }  // namespace
 
-// ---------------------------------------------------------------- FrameAdapter
 class WebRtcPullStream::FrameAdapter final
     : public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
  public:
@@ -94,14 +91,12 @@ class WebRtcPullStream::FrameAdapter final
             sink = owner_->frame_sink_;
         }
         if (sink) sink(frame);
-        // TODO: 在这里对接 librflow_stream_cb::on_video，走 SDK 统一分发线程。
     }
 
  private:
     WebRtcPullStream* owner_;
 };
 
-// ------------------------------------------------- PeerConnectionObserverImpl
 class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnectionObserver {
  public:
     explicit PeerConnectionObserverImpl(WebRtcPullStream* s) : stream_(s) {}
@@ -115,17 +110,22 @@ class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnecti
 
     void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override {
         if (!candidate || !stream_->signaling_) return;
+
         std::string sdp;
         if (!candidate->ToString(&sdp)) return;
-        stream_->signaling_->SendIceCandidate(candidate->sdp_mid(),
-                                              candidate->sdp_mline_index(), sdp);
+
+        rflow::signal::Message msg;
+        msg.type = rflow::signal::MessageType::kIce;
+        msg.mid = candidate->sdp_mid();
+        msg.mline_index = candidate->sdp_mline_index();
+        msg.candidate = std::move(sdp);
+        stream_->signaling_->Send(msg);
     }
 
     void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState s) override {
         using PCS = webrtc::PeerConnectionInterface::PeerConnectionState;
         if (s == PCS::kConnected) {
             stream_->EmitState(RFLOW_STREAM_OPENED, RFLOW_OK);
-            // TODO: 启动 stats 采集（rflow_stream_stats_t 周期派发）。
         } else if (s == PCS::kFailed) {
             stream_->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_FAIL);
         } else if (s == PCS::kDisconnected || s == PCS::kClosed) {
@@ -141,6 +141,7 @@ class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnecti
 
     void OnTrack(webrtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver) override {
         if (!transceiver || transceiver->media_type() != webrtc::MediaType::VIDEO) return;
+
         auto receiver = transceiver->receiver();
         if (!receiver) return;
         receiver->SetJitterBufferMinimumDelay(std::optional<double>(0.0));
@@ -150,6 +151,7 @@ class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnecti
             track->kind() != std::string(webrtc::MediaStreamTrackInterface::kVideoKind)) {
             return;
         }
+
         auto* vptr = static_cast<webrtc::VideoTrackInterface*>(track.get());
         webrtc::scoped_refptr<webrtc::VideoTrackInterface> v(vptr);
 
@@ -164,7 +166,6 @@ class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnecti
     WebRtcPullStream* stream_;
 };
 
-// ---------------------------------------------------------------- WebRtcPullStream
 WebRtcPullStream::WebRtcPullStream(
     int32_t index,
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
@@ -174,7 +175,7 @@ WebRtcPullStream::WebRtcPullStream(
       signaling_url_(std::move(signaling_url)),
       device_id_(std::move(device_id)),
       factory_(std::move(factory)) {
-    observer_      = std::make_unique<PeerConnectionObserverImpl>(this);
+    observer_ = std::make_unique<PeerConnectionObserverImpl>(this);
     frame_adapter_ = std::make_unique<FrameAdapter>(this);
 }
 
@@ -206,22 +207,14 @@ bool WebRtcPullStream::Start() {
     if (closed_.load(std::memory_order_acquire)) return false;
     if (signaling_) return true;
 
-    // role 保持旧协议 "subscriber"，device_id + stream_index 以扩展字段下发，
-    // 服务端若未升级会忽略未知键，向后兼容。
-    signaling_ = std::make_unique<SignalingClient>(signaling_url_, "subscriber",
-                                                    device_id_, index_);
+    rflow::signal::SessionConfig config;
+    config.server_addr = signaling_url_;
+    config.registration.role = rflow::signal::PeerRole::kSubscriber;
+    config.registration.device_id = device_id_;
+    config.registration.stream_index = index_;
 
-    // TODO: post 到 SDK 统一的回调线程；当前回调直接在 SignalingClient 读线程执行。
-    signaling_->SetOnOffer([this](const std::string& type, const std::string& sdp) {
-        HandleOffer(type, sdp);
-    });
-    signaling_->SetOnIce([this](const std::string& mid, int mline, const std::string& cand) {
-        HandleRemoteIceCandidate(mid, mline, cand);
-    });
-    signaling_->SetOnError([this](const std::string& err) {
-        RFLOW_LOGW("[pull idx=%d] signaling error: %s", index_, err.c_str());
-        EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_NETWORK);
-    });
+    signaling_ = std::make_unique<SignalingClient>(std::move(config));
+    signaling_->SetDelegate(this);
 
     EmitState(RFLOW_STREAM_OPENING, RFLOW_OK);
     if (!signaling_->Start()) {
@@ -230,6 +223,7 @@ bool WebRtcPullStream::Start() {
         EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_NETWORK);
         return false;
     }
+
     RFLOW_LOGI("[pull idx=%d] signaling started, waiting for offer...", index_);
     return true;
 }
@@ -238,10 +232,10 @@ void WebRtcPullStream::Close() {
     if (closed_.exchange(true, std::memory_order_acq_rel)) return;
 
     pending_remote_ice_.clear();
-    remote_description_applied_       = false;
-    pending_set_remote_observer_      = nullptr;
-    pending_create_answer_observer_   = nullptr;
-    pending_set_local_observer_       = nullptr;
+    remote_description_applied_ = false;
+    pending_set_remote_observer_ = nullptr;
+    pending_create_answer_observer_ = nullptr;
+    pending_set_local_observer_ = nullptr;
 
     if (current_video_track_ && frame_adapter_) {
         current_video_track_->RemoveSink(frame_adapter_.get());
@@ -249,14 +243,38 @@ void WebRtcPullStream::Close() {
     current_video_track_ = nullptr;
 
     if (signaling_) {
+        signaling_->SetDelegate(nullptr);
         signaling_->Stop();
         signaling_.reset();
     }
+
     if (peer_connection_) {
         peer_connection_->Close();
         peer_connection_ = nullptr;
     }
+
     EmitState(RFLOW_STREAM_CLOSED, RFLOW_OK);
+}
+
+void WebRtcPullStream::OnSignalMessage(const rflow::signal::Message& msg) {
+    switch (msg.type) {
+        case rflow::signal::MessageType::kOffer:
+            HandleOffer(msg.sdp);
+            return;
+        case rflow::signal::MessageType::kIce:
+            HandleRemoteIceCandidate(msg.mid, msg.mline_index, msg.candidate);
+            return;
+        default:
+            return;
+    }
+}
+
+void WebRtcPullStream::OnSignalError(std::string_view error) {
+    RFLOW_LOGW("[pull idx=%d] signaling error: %.*s",
+               index_,
+               static_cast<int>(error.size()),
+               error.data());
+    EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_NETWORK);
 }
 
 void WebRtcPullStream::CreatePeerConnectionLocked() {
@@ -271,11 +289,10 @@ void WebRtcPullStream::CreatePeerConnectionLocked() {
     }
 
     webrtc::PeerConnectionInterface::RTCConfiguration config;
-    config.sdp_semantics                    = webrtc::SdpSemantics::kUnifiedPlan;
+    config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
     config.audio_jitter_buffer_min_delay_ms = 0;
 
     webrtc::PeerConnectionInterface::IceServer ice_server;
-    // TODO: 从 global_config / signal_config 取 STUN/TURN，当前沿用旧 demo 默认。
     ice_server.urls.push_back("stun:stun.l.google.com:19302");
     config.servers.push_back(ice_server);
 
@@ -287,25 +304,25 @@ void WebRtcPullStream::CreatePeerConnectionLocked() {
         EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
         return;
     }
+
     peer_connection_ = result.MoveValue();
 }
 
-void WebRtcPullStream::HandleOffer(const std::string& type, const std::string& sdp) {
+void WebRtcPullStream::HandleOffer(const std::string& sdp) {
     if (closed_.load(std::memory_order_acquire)) return;
     RFLOW_LOGI("[pull idx=%d] recv offer, creating answer...", index_);
 
     pending_remote_ice_.clear();
-    remote_description_applied_     = false;
-    pending_set_remote_observer_    = nullptr;
+    remote_description_applied_ = false;
+    pending_set_remote_observer_ = nullptr;
     pending_create_answer_observer_ = nullptr;
-    pending_set_local_observer_     = nullptr;
+    pending_set_local_observer_ = nullptr;
 
     CreatePeerConnectionLocked();
     if (!peer_connection_) return;
 
     webrtc::SdpParseError err;
-    webrtc::SdpType sdp_type = SdpTypeFromOfferAnswerString(type);
-    auto remote = webrtc::CreateSessionDescription(sdp_type, sdp, &err);
+    auto remote = webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, sdp, &err);
     if (!remote) {
         RFLOW_LOGE("[pull idx=%d] parse remote sdp failed: %s",
                    index_, err.description.c_str());
@@ -324,11 +341,10 @@ void WebRtcPullStream::HandleOffer(const std::string& type, const std::string& s
                 EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 return;
             }
+
             remote_description_applied_ = true;
             FlushPendingRemoteIceCandidates();
-            // 与旧实现一致：避免在 WebRTC 回调线程内直接 CreateAnswer 卡死，
-            // 这里改为投递到 signaling 线程执行。
-            // TODO: 统一到 SDK 的调度线程池。
+
             auto* th = rflow::rtc::signaling_thread();
             if (th) {
                 th->PostTask([self = shared_from_this()] {
@@ -354,6 +370,7 @@ void WebRtcPullStream::DoCreateAnswerAfterSetRemote() {
                 EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 return;
             }
+
             std::string answer_sdp;
             if (!desc->ToString(&answer_sdp) || answer_sdp.empty()) {
                 RFLOW_LOGE("[pull idx=%d] answer sdp ToString failed", index_);
@@ -370,7 +387,11 @@ void WebRtcPullStream::DoCreateAnswerAfterSetRemote() {
                         RFLOW_LOGW("[pull idx=%d] SetLocal ok but signaling gone", index_);
                         return;
                     }
-                    signaling_->SendAnswer(answer_sdp);
+
+                    rflow::signal::Message msg;
+                    msg.type = rflow::signal::MessageType::kAnswer;
+                    msg.sdp = answer_sdp;
+                    signaling_->Send(msg);
                     RFLOW_LOGI("[pull idx=%d] answer sent", index_);
                 },
                 [this](webrtc::RTCError er) {
@@ -379,21 +400,25 @@ void WebRtcPullStream::DoCreateAnswerAfterSetRemote() {
                                index_, er.message());
                     EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 });
-            peer_connection_->SetLocalDescription(pending_set_local_observer_.get(),
-                                                   desc.release());
+            peer_connection_->SetLocalDescription(
+                pending_set_local_observer_.get(), desc.release());
         },
         [this](webrtc::RTCError e) {
             pending_create_answer_observer_ = nullptr;
             RFLOW_LOGE("[pull idx=%d] CreateAnswer OnFailure: %s", index_, e.message());
             EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
         });
-    peer_connection_->CreateAnswer(pending_create_answer_observer_.get(),
-                                   webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
+
+    peer_connection_->CreateAnswer(
+        pending_create_answer_observer_.get(),
+        webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
 }
 
-void WebRtcPullStream::AddRemoteIceCandidateNow(const std::string& mid, int mline_index,
-                                                 const std::string& candidate) {
+void WebRtcPullStream::AddRemoteIceCandidateNow(const std::string& mid,
+                                                int mline_index,
+                                                const std::string& candidate) {
     if (!peer_connection_) return;
+
     webrtc::SdpParseError err;
     webrtc::IceCandidateInterface* cand =
         webrtc::CreateIceCandidate(mid, mline_index, candidate, &err);
@@ -402,7 +427,8 @@ void WebRtcPullStream::AddRemoteIceCandidateNow(const std::string& mid, int mlin
                    index_, err.description.c_str(), mid.c_str(), mline_index);
         return;
     }
-    bool ok = peer_connection_->AddIceCandidate(cand);
+
+    const bool ok = peer_connection_->AddIceCandidate(cand);
     delete cand;
     if (!ok) {
         RFLOW_LOGW("[pull idx=%d] AddIceCandidate returned false mid=%s mline=%d",
@@ -412,6 +438,7 @@ void WebRtcPullStream::AddRemoteIceCandidateNow(const std::string& mid, int mlin
 
 void WebRtcPullStream::FlushPendingRemoteIceCandidates() {
     if (pending_remote_ice_.empty()) return;
+
     RFLOW_LOGD("[pull idx=%d] flush pending ice, n=%zu",
                index_, pending_remote_ice_.size());
     for (const auto& p : pending_remote_ice_) {
@@ -420,14 +447,16 @@ void WebRtcPullStream::FlushPendingRemoteIceCandidates() {
     pending_remote_ice_.clear();
 }
 
-void WebRtcPullStream::HandleRemoteIceCandidate(const std::string& mid, int mline_index,
-                                                 const std::string& candidate) {
+void WebRtcPullStream::HandleRemoteIceCandidate(const std::string& mid,
+                                                int mline_index,
+                                                const std::string& candidate) {
     if (!peer_connection_ || !remote_description_applied_) {
         pending_remote_ice_.push_back(PendingRemoteIce{mid, mline_index, candidate});
         RFLOW_LOGD("[pull idx=%d] enqueue remote ice, size=%zu",
                    index_, pending_remote_ice_.size());
         return;
     }
+
     AddRemoteIceCandidateNow(mid, mline_index, candidate);
 }
 

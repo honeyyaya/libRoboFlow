@@ -1,7 +1,6 @@
 #include "webrtc_pull_manager.h"
 
 #include "core/rtc/rtc.h"
-#include "signaling/signaling_client.h"
 #include "webrtc/webrtc_pull_stream.h"
 
 #include "client/internal/handles.h"  // librflow_stream_param_s
