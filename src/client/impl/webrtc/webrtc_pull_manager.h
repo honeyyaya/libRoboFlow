@@ -28,6 +28,7 @@
 #include "rflow/librflow_common.h"
 
 namespace webrtc { class VideoFrame; }
+struct librflow_stream_param_s;
 
 namespace rflow::client::impl {
 
@@ -55,7 +56,7 @@ class WebRtcPullManager {
     //   param 可为空，将沿用 SDK 默认策略（当前协议无协商字段，仅记录 hint）。
     //   sinks 闭包生命周期需 >= stream（stream 析构前持有）。
     rflow_err_t OpenStream(int32_t index,
-                           const struct librflow_stream_param_s* param,
+                           const struct ::librflow_stream_param_s* param,
                            StateSink state_sink,
                            FrameSink frame_sink,
                            std::shared_ptr<WebRtcPullStream>* out);

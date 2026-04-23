@@ -57,6 +57,11 @@ target_include_directories(rflow_client
 
 # 与预编译 libwebrtc 链接（定义在 src/core/CMakeLists.txt）
 if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)
+    target_include_directories(rflow_client SYSTEM PRIVATE
+        ${CMAKE_SOURCE_DIR}/include/webrtc
+        ${CMAKE_SOURCE_DIR}/include/webrtc/third_party/abseil-cpp
+        ${CMAKE_SOURCE_DIR}/include/webrtc/third_party/libyuv/include
+    )
     target_link_libraries(rflow_client PRIVATE rflow_webrtc_prebuilt)
     target_compile_definitions(rflow_client PRIVATE
         RFLOW_RTC_WEBRTC_PEER_CONNECTION_API=1

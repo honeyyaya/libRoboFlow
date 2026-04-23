@@ -50,7 +50,9 @@ if(RFLOW_BUILD_SERVICE)
     add_subdirectory(src/service)
 endif()
 
-add_subdirectory(test)
+if(EXISTS "${CMAKE_SOURCE_DIR}/test/CMakeLists.txt")
+    add_subdirectory(test)
+endif()
 
 # -------------------------------------------------------------------- summary
 message(STATUS "")
