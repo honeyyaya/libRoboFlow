@@ -56,10 +56,10 @@ void WebRtcPullManager::Shutdown() {
 }
 
 rflow_err_t WebRtcPullManager::OpenStream(int32_t index,
-                                           const librflow_stream_param_s* /*param*/,
-                                           StateSink state_sink,
-                                           FrameSink frame_sink,
-                                           std::shared_ptr<WebRtcPullStream>* out) {
+                                          const ::librflow_stream_param_s* /*param*/,
+                                          StateSink state_sink,
+                                          FrameSink frame_sink,
+                                          std::shared_ptr<WebRtcPullStream>* out) {
     if (!out) return RFLOW_ERR_PARAM;
     *out = nullptr;
 

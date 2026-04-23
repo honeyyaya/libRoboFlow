@@ -3,6 +3,8 @@
  * @brief  简易线程池（占位实现，后续替换为 libevent / custom executor）
 **/
 
+#include <signal.h>
+
 #include "thread_pool.h"
 
 #include "common/internal/logger.h"

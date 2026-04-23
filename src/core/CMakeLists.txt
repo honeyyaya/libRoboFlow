@@ -48,7 +48,7 @@ if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_CLIENT)
     endif()
     message(STATUS "rflow webrtc (core rtc) : ${RFLOW_WEBRTC_LIB}")
 
-    add_library(rflow_webrtc_prebuilt STATIC IMPORTED)
+    add_library(rflow_webrtc_prebuilt STATIC IMPORTED GLOBAL)
     set_target_properties(rflow_webrtc_prebuilt PROPERTIES
         IMPORTED_LOCATION ${RFLOW_WEBRTC_LIB}
         INTERFACE_INCLUDE_DIRECTORIES
@@ -68,18 +68,12 @@ if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_CLIENT)
 endif()
 
 # include：线程 / 信令子目录，便于 "thread_pool.h" / "signal.h"
-set(_core_private_includes
-    ${CMAKE_CURRENT_SOURCE_DIR}/thread
-    ${CMAKE_CURRENT_SOURCE_DIR}/signal
-)
-
 target_include_directories(rflow_core
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${_core_private_includes}
 )
 
 target_include_directories(rflow_rtc_stub
