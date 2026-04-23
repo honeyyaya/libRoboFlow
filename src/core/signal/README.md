@@ -34,6 +34,8 @@ Current status:
 
 - `src/client/impl/signaling/signaling_client.*` is now a POSIX transport
   adapter that implements `rflow::signal::Session`.
+- `src/client/impl/signaling/signaling_io_manager.*` owns the shared poll-based
+  IO loop for multiple client signaling sockets.
 - the client transport multiplexes multiple signaling sockets on one shared IO
   thread instead of one reader thread per session.
 - the pull-side client only sends `answer` and `ice`; outbound `offer` is
