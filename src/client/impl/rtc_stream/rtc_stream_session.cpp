@@ -119,7 +119,10 @@ class RtcStreamSession::PeerConnectionObserverImpl : public webrtc::PeerConnecti
         msg.mid = candidate->sdp_mid();
         msg.mline_index = candidate->sdp_mline_index();
         msg.candidate = std::move(sdp);
-        stream_->signaling_->Send(msg);
+        if (!stream_->signaling_->Send(msg)) {
+            RFLOW_LOGE("[pull idx=%d] send local ice candidate failed", stream_->index_);
+            stream_->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_NETWORK);
+        }
     }
 
     void OnConnectionChange(webrtc::PeerConnectionInterface::PeerConnectionState s) override {
@@ -155,7 +158,10 @@ class RtcStreamSession::PeerConnectionObserverImpl : public webrtc::PeerConnecti
         auto* vptr = static_cast<webrtc::VideoTrackInterface*>(track.get());
         webrtc::scoped_refptr<webrtc::VideoTrackInterface> v(vptr);
 
-        stream_->current_video_track_ = v;
+        {
+            std::lock_guard<std::mutex> lk(stream_->mu_);
+            stream_->current_video_track_ = v;
+        }
         if (stream_->frame_adapter_) {
             webrtc::VideoSinkWants wants;
             v->AddOrUpdateSink(stream_->frame_adapter_.get(), wants);
@@ -231,16 +237,18 @@ bool RtcStreamSession::Start() {
 void RtcStreamSession::Close() {
     if (closed_.exchange(true, std::memory_order_acq_rel)) return;
 
-    pending_remote_ice_.clear();
-    remote_description_applied_ = false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        pending_remote_ice_.clear();
+        if (current_video_track_ && frame_adapter_) {
+            current_video_track_->RemoveSink(frame_adapter_.get());
+        }
+        current_video_track_ = nullptr;
+    }
+    remote_description_applied_.store(false, std::memory_order_release);
     pending_set_remote_observer_ = nullptr;
     pending_create_answer_observer_ = nullptr;
     pending_set_local_observer_ = nullptr;
-
-    if (current_video_track_ && frame_adapter_) {
-        current_video_track_->RemoveSink(frame_adapter_.get());
-    }
-    current_video_track_ = nullptr;
 
     if (signaling_) {
         signaling_->SetDelegate(nullptr);
@@ -306,14 +314,78 @@ void RtcStreamSession::CreatePeerConnectionLocked() {
     }
 
     peer_connection_ = result.MoveValue();
+
+    webrtc::RtpTransceiverInit init;
+    init.direction = webrtc::RtpTransceiverDirection::kRecvOnly;
+
+    auto* signaling_thread = peer_connection_->signaling_thread();
+    if (!signaling_thread) {
+        RFLOW_LOGE("[pull idx=%d] peer connection signaling thread null", index_);
+        peer_connection_->Close();
+        peer_connection_ = nullptr;
+        EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+        return;
+    }
+
+    auto add_video_transceiver = [this, init]() mutable {
+        if (!peer_connection_) {
+            return;
+        }
+
+        auto transceiver_or_error =
+            peer_connection_->AddTransceiver(webrtc::MediaType::VIDEO, init);
+        if (!transceiver_or_error.ok()) {
+            RFLOW_LOGE("[pull idx=%d] AddTransceiver(video recvonly) failed: %s",
+                       index_, transceiver_or_error.error().message());
+            peer_connection_->Close();
+            peer_connection_ = nullptr;
+            EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+            return;
+        }
+
+        RFLOW_LOGI("[pull idx=%d] peer connection ready with recvonly video transceiver",
+                   index_);
+    };
+
+    if (signaling_thread->IsCurrent()) {
+        add_video_transceiver();
+    } else {
+        signaling_thread->BlockingCall(add_video_transceiver);
+    }
+}
+
+bool RtcStreamSession::RunOnPeerConnectionSignalingThread(const std::function<void()>& task) {
+    if (!task) {
+        return false;
+    }
+    if (!peer_connection_) {
+        RFLOW_LOGW("[pull idx=%d] peer connection null", index_);
+        return false;
+    }
+
+    auto* signaling_thread = peer_connection_->signaling_thread();
+    if (!signaling_thread) {
+        RFLOW_LOGE("[pull idx=%d] peer connection signaling thread null", index_);
+        return false;
+    }
+
+    if (signaling_thread->IsCurrent()) {
+        task();
+    } else {
+        signaling_thread->BlockingCall(task);
+    }
+    return true;
 }
 
 void RtcStreamSession::HandleOffer(const std::string& sdp) {
     if (closed_.load(std::memory_order_acquire)) return;
     RFLOW_LOGI("[pull idx=%d] recv offer, creating answer...", index_);
 
-    pending_remote_ice_.clear();
-    remote_description_applied_ = false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        pending_remote_ice_.clear();
+    }
+    remote_description_applied_.store(false, std::memory_order_release);
     pending_set_remote_observer_ = nullptr;
     pending_create_answer_observer_ = nullptr;
     pending_set_local_observer_ = nullptr;
@@ -330,88 +402,122 @@ void RtcStreamSession::HandleOffer(const std::string& sdp) {
         return;
     }
 
+    auto self = shared_from_this();
     pending_set_remote_observer_ = webrtc::make_ref_counted<SetRemoteDescObserver>(
-        [this](webrtc::RTCError error) {
-            pending_set_remote_observer_ = nullptr;
+        [self](webrtc::RTCError error) {
+            self->pending_set_remote_observer_ = nullptr;
             if (!error.ok()) {
                 RFLOW_LOGE("[pull idx=%d] SetRemoteDescription failed: %s",
-                           index_, error.message());
-                remote_description_applied_ = false;
-                pending_remote_ice_.clear();
-                EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+                           self->index_, error.message());
+                self->remote_description_applied_.store(false, std::memory_order_release);
+                {
+                    std::lock_guard<std::mutex> lk(self->mu_);
+                    self->pending_remote_ice_.clear();
+                }
+                self->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 return;
             }
 
-            remote_description_applied_ = true;
-            FlushPendingRemoteIceCandidates();
-
-            auto* th = rflow::rtc::signaling_thread();
-            if (th) {
-                th->PostTask([self = shared_from_this()] {
-                    self->DoCreateAnswerAfterSetRemote();
-                });
-            } else {
-                DoCreateAnswerAfterSetRemote();
-            }
+            self->remote_description_applied_.store(true, std::memory_order_release);
+            self->FlushPendingRemoteIceCandidates();
+            self->DoCreateAnswerAfterSetRemote();
         });
-    peer_connection_->SetRemoteDescription(std::move(remote), pending_set_remote_observer_);
+
+    auto* signaling_thread = peer_connection_->signaling_thread();
+    if (!signaling_thread) {
+        pending_set_remote_observer_ = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            pending_remote_ice_.clear();
+        }
+        RFLOW_LOGE("[pull idx=%d] peer connection signaling thread null", index_);
+        EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+        return;
+    }
+
+    auto apply_remote = [this, remote_desc = std::move(remote)]() mutable {
+        if (!peer_connection_) {
+            return;
+        }
+        peer_connection_->SetRemoteDescription(std::move(remote_desc),
+                                               pending_set_remote_observer_);
+    };
+    if (signaling_thread->IsCurrent()) {
+        apply_remote();
+    } else {
+        signaling_thread->BlockingCall(std::move(apply_remote));
+    }
 }
 
 void RtcStreamSession::DoCreateAnswerAfterSetRemote() {
     if (!peer_connection_) return;
 
+    auto self = shared_from_this();
     pending_create_answer_observer_ = webrtc::make_ref_counted<CreateAnswerObserver>(
-        [this](webrtc::RTCError e,
+        [self](webrtc::RTCError e,
                std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
-            pending_create_answer_observer_ = nullptr;
+            self->pending_create_answer_observer_ = nullptr;
             if (!e.ok() || !desc) {
                 RFLOW_LOGE("[pull idx=%d] CreateAnswer failed: %s",
-                           index_, e.ok() ? "desc null" : e.message());
-                EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+                           self->index_, e.ok() ? "desc null" : e.message());
+                self->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 return;
             }
 
             std::string answer_sdp;
             if (!desc->ToString(&answer_sdp) || answer_sdp.empty()) {
-                RFLOW_LOGE("[pull idx=%d] answer sdp ToString failed", index_);
-                EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+                RFLOW_LOGE("[pull idx=%d] answer sdp ToString failed", self->index_);
+                self->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 return;
             }
             RFLOW_LOGI("[pull idx=%d] CreateAnswer ok, sdp_bytes=%zu",
-                       index_, answer_sdp.size());
+                       self->index_, answer_sdp.size());
 
-            pending_set_local_observer_ = webrtc::make_ref_counted<SetLocalDescObserver>(
-                [this, answer_sdp]() {
-                    pending_set_local_observer_ = nullptr;
-                    if (!signaling_) {
-                        RFLOW_LOGW("[pull idx=%d] SetLocal ok but signaling gone", index_);
+            self->pending_set_local_observer_ = webrtc::make_ref_counted<SetLocalDescObserver>(
+                [self, answer_sdp]() {
+                    self->pending_set_local_observer_ = nullptr;
+                    if (!self->signaling_) {
+                        RFLOW_LOGW("[pull idx=%d] SetLocal ok but signaling gone", self->index_);
                         return;
                     }
 
                     rflow::signal::Message msg;
                     msg.type = rflow::signal::MessageType::kAnswer;
                     msg.sdp = answer_sdp;
-                    signaling_->Send(msg);
-                    RFLOW_LOGI("[pull idx=%d] answer sent", index_);
+                    if (!self->signaling_->Send(msg)) {
+                        RFLOW_LOGE("[pull idx=%d] send answer failed", self->index_);
+                        self->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_NETWORK);
+                        return;
+                    }
+                    RFLOW_LOGI("[pull idx=%d] answer sent", self->index_);
                 },
-                [this](webrtc::RTCError er) {
-                    pending_set_local_observer_ = nullptr;
+                [self](webrtc::RTCError er) {
+                    self->pending_set_local_observer_ = nullptr;
                     RFLOW_LOGE("[pull idx=%d] SetLocalDescription failed: %s",
-                               index_, er.message());
-                    EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+                               self->index_, er.message());
+                    self->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
                 });
-            peer_connection_->SetLocalDescription(
-                pending_set_local_observer_.get(), desc.release());
+            self->peer_connection_->SetLocalDescription(
+                self->pending_set_local_observer_.get(), desc.release());
         },
-        [this](webrtc::RTCError e) {
-            pending_create_answer_observer_ = nullptr;
-            RFLOW_LOGE("[pull idx=%d] CreateAnswer OnFailure: %s", index_, e.message());
-            EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+        [self](webrtc::RTCError e) {
+            self->pending_create_answer_observer_ = nullptr;
+            RFLOW_LOGE("[pull idx=%d] CreateAnswer OnFailure: %s", self->index_, e.message());
+            self->EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
         });
 
-    peer_connection_->CreateAnswer(
-        pending_create_answer_observer_.get(),
-        webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
+    if (!RunOnPeerConnectionSignalingThread([this]() {
+            if (!peer_connection_) {
+                return;
+            }
+            webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
+            options.offer_to_receive_audio = 0;
+            options.num_simulcast_layers = 1;
+            peer_connection_->CreateAnswer(pending_create_answer_observer_.get(), options);
+        })) {
+        pending_create_answer_observer_ = nullptr;
+        EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_FAIL);
+    }
 }
 
 void RtcStreamSession::AddRemoteIceCandidateNow(const std::string& mid,
@@ -419,41 +525,56 @@ void RtcStreamSession::AddRemoteIceCandidateNow(const std::string& mid,
                                                 const std::string& candidate) {
     if (!peer_connection_) return;
 
-    webrtc::SdpParseError err;
-    webrtc::IceCandidateInterface* cand =
-        webrtc::CreateIceCandidate(mid, mline_index, candidate, &err);
-    if (!cand) {
-        RFLOW_LOGW("[pull idx=%d] CreateIceCandidate failed: %s mid=%s mline=%d",
-                   index_, err.description.c_str(), mid.c_str(), mline_index);
-        return;
-    }
+    RunOnPeerConnectionSignalingThread([this, mid, mline_index, candidate]() {
+        if (!peer_connection_) {
+            return;
+        }
 
-    const bool ok = peer_connection_->AddIceCandidate(cand);
-    delete cand;
-    if (!ok) {
-        RFLOW_LOGW("[pull idx=%d] AddIceCandidate returned false mid=%s mline=%d",
-                   index_, mid.c_str(), mline_index);
-    }
+        webrtc::SdpParseError err;
+        webrtc::IceCandidateInterface* cand =
+            webrtc::CreateIceCandidate(mid, mline_index, candidate, &err);
+        if (!cand) {
+            RFLOW_LOGW("[pull idx=%d] CreateIceCandidate failed: %s mid=%s mline=%d",
+                       index_, err.description.c_str(), mid.c_str(), mline_index);
+            return;
+        }
+
+        const bool ok = peer_connection_->AddIceCandidate(cand);
+        delete cand;
+        if (!ok) {
+            RFLOW_LOGW("[pull idx=%d] AddIceCandidate returned false mid=%s mline=%d",
+                       index_, mid.c_str(), mline_index);
+        }
+    });
 }
 
 void RtcStreamSession::FlushPendingRemoteIceCandidates() {
-    if (pending_remote_ice_.empty()) return;
+    std::vector<PendingRemoteIce> pending;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (pending_remote_ice_.empty()) return;
+        pending.swap(pending_remote_ice_);
+    }
 
     RFLOW_LOGD("[pull idx=%d] flush pending ice, n=%zu",
-               index_, pending_remote_ice_.size());
-    for (const auto& p : pending_remote_ice_) {
+               index_, pending.size());
+    for (const auto& p : pending) {
         AddRemoteIceCandidateNow(p.mid, p.mline_index, p.candidate);
     }
-    pending_remote_ice_.clear();
 }
 
 void RtcStreamSession::HandleRemoteIceCandidate(const std::string& mid,
                                                 int                mline_index,
                                                 const std::string& candidate) {
-    if (!peer_connection_ || !remote_description_applied_) {
-        pending_remote_ice_.push_back(PendingRemoteIce{mid, mline_index, candidate});
+    if (!peer_connection_ || !remote_description_applied_.load(std::memory_order_acquire)) {
+        size_t pending_count = 0;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            pending_remote_ice_.push_back(PendingRemoteIce{mid, mline_index, candidate});
+            pending_count = pending_remote_ice_.size();
+        }
         RFLOW_LOGD("[pull idx=%d] enqueue remote ice, size=%zu",
-                   index_, pending_remote_ice_.size());
+                   index_, pending_count);
         return;
     }
 
