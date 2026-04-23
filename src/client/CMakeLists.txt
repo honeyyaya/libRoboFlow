@@ -14,6 +14,7 @@ set(CLIENT_SOURCES
 # 真实拉流、信令在开启 RFLOW_CLIENT_ENABLE_WEBRTC_IMPL 时编译；WebRTC 工厂与 init 在 core/rtc
 if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)
     list(APPEND CLIENT_SOURCES
+        impl/signaling/signaling_io_manager.cpp
         impl/signaling/signaling_client.cpp
         impl/webrtc/webrtc_frame_converter.cpp
         impl/webrtc/webrtc_pull_stream.cpp

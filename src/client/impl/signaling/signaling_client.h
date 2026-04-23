@@ -8,6 +8,7 @@
 #define __RFLOW_CLIENT_IMPL_SIGNALING_CLIENT_H__
 
 #include "core/signal/session.h"
+#include "signaling_io_manager.h"
 
 #include <atomic>
 #include <memory>
@@ -15,9 +16,6 @@
 #include <string>
 
 namespace rflow::client::impl {
-
-struct SignalingClientSessionSlot;
-class SignalingIoManager;
 
 class SignalingClient final : public rflow::signal::Session {
  public:
