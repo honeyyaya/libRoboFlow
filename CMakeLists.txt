@@ -1,30 +1,33 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(libRoboFlow
-    VERSION   0.9.4
-    LANGUAGES C CXX
-)
-
 # -------------------------------------------------------------------- options
 option(RFLOW_BUILD_CLIENT  "Build Client SDK (librflow_client)"  ON)
 option(RFLOW_BUILD_SERVICE "Build Service SDK (librflow_svc)"    ON)
 option(RFLOW_BUILD_SHARED  "Build shared libraries (.so)"        ON)
 option(RFLOW_ENABLE_WERROR "Treat warnings as errors"            OFF)
-# Client 侧拉流可链接预编译 libwebrtc；开启时 core 中编译 rflow_rtc_webrtc 代替 rtc stub。
 option(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL
     "Enable WebRTC client impl (requires include/webrtc + libwebrtc prebuilt)" OFF)
 
-set(CMAKE_C_STANDARD   11)
+project(libRoboFlow
+    VERSION   0.9.4
+    LANGUAGES CXX
+)
+
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_C_STANDARD_REQUIRED   ON)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+if(RFLOW_BUILD_SERVICE)
+    enable_language(C)
+    set(CMAKE_C_STANDARD 11)
+    set(CMAKE_C_STANDARD_REQUIRED ON)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
 endif()
 
-# -------------------------------------------------------------------- warnings (GCC / Clang only — not Windows/MSVC)
+# -------------------------------------------------------------------- warnings (GCC / Clang only, not Windows/MSVC)
 if(MSVC)
     message(FATAL_ERROR "libRoboFlow targets Linux/Android (arm64) with GCC or Clang; MSVC is not supported.")
 endif()
