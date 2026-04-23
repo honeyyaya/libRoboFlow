@@ -10,6 +10,9 @@ option(RFLOW_BUILD_CLIENT  "Build Client SDK (librflow_client)"  ON)
 option(RFLOW_BUILD_SERVICE "Build Service SDK (librflow_svc)"    ON)
 option(RFLOW_BUILD_SHARED  "Build shared libraries (.so)"        ON)
 option(RFLOW_ENABLE_WERROR "Treat warnings as errors"            OFF)
+# Client 侧拉流可链接预编译 libwebrtc；开启时 core 中编译 rflow_rtc_webrtc 代替 rtc stub。
+option(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL
+    "Enable WebRTC client impl (requires include/webrtc + libwebrtc prebuilt)" OFF)
 
 set(CMAKE_C_STANDARD   11)
 set(CMAKE_CXX_STANDARD 17)
@@ -55,6 +58,7 @@ message(STATUS "libRoboFlow SDK ${PROJECT_VERSION}")
 message(STATUS "  Build type : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Shared     : ${RFLOW_BUILD_SHARED}")
 message(STATUS "  Client     : ${RFLOW_BUILD_CLIENT}")
+message(STATUS "  WebRTC cl. : ${RFLOW_CLIENT_ENABLE_WEBRTC_IMPL}")
 message(STATUS "  Service    : ${RFLOW_BUILD_SERVICE}")
 message(STATUS "  Compiler   : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "  Target     : ${CMAKE_SYSTEM_PROCESSOR} / ${CMAKE_SYSTEM_NAME}")

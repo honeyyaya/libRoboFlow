@@ -12,9 +12,11 @@
 #include "common/internal/last_error.h"
 #include "common/internal/logger.h"
 
-#include "core/rtc/rtc.h"
-#include "core/signal/signal.h"
-#include "core/thread/thread_pool.h"
+#include "internal/infrastructure.h"
+
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace rflow::client {
 
@@ -58,9 +60,8 @@ rflow_err_t librflow_init(void) {
 
     if (s.lifecycle != rflow::client::LifecycleState::kUninit) return RFLOW_OK;
 
-    if (!rflow::thread::initialize()) return RFLOW_ERR_FAIL;
-    if (!rflow::rtc::initialize())    { rflow::thread::shutdown(); return RFLOW_ERR_FAIL; }
-    if (!rflow::signal::initialize()) { rflow::rtc::shutdown(); rflow::thread::shutdown(); return RFLOW_ERR_FAIL; }
+    rflow_err_t err = rflow::client::init_infrastructure();
+    if (err != RFLOW_OK) return err;
 
     s.lifecycle = rflow::client::LifecycleState::kInited;
     RFLOW_LOGI("librflow_init OK");
@@ -77,9 +78,7 @@ rflow_err_t librflow_uninit(void) {
     if (s.lifecycle == rflow::client::LifecycleState::kUninit) return RFLOW_OK;
 
     s.streams.clear();
-    rflow::signal::shutdown();
-    rflow::rtc::shutdown();
-    rflow::thread::shutdown();
+    rflow::client::shutdown_infrastructure();
 
     s.lifecycle = rflow::client::LifecycleState::kUninit;
     RFLOW_LOGI("librflow_uninit OK");
@@ -92,53 +91,93 @@ rflow_err_t librflow_connect(librflow_connect_info_t info,
     if (!cb   || cb->magic   != rflow::client::kMagicConnectCb)   return RFLOW_ERR_PARAM;
 
     auto& s = rflow::client::state();
-    std::lock_guard<std::mutex> lk(s.mu);
 
-    if (s.lifecycle == rflow::client::LifecycleState::kUninit) {
-        rflow::set_last_error("must call librflow_init before connect");
-        return RFLOW_ERR_STATE;
-    }
-    if (s.lifecycle == rflow::client::LifecycleState::kConnected ||
-        s.lifecycle == rflow::client::LifecycleState::kConnecting) {
-        return RFLOW_ERR_STATE;
+    std::string signal_url;
+    std::string device_id = info->device_id;
+    librflow_connect_cb_s cb_copy{};
+
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+
+        if (s.lifecycle == rflow::client::LifecycleState::kUninit) {
+            rflow::set_last_error("must call librflow_init before connect");
+            return RFLOW_ERR_STATE;
+        }
+        if (s.lifecycle == rflow::client::LifecycleState::kConnected ||
+            s.lifecycle == rflow::client::LifecycleState::kConnecting) {
+            return RFLOW_ERR_STATE;
+        }
+
+        s.connect_info   = *info;
+        s.connect_cb     = *cb;
+        s.has_connect_cb = true;
+        s.lifecycle      = rflow::client::LifecycleState::kConnecting;
+
+        if (s.global_config.magic == rflow::kMagicGlobalConfig && s.global_config.has_signal) {
+            signal_url = s.global_config.signal.url;
+        }
+        cb_copy = s.connect_cb;
     }
 
-    s.connect_info   = *info;
-    s.connect_cb     = *cb;
-    s.has_connect_cb = true;
-    s.lifecycle      = rflow::client::LifecycleState::kConnecting;
+    // TODO: 当前无独立的 device 级鉴权通道，连接=拉起拉流子系统；
+    //       后续若接入 core/signal 长连 + 设备鉴权，应在此先做握手再切 Connected。
+    rflow_err_t err = rflow::client::on_connect_succeeded(signal_url, device_id);
 
-    // TODO: 通过 core/signal + core/rtc 实际发起连接，此处先直连成功
-    s.lifecycle = rflow::client::LifecycleState::kConnected;
-    if (s.connect_cb.on_state) {
-        s.connect_cb.on_state(RFLOW_CONN_CONNECTED, RFLOW_OK, s.connect_cb.userdata);
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        if (err != RFLOW_OK) {
+            s.lifecycle      = rflow::client::LifecycleState::kInited;
+            s.has_connect_cb = false;
+            return err;
+        }
+        s.lifecycle = rflow::client::LifecycleState::kConnected;
     }
-    RFLOW_LOGI("librflow_connect OK (stub)");
+
+    // 用户回调在锁外触发，避免与 state.mu 重入
+    if (cb_copy.on_state) {
+        cb_copy.on_state(RFLOW_CONN_CONNECTED, RFLOW_OK, cb_copy.userdata);
+    }
+    RFLOW_LOGI("librflow_connect OK (signal=%s device_id=%s)",
+               signal_url.c_str(), device_id.c_str());
     return RFLOW_OK;
 }
 
 rflow_err_t librflow_disconnect(void) {
     auto& s = rflow::client::state();
-    std::lock_guard<std::mutex> lk(s.mu);
 
-    if (s.lifecycle != rflow::client::LifecycleState::kConnected &&
-        s.lifecycle != rflow::client::LifecycleState::kConnecting) {
-        return RFLOW_OK;
-    }
+    // 先在锁内取快照（streams 保活 + connect_cb 拷贝），再在锁外做耗时关闭/回调
+    std::vector<std::shared_ptr<librflow_stream_s>> streams_snap;
+    librflow_connect_cb_s cb_copy{};
+    bool has_cb = false;
 
-    // 幂等强清理：先强制关掉所有 stream
-    for (auto& [h, sh] : s.streams) {
-        if (sh && sh->cb.on_state) {
-            sh->cb.on_state(h, RFLOW_STREAM_CLOSED, RFLOW_OK, sh->cb.userdata);
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        if (s.lifecycle != rflow::client::LifecycleState::kConnected &&
+            s.lifecycle != rflow::client::LifecycleState::kConnecting) {
+            return RFLOW_OK;
         }
-    }
-    s.streams.clear();
+        streams_snap.reserve(s.streams.size());
+        for (auto& kv : s.streams) {
+            if (kv.second) streams_snap.push_back(kv.second);
+        }
+        s.streams.clear();
 
-    if (s.has_connect_cb && s.connect_cb.on_state) {
-        s.connect_cb.on_state(RFLOW_CONN_DISCONNECTED, RFLOW_OK, s.connect_cb.userdata);
+        has_cb            = s.has_connect_cb;
+        cb_copy           = s.connect_cb;
+        s.has_connect_cb  = false;
+        s.lifecycle       = rflow::client::LifecycleState::kInited;
     }
-    s.has_connect_cb = false;
-    s.lifecycle      = rflow::client::LifecycleState::kInited;
+
+    // 锁外：Shutdown → 每路 stream->Close() 会经 state_sink 触达 on_state(CLOSED)；
+    // 此时 streams_snap 仍持有 stream_s 的强引用，弱引用 lock 成功，用户回调安全收到 handle。
+    rflow::client::on_disconnect();
+
+    // 清理本地快照 —— 触发 stream_s 析构（impl shared_ptr 释放；Close 已幂等不会重复跑）
+    streams_snap.clear();
+
+    if (has_cb && cb_copy.on_state) {
+        cb_copy.on_state(RFLOW_CONN_DISCONNECTED, RFLOW_OK, cb_copy.userdata);
+    }
     RFLOW_LOGI("librflow_disconnect OK");
     return RFLOW_OK;
 }

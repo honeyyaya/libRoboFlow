@@ -43,7 +43,7 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
     WebRtcPullStream(int32_t index,
                      webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
                      std::string signaling_url,
-                     std::string role);
+                     std::string device_id);
     ~WebRtcPullStream();
 
     WebRtcPullStream(const WebRtcPullStream&)            = delete;
@@ -68,7 +68,6 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
     void HandleRemoteIceCandidate(const std::string& mid, int mline_index,
                                   const std::string& candidate);
 
-    void EnsureFactoryFieldTrials();
     void CreatePeerConnectionLocked();
     void DoCreateAnswerAfterSetRemote();
     void AddRemoteIceCandidateNow(const std::string& mid, int mline_index,
@@ -79,7 +78,7 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream> {
 
     const int32_t     index_;
     const std::string signaling_url_;
-    const std::string role_;
+    const std::string device_id_;
 
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
 
