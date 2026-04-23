@@ -29,7 +29,12 @@ class SignalingClient {
                                              const std::string& candidate)>;
     using OnErrorCallback = std::function<void(const std::string& msg)>;
 
-    SignalingClient(std::string server_addr, std::string role);
+    // device_id / stream_index 作为 register 附加字段透传给信令服务端；
+    // device_id 为空 / stream_index < 0 时不携带对应字段。
+    SignalingClient(std::string server_addr,
+                    std::string role,
+                    std::string device_id   = {},
+                    int32_t     stream_index = -1);
     ~SignalingClient();
 
     SignalingClient(const SignalingClient&)            = delete;
@@ -57,6 +62,8 @@ class SignalingClient {
     std::string host_;
     uint16_t    port_{0};
     std::string role_;
+    std::string device_id_;
+    int32_t     stream_index_{-1};
 
     OnSdpCallback   on_answer_;
     OnSdpCallback   on_offer_;

@@ -7,6 +7,7 @@
 #define __RFLOW_CLIENT_HANDLES_H__
 
 #include <atomic>
+#include <memory>
 #include <string>
 
 #include "rflow/Client/librflow_client_api.h"
@@ -65,6 +66,12 @@ struct librflow_stream_s {
     int32_t                 index;
     std::atomic<int32_t>    state;  // rflow_stream_state_t
     librflow_stream_cb_s    cb;     // 按值保存
+
+    /* 底层实现对象（当前仅 WebRTC 构建使用：
+     *   shared_ptr<rflow::client::impl::WebRtcPullStream>）。
+     * 用 void 擦除类型以避免公共 handles.h 强依赖 impl 头。
+     * 生命周期：open_stream 赋值 → close_stream / disconnect 释放。 */
+    std::shared_ptr<void>   impl;
 };
 
 #endif  // __RFLOW_CLIENT_HANDLES_H__

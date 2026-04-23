@@ -50,8 +50,14 @@ void JsonEscape(std::ostringstream& oss, const std::string& in, bool include_ctr
 
 }  // namespace
 
-SignalingClient::SignalingClient(std::string server_addr, std::string role)
-    : server_addr_(std::move(server_addr)), role_(std::move(role)) {
+SignalingClient::SignalingClient(std::string server_addr,
+                                 std::string role,
+                                 std::string device_id,
+                                 int32_t     stream_index)
+    : server_addr_(std::move(server_addr)),
+      role_(std::move(role)),
+      device_id_(std::move(device_id)),
+      stream_index_(stream_index) {
     ParseHostPort(server_addr_, host_, port_);
 }
 
@@ -85,7 +91,18 @@ bool SignalingClient::Connect() {
     RFLOW_LOGI("[Signaling] tcp connected");
 
     std::ostringstream reg;
-    reg << "{\"type\":\"register\",\"role\":\"" << role_ << "\"}\n";
+    reg << "{\"type\":\"register\",\"role\":\"";
+    JsonEscape(reg, role_, /*include_ctrl=*/false);
+    reg << "\"";
+    if (!device_id_.empty()) {
+        reg << ",\"device_id\":\"";
+        JsonEscape(reg, device_id_, /*include_ctrl=*/false);
+        reg << "\"";
+    }
+    if (stream_index_ >= 0) {
+        reg << ",\"stream_index\":" << stream_index_;
+    }
+    reg << "}\n";
     const std::string msg = reg.str();
     if (::send(fd, msg.data(), msg.size(), MSG_NOSIGNAL) != static_cast<ssize_t>(msg.size())) {
         if (on_error_) on_error_("send register failed");
@@ -93,7 +110,8 @@ bool SignalingClient::Connect() {
         sock_fd_.store(-1, std::memory_order_release);
         return false;
     }
-    RFLOW_LOGI("[Signaling] registered role=%s", role_.c_str());
+    RFLOW_LOGI("[Signaling] registered role=%s device_id=%s stream_index=%d",
+               role_.c_str(), device_id_.c_str(), stream_index_);
     return true;
 }
 

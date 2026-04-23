@@ -15,11 +15,13 @@ if(RFLOW_BUILD_SHARED)
     add_library(rflow_svc SHARED ${SERVICE_SOURCES}
         $<TARGET_OBJECTS:rflow_common>
         $<TARGET_OBJECTS:rflow_core>
+        $<TARGET_OBJECTS:rflow_rtc_stub>
     )
 else()
     add_library(rflow_svc STATIC ${SERVICE_SOURCES}
         $<TARGET_OBJECTS:rflow_common>
         $<TARGET_OBJECTS:rflow_core>
+        $<TARGET_OBJECTS:rflow_rtc_stub>
     )
 endif()
 

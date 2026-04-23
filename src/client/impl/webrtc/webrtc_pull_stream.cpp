@@ -1,7 +1,7 @@
 #include "webrtc_pull_stream.h"
 
+#include "core/rtc/rtc.h"
 #include "signaling/signaling_client.h"
-#include "webrtc/webrtc_factory.h"
 
 #include "common/internal/logger.h"
 
@@ -18,8 +18,6 @@
 #include "api/rtp_transceiver_interface.h"
 #include "api/set_remote_description_observer_interface.h"
 #include "rtc_base/thread.h"
-#include "system_wrappers/include/field_trial.h"
-
 namespace rflow::client::impl {
 
 namespace {
@@ -171,10 +169,10 @@ WebRtcPullStream::WebRtcPullStream(
     int32_t index,
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
     std::string signaling_url,
-    std::string role)
+    std::string device_id)
     : index_(index),
       signaling_url_(std::move(signaling_url)),
-      role_(std::move(role)),
+      device_id_(std::move(device_id)),
       factory_(std::move(factory)) {
     observer_      = std::make_unique<PeerConnectionObserverImpl>(this);
     frame_adapter_ = std::make_unique<FrameAdapter>(this);
@@ -208,7 +206,10 @@ bool WebRtcPullStream::Start() {
     if (closed_.load(std::memory_order_acquire)) return false;
     if (signaling_) return true;
 
-    signaling_ = std::make_unique<SignalingClient>(signaling_url_, role_);
+    // role 保持旧协议 "subscriber"，device_id + stream_index 以扩展字段下发，
+    // 服务端若未升级会忽略未知键，向后兼容。
+    signaling_ = std::make_unique<SignalingClient>(signaling_url_, "subscriber",
+                                                    device_id_, index_);
 
     // TODO: post 到 SDK 统一的回调线程；当前回调直接在 SignalingClient 读线程执行。
     signaling_->SetOnOffer([this](const std::string& type, const std::string& sdp) {
@@ -258,18 +259,7 @@ void WebRtcPullStream::Close() {
     EmitState(RFLOW_STREAM_CLOSED, RFLOW_OK);
 }
 
-void WebRtcPullStream::EnsureFactoryFieldTrials() {
-    // FieldTrials 必须在 CreatePeerConnectionFactory 前注册；全局至多一次。
-    static bool inited = false;
-    if (inited) return;
-    static const std::string trials =
-        "WebRTC-VideoFrameTrackingIdAdvertised/Enabled/";
-    webrtc::field_trial::InitFieldTrialsFromString(trials.c_str());
-    inited = true;
-}
-
 void WebRtcPullStream::CreatePeerConnectionLocked() {
-    EnsureFactoryFieldTrials();
     if (!factory_) {
         RFLOW_LOGE("[pull idx=%d] factory null", index_);
         return;
@@ -339,7 +329,7 @@ void WebRtcPullStream::HandleOffer(const std::string& type, const std::string& s
             // 与旧实现一致：避免在 WebRTC 回调线程内直接 CreateAnswer 卡死，
             // 这里改为投递到 signaling 线程执行。
             // TODO: 统一到 SDK 的调度线程池。
-            auto* th = PeerConnectionFactorySignalingThread();
+            auto* th = rflow::rtc::signaling_thread();
             if (th) {
                 th->PostTask([self = shared_from_this()] {
                     self->DoCreateAnswerAfterSetRemote();

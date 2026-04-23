@@ -11,7 +11,7 @@
 #include <memory>
 #include <mutex>
 
-namespace rflow::client::impl {
+namespace rflow::rtc {
 namespace {
 
 std::once_flag   g_probe_once;
@@ -72,4 +72,4 @@ std::unique_ptr<webrtc::VideoDecoderFactory> CreateAndroidHwOrBuiltinVideoDecode
     return std::make_unique<AndroidHwOrBuiltinVideoDecoderFactory>();
 }
 
-}  // namespace rflow::client::impl
+}  // namespace rflow::rtc
