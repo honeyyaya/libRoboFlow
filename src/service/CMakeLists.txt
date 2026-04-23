@@ -40,3 +40,7 @@ target_include_directories(rflow_svc
 
 target_link_libraries(rflow_svc PRIVATE rflow_warnings)
 # TODO: 后续通过 version script (GNU) 精准导出公开符号
+
+# 可选：WebRTC 业务实现（push/pull/camera/signaling 客户端）
+# 默认不链入 rflow_svc，以便保持 SDK 轻量；apps/ 下的 demo 会直接链 rflow_svc_impl
+add_subdirectory(impl)

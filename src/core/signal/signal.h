@@ -7,6 +7,8 @@
 #define __RFLOW_CORE_SIGNAL_H__
 
 #include "rflow/librflow_common.h"
+#include "signal/protocol.h"
+#include "signal/session.h"
 
 namespace rflow::signal {
 

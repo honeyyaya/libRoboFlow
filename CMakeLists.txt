@@ -3,10 +3,15 @@ cmake_minimum_required(VERSION 3.16)
 # -------------------------------------------------------------------- options
 option(RFLOW_BUILD_CLIENT  "Build Client SDK (librflow_client)"  ON)
 option(RFLOW_BUILD_SERVICE "Build Service SDK (librflow_svc)"    ON)
+option(RFLOW_BUILD_APPS    "Build standalone apps (signaling_server, demos)" OFF)
 option(RFLOW_BUILD_SHARED  "Build shared libraries (.so)"        ON)
 option(RFLOW_ENABLE_WERROR "Treat warnings as errors"            OFF)
 option(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL
     "Enable WebRTC client impl (requires include/webrtc + libwebrtc prebuilt)" OFF)
+option(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL
+    "Enable WebRTC service impl (push/pull/camera; requires libwebrtc prebuilt)" OFF)
+option(RFLOW_ENABLE_ROCKCHIP_MPP
+    "Enable Rockchip MPP hw codec backends under core/rtc/hw/rockchip_mpp" OFF)
 
 project(libRoboFlow
     VERSION   0.9.4
@@ -53,6 +58,10 @@ if(RFLOW_BUILD_SERVICE)
     add_subdirectory(src/service)
 endif()
 
+if(RFLOW_BUILD_APPS AND EXISTS "${CMAKE_SOURCE_DIR}/apps/CMakeLists.txt")
+    add_subdirectory(apps)
+endif()
+
 if(EXISTS "${CMAKE_SOURCE_DIR}/test/CMakeLists.txt")
     add_subdirectory(test)
 endif()
@@ -65,6 +74,9 @@ message(STATUS "  Shared     : ${RFLOW_BUILD_SHARED}")
 message(STATUS "  Client     : ${RFLOW_BUILD_CLIENT}")
 message(STATUS "  WebRTC cl. : ${RFLOW_CLIENT_ENABLE_WEBRTC_IMPL}")
 message(STATUS "  Service    : ${RFLOW_BUILD_SERVICE}")
+message(STATUS "  WebRTC sv. : ${RFLOW_SERVICE_ENABLE_WEBRTC_IMPL}")
+message(STATUS "  Rockchip MPP: ${RFLOW_ENABLE_ROCKCHIP_MPP}")
+message(STATUS "  Apps       : ${RFLOW_BUILD_APPS}")
 message(STATUS "  Compiler   : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "  Target     : ${CMAKE_SYSTEM_PROCESSOR} / ${CMAKE_SYSTEM_NAME}")
 message(STATUS "")

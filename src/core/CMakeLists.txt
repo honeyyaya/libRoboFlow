@@ -1,19 +1,53 @@
-# src/core — 信令 / 线程池 + RTC（rtc stub 与可选 libwebrtc 实现分离，避免 service 链入 libwebrtc）
+# src/core — 信令 / 线程池 / POSIX I/O + RTC（rtc stub 与可选 libwebrtc 实现分离，避免 service 链入 libwebrtc）
 add_library(rflow_core OBJECT
+    signal/protocol.cpp
     signal/signal_stub.cpp
     thread/thread_pool.cpp
+    net/posix_io.cpp
 )
 
 add_library(rflow_rtc_stub OBJECT rtc/rtc_stub.cpp)
 
+# 独立信令服务器 (TCP + epoll)，供 apps/signaling_server 链接；
+# 仅依赖 core/signal/protocol + core/net/posix_io，不需 libwebrtc。
+add_library(rflow_signal_server OBJECT signal/server.cpp)
+target_include_directories(rflow_signal_server
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src
+)
+target_link_libraries(rflow_signal_server PRIVATE rflow_warnings)
+
+set(_RFLOW_NEED_WEBRTC_IMPL OFF)
 if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_CLIENT)
+    set(_RFLOW_NEED_WEBRTC_IMPL ON)
+endif()
+if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_SERVICE)
+    set(_RFLOW_NEED_WEBRTC_IMPL ON)
+endif()
+
+if(_RFLOW_NEED_WEBRTC_IMPL)
     set(_RTC_W_SRCS
         rtc/peer_connection_factory.cpp
+        rtc/peer_connection_factory_deps.cpp
+        rtc/hw/backend_registry.cpp
+        rtc/shims/sequence_checker_expectation_to_string.cpp
+        rtc/shims/sme_abi_stubs.c
     )
     if(ANDROID)
         list(APPEND _RTC_W_SRCS
             rtc/decoder/android/android_hw_video_decoder_factory.cpp
             rtc/decoder/android/android_mediacodec_video_decoder.cpp
+        )
+    endif()
+    if(RFLOW_ENABLE_ROCKCHIP_MPP)
+        list(APPEND _RTC_W_SRCS
+            rtc/hw/rockchip_mpp/h264_decoder.cpp
+            rtc/hw/rockchip_mpp/h264_encoder.cpp
+            rtc/hw/rockchip_mpp/mjpeg_decoder.cpp
+            rtc/hw/rockchip_mpp/native_dec_frame_buffer.cpp
+            rtc/hw/rockchip_mpp/video_decoder_factory.cpp
+            rtc/hw/rockchip_mpp/video_encoder_factory.cpp
         )
     endif()
 
@@ -65,6 +99,13 @@ if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_CLIENT)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_compile_definitions(rflow_rtc_webrtc PRIVATE WEBRTC_LINUX=1)
     endif()
+    if(RFLOW_ENABLE_ROCKCHIP_MPP)
+        target_compile_definitions(rflow_rtc_webrtc PRIVATE
+            WEBRTC_DEMO_HAVE_ROCKCHIP_MPP=1)
+        # 调用方 (service/impl 等) 编译期也能看到该宏
+        target_compile_definitions(rflow_rtc_webrtc INTERFACE
+            WEBRTC_DEMO_HAVE_ROCKCHIP_MPP=1)
+    endif()
 endif()
 
 # include：线程 / 信令子目录，便于 "thread_pool.h" / "signal.h"
@@ -84,7 +125,7 @@ target_include_directories(rflow_rtc_stub
         ${CMAKE_CURRENT_SOURCE_DIR}/rtc
 )
 
-if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_CLIENT)
+if(_RFLOW_NEED_WEBRTC_IMPL)
     target_include_directories(rflow_rtc_webrtc
         PUBLIC
             ${CMAKE_SOURCE_DIR}/include
@@ -92,20 +133,14 @@ if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_CLIENT)
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/rtc
     )
-endif()
-
-if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_CLIENT)
     target_link_libraries(rflow_rtc_webrtc PRIVATE rflow_warnings)
-else()
-    target_link_libraries(rflow_rtc_stub PRIVATE rflow_warnings)
-endif()
-target_link_libraries(rflow_core PRIVATE rflow_warnings)
-
-if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_CLIENT)
     if(ANDROID)
         target_link_libraries(rflow_rtc_webrtc PRIVATE mediandk android log OpenSLES EGL GLESv2)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_package(Threads REQUIRED)
         target_link_libraries(rflow_rtc_webrtc PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
     endif()
+else()
+    target_link_libraries(rflow_rtc_stub PRIVATE rflow_warnings)
 endif()
+target_link_libraries(rflow_core PRIVATE rflow_warnings)
