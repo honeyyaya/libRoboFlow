@@ -3,7 +3,7 @@
  * @brief  open_stream / close_stream / get_stats
  *
  * 实现要点：
- *   - open_stream 在已 connect 的前提下，向 WebRtcPullManager 申请一路 WebRtcPullStream；
+ *   - open_stream 在已 connect 的前提下，向 RtcStreamManager 申请一路 RtcStreamSession；
  *     通过 state_sink / frame_sink 把底层事件桥接回用户的 stream_cb；
  *   - close_stream 幂等：从 State::streams 取出 shared_ptr，释放 impl 时会触发其 Close。
  *   - 所有用户回调均在锁外触发，避免与 state.mu 形成重入死锁。
@@ -22,9 +22,9 @@
 #include <utility>
 
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-#  include "impl/webrtc/webrtc_frame_converter.h"
-#  include "impl/webrtc/webrtc_pull_manager.h"
-#  include "impl/webrtc/webrtc_pull_stream.h"
+#  include "impl/rtc_stream/rtc_stream_frame_converter.h"
+#  include "impl/rtc_stream/rtc_stream_manager.h"
+#  include "impl/rtc_stream/rtc_stream_session.h"
 #  include "api/video/video_frame.h"
 #endif
 
@@ -84,15 +84,15 @@ rflow_err_t librflow_open_stream(int32_t index,
         auto p = wsh.lock();
         if (!p || !p->cb.on_video) return;
         const uint32_t seq = seq_counter->fetch_add(1, std::memory_order_relaxed);
-        auto f = rflow::client::impl::MakeVideoFrameFromWebrtc(vf, captured_index, seq);
+        auto f = rflow::client::impl::MakeVideoFrameFromRtcFrame(vf, captured_index, seq);
         if (!f) return;
         p->cb.on_video(p.get(), f, p->cb.userdata);
         librflow_video_frame_release(f);
     };
 
     // 3. 调用 Manager 建底层流（锁外；sinks 可能在此调用期间就同步触达一次）
-    std::shared_ptr<rflow::client::impl::WebRtcPullStream> pull;
-    rflow_err_t e = rflow::client::impl::WebRtcPullManager::Instance().OpenStream(
+    std::shared_ptr<rflow::client::impl::RtcStreamSession> pull;
+    rflow_err_t e = rflow::client::impl::RtcStreamManager::Instance().OpenStream(
         index, param, std::move(state_sink), std::move(frame_sink), &pull);
     if (e != RFLOW_OK) {
         std::lock_guard<std::mutex> lk(s.mu);
@@ -132,7 +132,7 @@ rflow_err_t librflow_close_stream(librflow_stream_handle_t handle) {
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
     // 先析构底层实现（其 Close 会通过 state_sink 触达用户 on_state(CLOSED)）。
     if (auto impl = std::move(sh->impl)) {
-        auto pull = std::static_pointer_cast<rflow::client::impl::WebRtcPullStream>(impl);
+        auto pull = std::static_pointer_cast<rflow::client::impl::RtcStreamSession>(impl);
         pull->Close();
     } else
 #endif
@@ -152,7 +152,7 @@ rflow_err_t librflow_stream_get_stats(librflow_stream_handle_t handle,
                                        librflow_stream_stats_t*  out_stats) {
     if (!handle || handle->magic != rflow::client::kMagicStream) return RFLOW_ERR_PARAM;
     if (!out_stats) return RFLOW_ERR_PARAM;
-    // TODO: 经 WebRtcPullStream/PeerConnection::GetStats 拉取并映射到 librflow_stream_stats_s
+    // TODO: 经 RtcStreamSession/PeerConnection::GetStats 拉取并映射到 librflow_stream_stats_s
     *out_stats = nullptr;
     return RFLOW_ERR_NOT_SUPPORT;
 }

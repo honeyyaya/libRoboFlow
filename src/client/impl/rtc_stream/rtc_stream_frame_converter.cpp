@@ -1,4 +1,4 @@
-#include "webrtc_frame_converter.h"
+#include "rtc_stream_frame_converter.h"
 
 #include "common/internal/frame_impl.h"
 #include "common/internal/logger.h"
@@ -23,9 +23,9 @@ uint64_t NowUtcMs() {
 
 }  // namespace
 
-librflow_video_frame_t MakeVideoFrameFromWebrtc(const webrtc::VideoFrame& frame,
-                                                int32_t stream_index,
-                                                uint32_t seq) {
+librflow_video_frame_t MakeVideoFrameFromRtcFrame(const webrtc::VideoFrame& frame,
+                                                  int32_t                   stream_index,
+                                                  uint32_t                  seq) {
     auto buffer = frame.video_frame_buffer();
     if (!buffer) return nullptr;
 
