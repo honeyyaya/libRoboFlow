@@ -1,15 +1,19 @@
 #ifndef WEBRTC_DEMO_SIGNALING_CLIENT_H_
 #define WEBRTC_DEMO_SIGNALING_CLIENT_H_
 
+#include "core/signal/protocol.h"
+#include "signaling/signaling_io_manager.h"
+
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
+#include <string_view>
 
 namespace webrtc_demo {
 
-/// P2P signaling client (pure C++ TCP, no Python/WebSocket)
+/// P2P signaling client backed by a shared IO thread for multiple service sessions.
 /// Address format: "127.0.0.1:8765" or "ws://127.0.0.1:8765" (ws:// is ignored)
 class SignalingClient {
 public:
@@ -47,15 +51,17 @@ public:
     void SetOnError(OnErrorCallback cb) { on_error_ = std::move(cb); }
 
 private:
-    void ReaderLoop();
-    void ParseAndDispatch(const std::string& line);
+    friend class SignalingIoManager;
+
     bool Connect();
-    void SendLine(const std::string& line);
-    std::string ResolveTargetPeer(const std::string& to_peer_id) const;
+    void ParseAndDispatch(const rflow::signal::Message& msg);
+    bool SendLine(std::string_view line);
+    void ReportError(std::string_view error);
+    std::string ResolveTargetPeer(std::string_view to_peer_id) const;
 
     std::string server_addr_;
     std::string host_;
-    uint16_t port_;
+    uint16_t    port_{0};
     std::string role_;
     std::string stream_id_;
     std::string self_peer_id_;
@@ -68,9 +74,9 @@ private:
     OnPeerEventCallback on_subscriber_leave_;
     OnErrorCallback on_error_;
 
-    int sock_fd_{-1};
-    std::unique_ptr<std::thread> reader_thread_;
-    bool running_{false};
+    std::atomic<int>   sock_fd_{-1};
+    std::atomic<bool>  running_{false};
+    std::shared_ptr<SignalingClientSessionSlot> session_slot_;
     mutable std::mutex peer_mutex_;
     mutable std::mutex send_mutex_;
 };
@@ -78,4 +84,3 @@ private:
 }  // namespace webrtc_demo
 
 #endif  // WEBRTC_DEMO_SIGNALING_CLIENT_H_
-

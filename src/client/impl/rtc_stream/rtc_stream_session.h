@@ -72,6 +72,7 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
                                   const std::string& candidate);
 
     void CreatePeerConnectionLocked();
+    bool RunOnPeerConnectionSignalingThread(const std::function<void()>& task);
     void DoCreateAnswerAfterSetRemote();
     void AddRemoteIceCandidateNow(const std::string& mid, int mline_index,
                                   const std::string& candidate);
@@ -102,7 +103,7 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
         std::string candidate;
     };
     std::vector<PendingRemoteIce> pending_remote_ice_;
-    bool                          remote_description_applied_ = false;
+    std::atomic<bool>             remote_description_applied_{false};
 
     std::atomic<int32_t> stream_state_{RFLOW_STREAM_IDLE};
     std::atomic<bool>    closed_{false};

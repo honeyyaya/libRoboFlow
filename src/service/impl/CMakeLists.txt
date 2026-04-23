@@ -21,6 +21,7 @@ set(_SVC_IMPL_SRCS
     media/camera_video_track_source.cpp
     media/pull_subscriber.cpp
     media/push_streamer.cpp
+    signaling/signaling_io_manager.cpp
     signaling/signaling_client.cpp
 )
 
