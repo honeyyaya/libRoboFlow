@@ -8,7 +8,7 @@
 #include "common/internal/logger.h"
 
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-#  include "impl/webrtc/webrtc_pull_manager.h"
+#  include "impl/rtc_stream/rtc_stream_manager.h"
 #endif
 
 namespace rflow::client {
@@ -34,7 +34,7 @@ rflow_err_t init_infrastructure() {
 
 void shutdown_infrastructure() {
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-    rflow::client::impl::WebRtcPullManager::Instance().Shutdown();
+    rflow::client::impl::RtcStreamManager::Instance().Shutdown();
 #endif
     rflow::signal::shutdown();
     rflow::rtc::shutdown();
@@ -49,10 +49,10 @@ rflow_err_t on_connect_succeeded(const std::string& signal_url,
         RFLOW_LOGE("[client] on_connect: rtc not ready");
         return RFLOW_ERR_STATE;
     }
-    rflow_err_t e = rflow::client::impl::WebRtcPullManager::Instance().Init(
+    rflow_err_t e = rflow::client::impl::RtcStreamManager::Instance().Init(
         signal_url, device_id);
     if (e != RFLOW_OK) {
-        rflow::set_last_error("WebRtcPullManager::Init failed");
+        rflow::set_last_error("RtcStreamManager::Init failed");
     }
     return e;
 #else
@@ -64,7 +64,7 @@ rflow_err_t on_connect_succeeded(const std::string& signal_url,
 
 void on_disconnect() {
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-    rflow::client::impl::WebRtcPullManager::Instance().Shutdown();
+    rflow::client::impl::RtcStreamManager::Instance().Shutdown();
 #endif
 }
 

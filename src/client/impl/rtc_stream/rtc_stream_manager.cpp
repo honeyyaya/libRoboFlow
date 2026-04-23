@@ -1,7 +1,7 @@
-#include "webrtc_pull_manager.h"
+#include "rtc_stream_manager.h"
 
 #include "core/rtc/rtc.h"
-#include "webrtc/webrtc_pull_stream.h"
+#include "rtc_stream/rtc_stream_session.h"
 
 #include "client/internal/handles.h"  // librflow_stream_param_s
 #include "common/internal/logger.h"
@@ -18,12 +18,12 @@ constexpr const char* kDefaultSignalingUrl = "192.168.3.20:8765";
 
 }  // namespace
 
-WebRtcPullManager& WebRtcPullManager::Instance() {
-    static WebRtcPullManager g;
+RtcStreamManager& RtcStreamManager::Instance() {
+    static RtcStreamManager g;
     return g;
 }
 
-rflow_err_t WebRtcPullManager::Init(std::string signal_url, std::string device_id) {
+rflow_err_t RtcStreamManager::Init(std::string signal_url, std::string device_id) {
     std::lock_guard<std::mutex> lk(mu_);
     if (!rflow::rtc::peer_connection_factory()) {
         RFLOW_LOGE("[pull_mgr] peer_connection_factory null (librflow_init + rtc required)");
@@ -39,8 +39,8 @@ rflow_err_t WebRtcPullManager::Init(std::string signal_url, std::string device_i
     return RFLOW_OK;
 }
 
-void WebRtcPullManager::Shutdown() {
-    std::vector<std::shared_ptr<WebRtcPullStream>> to_close;
+void RtcStreamManager::Shutdown() {
+    std::vector<std::shared_ptr<RtcStreamSession>> to_close;
     {
         std::lock_guard<std::mutex> lk(mu_);
         to_close.reserve(open_indices_.size());
@@ -54,15 +54,15 @@ void WebRtcPullManager::Shutdown() {
     RFLOW_LOGI("[pull_mgr] shutdown (closed=%zu)", to_close.size());
 }
 
-rflow_err_t WebRtcPullManager::OpenStream(int32_t index,
-                                          const ::librflow_stream_param_s* /*param*/,
-                                          StateSink state_sink,
-                                          FrameSink frame_sink,
-                                          std::shared_ptr<WebRtcPullStream>* out) {
+rflow_err_t RtcStreamManager::OpenStream(int32_t index,
+                                         const ::librflow_stream_param_s* /*param*/,
+                                         StateSink state_sink,
+                                         FrameSink frame_sink,
+                                         std::shared_ptr<RtcStreamSession>* out) {
     if (!out) return RFLOW_ERR_PARAM;
     *out = nullptr;
 
-    std::shared_ptr<WebRtcPullStream> stream;
+    std::shared_ptr<RtcStreamSession> stream;
     std::string url;
     std::string device_id;
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory;
@@ -83,7 +83,7 @@ rflow_err_t WebRtcPullManager::OpenStream(int32_t index,
         url       = signaling_url_;
         device_id = device_id_;
 
-        stream = std::make_shared<WebRtcPullStream>(index, std::move(factory),
+        stream = std::make_shared<RtcStreamSession>(index, std::move(factory),
                                                     url, device_id);
         open_indices_.emplace(index, stream);
     }

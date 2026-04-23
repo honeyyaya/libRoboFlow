@@ -68,7 +68,7 @@ struct librflow_stream_s {
     librflow_stream_cb_s    cb;     // 按值保存
 
     /* 底层实现对象（当前仅 WebRTC 构建使用：
-     *   shared_ptr<rflow::client::impl::WebRtcPullStream>）。
+     *   shared_ptr<rflow::client::impl::RtcStreamSession>）。
      * 用 void 擦除类型以避免公共 handles.h 强依赖 impl 头。
      * 生命周期：open_stream 赋值 → close_stream / disconnect 释放。 */
     std::shared_ptr<void>   impl;

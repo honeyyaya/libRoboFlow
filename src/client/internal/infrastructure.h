@@ -4,7 +4,7 @@
  *
  * 顺序与约定：
  *   - init / shutdown_infrastructure：thread → rtc → signal；shutdown 为逆序。不含业务拉流管理。
- *   - on_connect_succeeded / on_disconnect：在已 init、且信令/连接层就绪或断开时，启停 WebRtcPullManager（仅 WebRTC 构建）。
+ *   - on_connect_succeeded / on_disconnect：在已 init、且信令/连接层就绪或断开时，启停 RtcStreamManager（仅 WebRTC 构建）。
  */
 
 #ifndef __RFLOW_CLIENT_INFRASTRUCTURE_H__

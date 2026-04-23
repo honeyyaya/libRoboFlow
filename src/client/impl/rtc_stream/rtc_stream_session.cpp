@@ -1,4 +1,4 @@
-#include "webrtc_pull_stream.h"
+#include "rtc_stream_session.h"
 
 #include "core/rtc/rtc.h"
 #include "signaling/signaling_client.h"
@@ -79,10 +79,10 @@ class SetLocalDescObserver : public webrtc::SetSessionDescriptionObserver {
 
 }  // namespace
 
-class WebRtcPullStream::FrameAdapter final
+class RtcStreamSession::FrameAdapter final
     : public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
  public:
-    explicit FrameAdapter(WebRtcPullStream* owner) : owner_(owner) {}
+    explicit FrameAdapter(RtcStreamSession* owner) : owner_(owner) {}
 
     void OnFrame(const webrtc::VideoFrame& frame) override {
         FrameSink sink;
@@ -94,12 +94,12 @@ class WebRtcPullStream::FrameAdapter final
     }
 
  private:
-    WebRtcPullStream* owner_;
+    RtcStreamSession* owner_;
 };
 
-class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnectionObserver {
+class RtcStreamSession::PeerConnectionObserverImpl : public webrtc::PeerConnectionObserver {
  public:
-    explicit PeerConnectionObserverImpl(WebRtcPullStream* s) : stream_(s) {}
+    explicit PeerConnectionObserverImpl(RtcStreamSession* s) : stream_(s) {}
 
     void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState) override {}
     void OnDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface>) override {}
@@ -163,10 +163,10 @@ class WebRtcPullStream::PeerConnectionObserverImpl : public webrtc::PeerConnecti
     }
 
  private:
-    WebRtcPullStream* stream_;
+    RtcStreamSession* stream_;
 };
 
-WebRtcPullStream::WebRtcPullStream(
+RtcStreamSession::RtcStreamSession(
     int32_t index,
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
     std::string signaling_url,
@@ -179,21 +179,21 @@ WebRtcPullStream::WebRtcPullStream(
     frame_adapter_ = std::make_unique<FrameAdapter>(this);
 }
 
-WebRtcPullStream::~WebRtcPullStream() {
+RtcStreamSession::~RtcStreamSession() {
     Close();
 }
 
-void WebRtcPullStream::SetFrameSink(FrameSink sink) {
+void RtcStreamSession::SetFrameSink(FrameSink sink) {
     std::lock_guard<std::mutex> lk(mu_);
     frame_sink_ = std::move(sink);
 }
 
-void WebRtcPullStream::SetStateSink(StateSink sink) {
+void RtcStreamSession::SetStateSink(StateSink sink) {
     std::lock_guard<std::mutex> lk(mu_);
     state_sink_ = std::move(sink);
 }
 
-void WebRtcPullStream::EmitState(rflow_stream_state_t state, rflow_err_t reason) {
+void RtcStreamSession::EmitState(rflow_stream_state_t state, rflow_err_t reason) {
     stream_state_.store(state, std::memory_order_release);
     StateSink s;
     {
@@ -203,7 +203,7 @@ void WebRtcPullStream::EmitState(rflow_stream_state_t state, rflow_err_t reason)
     if (s) s(state, reason);
 }
 
-bool WebRtcPullStream::Start() {
+bool RtcStreamSession::Start() {
     if (closed_.load(std::memory_order_acquire)) return false;
     if (signaling_) return true;
 
@@ -228,7 +228,7 @@ bool WebRtcPullStream::Start() {
     return true;
 }
 
-void WebRtcPullStream::Close() {
+void RtcStreamSession::Close() {
     if (closed_.exchange(true, std::memory_order_acq_rel)) return;
 
     pending_remote_ice_.clear();
@@ -256,7 +256,7 @@ void WebRtcPullStream::Close() {
     EmitState(RFLOW_STREAM_CLOSED, RFLOW_OK);
 }
 
-void WebRtcPullStream::OnSignalMessage(const rflow::signal::Message& msg) {
+void RtcStreamSession::OnSignalMessage(const rflow::signal::Message& msg) {
     switch (msg.type) {
         case rflow::signal::MessageType::kOffer:
             HandleOffer(msg.sdp);
@@ -269,7 +269,7 @@ void WebRtcPullStream::OnSignalMessage(const rflow::signal::Message& msg) {
     }
 }
 
-void WebRtcPullStream::OnSignalError(std::string_view error) {
+void RtcStreamSession::OnSignalError(std::string_view error) {
     RFLOW_LOGW("[pull idx=%d] signaling error: %.*s",
                index_,
                static_cast<int>(error.size()),
@@ -277,7 +277,7 @@ void WebRtcPullStream::OnSignalError(std::string_view error) {
     EmitState(RFLOW_STREAM_FAILED, RFLOW_ERR_CONN_NETWORK);
 }
 
-void WebRtcPullStream::CreatePeerConnectionLocked() {
+void RtcStreamSession::CreatePeerConnectionLocked() {
     if (!factory_) {
         RFLOW_LOGE("[pull idx=%d] factory null", index_);
         return;
@@ -308,7 +308,7 @@ void WebRtcPullStream::CreatePeerConnectionLocked() {
     peer_connection_ = result.MoveValue();
 }
 
-void WebRtcPullStream::HandleOffer(const std::string& sdp) {
+void RtcStreamSession::HandleOffer(const std::string& sdp) {
     if (closed_.load(std::memory_order_acquire)) return;
     RFLOW_LOGI("[pull idx=%d] recv offer, creating answer...", index_);
 
@@ -357,7 +357,7 @@ void WebRtcPullStream::HandleOffer(const std::string& sdp) {
     peer_connection_->SetRemoteDescription(std::move(remote), pending_set_remote_observer_);
 }
 
-void WebRtcPullStream::DoCreateAnswerAfterSetRemote() {
+void RtcStreamSession::DoCreateAnswerAfterSetRemote() {
     if (!peer_connection_) return;
 
     pending_create_answer_observer_ = webrtc::make_ref_counted<CreateAnswerObserver>(
@@ -414,8 +414,8 @@ void WebRtcPullStream::DoCreateAnswerAfterSetRemote() {
         webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
 }
 
-void WebRtcPullStream::AddRemoteIceCandidateNow(const std::string& mid,
-                                                int mline_index,
+void RtcStreamSession::AddRemoteIceCandidateNow(const std::string& mid,
+                                                int                mline_index,
                                                 const std::string& candidate) {
     if (!peer_connection_) return;
 
@@ -436,7 +436,7 @@ void WebRtcPullStream::AddRemoteIceCandidateNow(const std::string& mid,
     }
 }
 
-void WebRtcPullStream::FlushPendingRemoteIceCandidates() {
+void RtcStreamSession::FlushPendingRemoteIceCandidates() {
     if (pending_remote_ice_.empty()) return;
 
     RFLOW_LOGD("[pull idx=%d] flush pending ice, n=%zu",
@@ -447,8 +447,8 @@ void WebRtcPullStream::FlushPendingRemoteIceCandidates() {
     pending_remote_ice_.clear();
 }
 
-void WebRtcPullStream::HandleRemoteIceCandidate(const std::string& mid,
-                                                int mline_index,
+void RtcStreamSession::HandleRemoteIceCandidate(const std::string& mid,
+                                                int                mline_index,
                                                 const std::string& candidate) {
     if (!peer_connection_ || !remote_description_applied_) {
         pending_remote_ice_.push_back(PendingRemoteIce{mid, mline_index, candidate});

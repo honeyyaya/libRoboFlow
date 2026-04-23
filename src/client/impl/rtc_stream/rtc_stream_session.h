@@ -1,6 +1,6 @@
 /**
- * @file   webrtc_pull_stream.h
- * @brief  单路 WebRTC 拉流（从旧 WebRTCReceiverClient 移植）
+ * @file   rtc_stream_session.h
+ * @brief  Single rtc stream session for client pull-side playback
  *
  * 改动要点：
  *   - 去除 Qt（QObject / QTimer / QMetaObject / QJniObject 等）；
@@ -10,8 +10,8 @@
  *   - stats 暂不实现（TODO）。
  */
 
-#ifndef __RFLOW_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__
-#define __RFLOW_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__
+#ifndef __RFLOW_CLIENT_IMPL_RTC_STREAM_SESSION_H__
+#define __RFLOW_CLIENT_IMPL_RTC_STREAM_SESSION_H__
 
 #include <atomic>
 #include <cstdint>
@@ -34,20 +34,20 @@
 
 namespace rflow::client::impl {
 
-class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream>,
+class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
                          private rflow::signal::SessionDelegate {
  public:
     using FrameSink = std::function<void(const webrtc::VideoFrame& frame)>;
     using StateSink = std::function<void(rflow_stream_state_t state, rflow_err_t reason)>;
 
-    WebRtcPullStream(int32_t index,
+    RtcStreamSession(int32_t index,
                      webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
                      std::string signaling_url,
                      std::string device_id);
-    ~WebRtcPullStream();
+    ~RtcStreamSession();
 
-    WebRtcPullStream(const WebRtcPullStream&)            = delete;
-    WebRtcPullStream& operator=(const WebRtcPullStream&) = delete;
+    RtcStreamSession(const RtcStreamSession&)            = delete;
+    RtcStreamSession& operator=(const RtcStreamSession&) = delete;
 
     int32_t index() const { return index_; }
 
@@ -114,4 +114,4 @@ class WebRtcPullStream : public std::enable_shared_from_this<WebRtcPullStream>,
 
 }  // namespace rflow::client::impl
 
-#endif  // __RFLOW_CLIENT_IMPL_WEBRTC_PULL_STREAM_H__
+#endif  // __RFLOW_CLIENT_IMPL_RTC_STREAM_SESSION_H__

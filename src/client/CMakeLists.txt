@@ -16,9 +16,9 @@ if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)
     list(APPEND CLIENT_SOURCES
         impl/signaling/signaling_io_manager.cpp
         impl/signaling/signaling_client.cpp
-        impl/webrtc/webrtc_frame_converter.cpp
-        impl/webrtc/webrtc_pull_stream.cpp
-        impl/webrtc/webrtc_pull_manager.cpp
+        impl/rtc_stream/rtc_stream_frame_converter.cpp
+        impl/rtc_stream/rtc_stream_session.cpp
+        impl/rtc_stream/rtc_stream_manager.cpp
     )
 endif()
 
