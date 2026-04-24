@@ -1,21 +1,18 @@
 #include "rtc.h"
 
+#include "core/rtc/rtc_factory_common.h"
+
 #include "common/internal/logger.h"
 
 #include <memory>
-#include <mutex>
-#include <string>
 #include <utility>
 
-#include "api/audio/audio_device.h"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/create_peerconnection_factory.h"
 #include "api/peer_connection_interface.h"
-#include "api/task_queue/default_task_queue_factory.h"
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "rtc_base/thread.h"
-#include "system_wrappers/include/field_trial.h"
 
 #if defined(WEBRTC_ANDROID)
 #  include "decoder/android/android_hw_video_decoder_factory.h"
@@ -23,13 +20,6 @@
 
 namespace rflow::rtc {
 namespace {
-
-std::once_flag g_field_trials_once;
-
-void InitFieldTrialsOnce() {
-    static const std::string trials = "WebRTC-VideoFrameTrackingIdAdvertised/Enabled/";
-    webrtc::field_trial::InitFieldTrialsFromString(trials.c_str());
-}
 
 struct FactoryState {
     std::unique_ptr<webrtc::Thread> network;
@@ -42,17 +32,6 @@ struct FactoryState {
 FactoryState& State() {
     static FactoryState g;
     return g;
-}
-
-// Dummy ADM + TaskQueueFactory 与 Factory 同生命周期；不访问真实麦克风/扬声器，
-// 但不能为 null，否则 WebRtcVoiceEngine::Init() 会崩溃。
-webrtc::scoped_refptr<webrtc::AudioDeviceModule> DummyAdm() {
-    static std::unique_ptr<webrtc::TaskQueueFactory> task_queue_factory =
-        webrtc::CreateDefaultTaskQueueFactory();
-    static webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm =
-        webrtc::AudioDeviceModule::Create(webrtc::AudioDeviceModule::kDummyAudio,
-                                          task_queue_factory.get());
-    return adm;
 }
 
 bool StartThreads(FactoryState& s) {
@@ -80,7 +59,7 @@ void StopThreads(FactoryState& s) {
 }  // namespace
 
 bool initialize() {
-    std::call_once(g_field_trials_once, InitFieldTrialsOnce);
+    EnsureWebrtcFieldTrialsInitialized();
 
     auto& s = State();
     if (s.factory) {
@@ -91,7 +70,7 @@ bool initialize() {
         return false;
     }
 
-    auto adm = DummyAdm();
+    auto adm = CreateDummyAudioDeviceModule();
     if (!adm) {
         RFLOW_LOGE("[rtc] create dummy ADM failed");
         StopThreads(s);
