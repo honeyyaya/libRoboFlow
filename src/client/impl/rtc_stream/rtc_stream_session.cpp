@@ -442,6 +442,7 @@ void RtcStreamSession::HandleOffer(const std::string& sdp) {
         peer_connection_->SetRemoteDescription(std::move(remote_desc),
                                                pending_set_remote_observer_);
     };
+
     if (signaling_thread->IsCurrent()) {
         apply_remote();
     } else {

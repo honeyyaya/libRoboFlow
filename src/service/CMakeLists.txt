@@ -11,17 +11,33 @@ set(SERVICE_SOURCES
     runtime_log.cpp
 )
 
+# -------------------------------------------------------------------- impl 层
+# WebRTC 业务实现（push_streamer / signaling_client / publisher 等）仅在显式打开
+# RFLOW_SERVICE_ENABLE_WEBRTC_IMPL 时编译并链入 rflow_svc。未打开时 rflow_svc
+# 保持"纯骨架"，push_video_frame 等返回 OK，不搬运媒体数据。
+add_subdirectory(impl)
+
+if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
+    set(_RRTC_OBJS $<TARGET_OBJECTS:rflow_rtc_webrtc>)
+    set(_SVC_IMPL_OBJS $<TARGET_OBJECTS:rflow_svc_impl>)
+else()
+    set(_RRTC_OBJS $<TARGET_OBJECTS:rflow_rtc_stub>)
+    set(_SVC_IMPL_OBJS "")
+endif()
+
 if(RFLOW_BUILD_SHARED)
     add_library(rflow_svc SHARED ${SERVICE_SOURCES}
         $<TARGET_OBJECTS:rflow_common>
         $<TARGET_OBJECTS:rflow_core>
-        $<TARGET_OBJECTS:rflow_rtc_stub>
+        ${_RRTC_OBJS}
+        ${_SVC_IMPL_OBJS}
     )
 else()
     add_library(rflow_svc STATIC ${SERVICE_SOURCES}
         $<TARGET_OBJECTS:rflow_common>
         $<TARGET_OBJECTS:rflow_core>
-        $<TARGET_OBJECTS:rflow_rtc_stub>
+        ${_RRTC_OBJS}
+        ${_SVC_IMPL_OBJS}
     )
 endif()
 
@@ -36,11 +52,33 @@ target_include_directories(rflow_svc
         ${CMAKE_SOURCE_DIR}/include
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/impl
 )
 
 target_link_libraries(rflow_svc PRIVATE rflow_warnings)
-# TODO: 后续通过 version script (GNU) 精准导出公开符号
 
-# 可选：WebRTC 业务实现（push/pull/camera/signaling 客户端）
-# 默认不链入 rflow_svc，以便保持 SDK 轻量；apps/ 下的 demo 会直接链 rflow_svc_impl
-add_subdirectory(impl)
+if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
+    target_include_directories(rflow_svc SYSTEM PRIVATE
+        ${CMAKE_SOURCE_DIR}/include/webrtc
+        ${CMAKE_SOURCE_DIR}/include/webrtc/third_party/abseil-cpp
+        ${CMAKE_SOURCE_DIR}/include/webrtc/third_party/libyuv/include
+    )
+    target_link_libraries(rflow_svc PRIVATE rflow_webrtc_prebuilt)
+    target_compile_definitions(rflow_svc PRIVATE
+        RFLOW_SVC_WEBRTC_IMPL=1
+        RFLOW_RTC_WEBRTC_PEER_CONNECTION_API=1
+        WEBRTC_POSIX=1
+    )
+    if(ANDROID)
+        target_compile_definitions(rflow_svc PRIVATE WEBRTC_ANDROID=1)
+        target_link_libraries(rflow_svc PRIVATE mediandk android log OpenSLES EGL GLESv2)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(rflow_svc PRIVATE WEBRTC_LINUX=1)
+        find_package(Threads REQUIRED)
+        target_link_libraries(rflow_svc PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    endif()
+    if(RFLOW_ENABLE_ROCKCHIP_MPP)
+        target_compile_definitions(rflow_svc PRIVATE WEBRTC_DEMO_HAVE_ROCKCHIP_MPP=1)
+    endif()
+endif()
+# TODO: 后续通过 version script (GNU) 精准导出公开符号

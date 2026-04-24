@@ -3,6 +3,7 @@
 #include "api/array_view.h"
 #include "camera/camera_utils.h"
 #include "media/camera_video_track_source.h"
+#include "media/external_push_video_track_source.h"
 #include "core/rtc/peer_connection_factory_deps.h"
 
 #include "api/jsep.h"
@@ -541,6 +542,7 @@ public:
         video_track_ = nullptr;
         camera_source_ = nullptr;
         camera_impl_ = nullptr;
+        external_source_ = nullptr;
 
         factory_ = nullptr;
 
@@ -913,6 +915,9 @@ public:
     }
 
     bool CreateMediaTracks() {
+        if (config_.common.use_external_video_source) {
+            return CreateMediaTracksExternal();
+        }
         std::string unique_id;
         if (!ResolveDeviceUniqueId(&unique_id)) {
             return false;
@@ -1011,6 +1016,41 @@ public:
             }
         }
         return true;
+    }
+
+    bool CreateMediaTracksExternal() {
+        auto* ext_holder = new webrtc::RefCountedObject<ExternalPushVideoTrackSource>();
+        external_source_ = webrtc::scoped_refptr<ExternalPushVideoTrackSource>(
+            static_cast<ExternalPushVideoTrackSource*>(ext_holder));
+        camera_source_ = webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface>(
+            static_cast<webrtc::VideoTrackSourceInterface*>(ext_holder));
+
+        if (!frame_counter_) {
+            frame_counter_ = std::make_unique<FrameCountingSink>(on_frame_);
+            camera_source_->AddOrUpdateSink(frame_counter_.get(), webrtc::VideoSinkWants());
+        }
+
+        video_track_ = factory_->CreateVideoTrack(camera_source_, "video_track");
+        if (!video_track_) {
+            std::cerr << "[PushStreamer] CreateVideoTrack (external source) failed" << std::endl;
+            if (frame_counter_ && camera_source_) {
+                camera_source_->RemoveSink(frame_counter_.get());
+            }
+            frame_counter_.reset();
+            camera_source_ = nullptr;
+            external_source_ = nullptr;
+            return false;
+        }
+        video_track_->set_content_hint(webrtc::VideoTrackInterface::ContentHint::kFluid);
+
+        std::cout << "[PushStreamer] External video source ready "
+                  << config_.common.video_width << "x" << config_.common.video_height
+                  << " fps=" << config_.common.video_fps << std::endl;
+        return true;
+    }
+
+    webrtc::scoped_refptr<ExternalPushVideoTrackSource> external_source() const {
+        return external_source_;
     }
 
     bool WaitForCaptureGate(const std::string& context) {
@@ -1553,6 +1593,8 @@ private:
     webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> camera_source_;
     /// 与 camera_source_ 同生命周期的具体采集实现（避免 dynamic_cast/RTTI 依赖）。
     CameraVideoTrackSource* camera_impl_{nullptr};
+    /// 业务侧 push 模式下，camera_source_ 实际指向此对象；保留强引用用于 push 调用。
+    webrtc::scoped_refptr<ExternalPushVideoTrackSource> external_source_;
 
     OnSdpCallback on_sdp_;
     OnIceCandidateCallback on_ice_candidate_;
@@ -1639,6 +1681,38 @@ void PushStreamer::SetOnConnectionStateCallback(OnConnectionStateCallback cb) {
 
 void PushStreamer::SetOnFrameCallback(OnFrameCallback cb) {
     impl_->SetOnFrame(std::move(cb));
+}
+
+bool PushStreamer::PushExternalI420(const uint8_t* data_y, int stride_y,
+                                     const uint8_t* data_u, int stride_u,
+                                     const uint8_t* data_v, int stride_v,
+                                     int width, int height, int64_t timestamp_us) {
+    auto src = impl_->external_source();
+    if (!src) return false;
+    return src->PushI420(data_y, stride_y, data_u, stride_u, data_v, stride_v,
+                         width, height, timestamp_us);
+}
+
+bool PushStreamer::PushExternalI420Contiguous(const uint8_t* buf, uint32_t size,
+                                              int width, int height, int64_t timestamp_us) {
+    auto src = impl_->external_source();
+    if (!src) return false;
+    return src->PushI420Contiguous(buf, size, width, height, timestamp_us);
+}
+
+bool PushStreamer::PushExternalNv12(const uint8_t* data_y, int stride_y,
+                                     const uint8_t* data_uv, int stride_uv,
+                                     int width, int height, int64_t timestamp_us) {
+    auto src = impl_->external_source();
+    if (!src) return false;
+    return src->PushNv12(data_y, stride_y, data_uv, stride_uv, width, height, timestamp_us);
+}
+
+bool PushStreamer::PushExternalNv12Contiguous(const uint8_t* buf, uint32_t size,
+                                              int width, int height, int64_t timestamp_us) {
+    auto src = impl_->external_source();
+    if (!src) return false;
+    return src->PushNv12Contiguous(buf, size, width, height, timestamp_us);
 }
 
 unsigned int PushStreamer::GetFrameCount() const {

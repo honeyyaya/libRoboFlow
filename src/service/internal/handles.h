@@ -2,6 +2,7 @@
 #define __RFLOW_SERVICE_HANDLES_H__
 
 #include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -85,6 +86,11 @@ struct librflow_svc_stream_s {
     librflow_svc_stream_param_s  param;
     librflow_svc_stream_cb_s     cb;
     bool                         started;
+
+    /* 底层实现对象（WebRTC 构建时为 shared_ptr<rflow::service::impl::Publisher>）。
+     * 用 void 擦除以避免公共 handles.h 依赖 impl 头；生命周期：
+     *   create_stream 赋值 → destroy_stream / disconnect 释放。 */
+    std::shared_ptr<void>        impl;
 };
 
 struct librflow_svc_push_frame_s {
