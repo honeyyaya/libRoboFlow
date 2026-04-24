@@ -1,43 +1,27 @@
 # ComVideoSDK 文档
 
-## 架构一览
+## 目录结构
 
-```
+```text
 ComVideoSDK
-├── CMakeLists.txt                       # 顶层构建入口
+├── CMakeLists.txt
 ├── include/
 │   └── rflow/
-│       ├── librflow_version.h           # 版本号宏
-│       ├── librflow_typedef.h           # 平台/导出宏/基础类型
-│       ├── librflow_common.h            # Client & Service 共享：错误码/枚举/共享 opaque
+│       ├── librflow_version.h
+│       ├── librflow_typedef.h
+│       ├── librflow_common.h
 │       ├── Client/
 │       │   └── librflow_client_api.h
 │       └── Service/
 │           └── librflow_service_api.h
 ├── src/
-│   ├── common/                          # 共享 opaque 对象的 C ABI 胶水层
-│   │   ├── internal/                    # 内部 struct 定义（opaque 真身）
-│   │   ├── log/                         # log_config / logger
-│   │   ├── config/                      # signal_config / license_config / global_config
-│   │   ├── frame/                       # video_frame / stream_stats
-│   │   ├── error/                       # last_error (thread-local)
-│   │   └── util/                        # memory_free / version
-│   ├── core/                            # 内部核心（当前为 stub，待接入 libwebrtc）
-│   │   ├── rtc/                         # WebRTC 封装
-│   │   ├── signal/                      # 信令通道
-│   │   └── thread/                      # 线程池
-│   ├── client/                          # Android arm64 → librflow_client.so
-│   │   ├── CMakeLists.txt
-│   │   └── internal/                    # Client 专属 opaque 真身 + 全局 state
-│   └── service/                         # Linux arm64 → librflow_svc.so
-│       ├── CMakeLists.txt
-│       └── internal/                    # Service 专属 opaque 真身 + 全局 state
+│   ├── common/
+│   ├── core/
+│   ├── client/
+│   └── service/
+├── apps/
 ├── docs/
-│   ├── README.md                        # 本文件
-│   ├── client_api_design_review.md      # Client 接口初版评审
-│   ├── client_api_design.md             # Client 最终设计（含时序图/状态机）
-│   └── service_api_design.md            # Service 最终设计（含时序图/状态机）
-└── script/                              # 构建/打包脚本（预留）
+└── scripts/
 ```
 
 ## 构建
@@ -50,113 +34,133 @@ cmake -S . -B build \
 cmake --build build -j
 ```
 
-产物：
-- `build/src/client/librflow_client.so` — Client（Android arm64）
-- `build/src/service/librflow_svc.so`   — Service（Linux arm64）
+默认产物：
+
+- `build/src/client/librflow_client.so`
+- `build/src/service/librflow_svc.so`
 
 常用选项：
 
 | 选项 | 默认 | 含义 |
 |---|---|---|
-| `RFLOW_BUILD_CLIENT`  | ON  | 生成 `librflow_client` |
-| `RFLOW_BUILD_SERVICE` | ON  | 生成 `librflow_svc` |
-| `RFLOW_BUILD_SHARED`  | ON  | `SHARED=.so` / `OFF=.a` |
-| `RFLOW_ENABLE_WERROR` | OFF | `-Werror` |
-| `RFLOW_CLIENT_ENABLE_WEBRTC_IMPL`  | OFF | 将 WebRTC 拉流实现链入 `librflow_client`（需 `dependences/lib/<plat>/<arch>/libwebrtc.a`） |
-| `RFLOW_SERVICE_ENABLE_WEBRTC_IMPL` | OFF | 将 WebRTC 推流实现链入 `librflow_svc`（同上）；开启后 `librflow_svc_push_video_frame` 才真正工作 |
-| `RFLOW_ENABLE_ROCKCHIP_MPP`        | OFF | Service 侧启用 Rockchip MPP 硬件编解码 |
+| `RFLOW_BUILD_CLIENT` | `ON` | 构建 `librflow_client` |
+| `RFLOW_BUILD_SERVICE` | `ON` | 构建 `librflow_svc` |
+| `RFLOW_BUILD_SHARED` | `ON` | `ON` 生成 `.so`，`OFF` 生成静态库 |
+| `RFLOW_ENABLE_WERROR` | `OFF` | 开启 `-Werror` |
+| `RFLOW_CLIENT_ENABLE_WEBRTC_IMPL` | `OFF` | 启用 Client 侧 WebRTC 拉流实现 |
+| `RFLOW_SERVICE_ENABLE_WEBRTC_IMPL` | `OFF` | 启用 Service 侧 WebRTC 推流实现；开启后可使用 SDK 内部采集推流，或使用 `librflow_svc_push_video_frame` 走业务侧外部投帧 |
+| `RFLOW_ENABLE_ROCKCHIP_MPP` | `OFF` | 启用 Rockchip MPP 硬件编解码 |
+| `RFLOW_BUILD_APPS` | `OFF` | 构建 `apps/` 下的 demo 和信令服务 |
 
-### 打开完整推拉流（示例：Linux arm64）
+### 打开完整推拉流能力
 
 ```bash
 cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DRFLOW_BUILD_CLIENT=ON \
     -DRFLOW_BUILD_SERVICE=ON \
+    -DRFLOW_BUILD_APPS=ON \
     -DRFLOW_CLIENT_ENABLE_WEBRTC_IMPL=ON \
     -DRFLOW_SERVICE_ENABLE_WEBRTC_IMPL=ON
 cmake --build build -j
-
-# 产物：
-#   build/src/client/librflow_client.so
-#   build/src/service/librflow_svc.so
-#   build/apps/signaling_server
-#   build/apps/push_demo_sdk      (基于 C ABI 的推流 demo)
-#   build/apps/pull_demo_sdk      (基于 C ABI 的拉流 demo)
 ```
 
-## SDK 端到端联调（push_demo_sdk + pull_demo_sdk）
+典型产物：
+
+- `build/src/client/librflow_client.so`
+- `build/src/service/librflow_svc.so`
+- `build/apps/signaling_server`
+- `build/apps/push_demo_sdk`
+- `build/apps/pull_demo_sdk`
+
+## SDK 端到端联调
 
 ```bash
 # 1. 启动信令服务
 ./build/apps/signaling_server --host 0.0.0.0 --port 8765 &
 
-# 2. Service 端：推送合成 I420 帧（device_id=dev1, stream_idx=1, 640x360@30）
-./build/apps/push_demo_sdk 127.0.0.1:8765 dev1 640 360 30 &
+# 2. Service 端：由 SDK 内部采集 /dev/video0 并推流
+./build/apps/push_demo_sdk 127.0.0.1:8765 dev1 640 360 30 0 /dev/video0 &
 
-# 3. Client 端：订阅 dev1 的 stream_idx=1
-./build/apps/pull_demo_sdk 127.0.0.1:8765 dev1 1
+# 3. Client 端：订阅 dev1 的 stream_idx=0
+./build/apps/pull_demo_sdk 127.0.0.1:8765 dev1 0
 ```
 
-业务要把自己的相机/编码器帧喂进 SDK 时，参考 `apps/push_demo_sdk.cpp` 中的 `librflow_svc_push_frame_*` 调用即可（当前支持 `RFLOW_CODEC_I420` / `RFLOW_CODEC_NV12`；其它像素格式先在业务侧转成 I420）。
+说明：
 
-## 角色分工
+- `apps/push_demo_sdk.cpp` 现在演示的是“只调用 SDK，由 SDK 内部完成采集、编码、推流”的模式。
+- Linux 下可通过命令行最后一个参数指定相机路径，也可用环境变量 `RFLOW_PUSH_DEMO_CAMERA=/dev/videoX` 指定；未指定时默认 `/dev/video0`。
+- 如果业务需要自己喂帧给 SDK，仍可使用 `librflow_svc_push_frame_*` + `librflow_svc_push_video_frame`。
+- 当前外部投帧支持 `RFLOW_CODEC_I420` 和 `RFLOW_CODEC_NV12`；其它像素格式需先在业务侧转换。
+- 当流已经配置 `video_device_path` 或 `video_device_index` 使用 SDK 内部采集时，不应再对同一流调用 `librflow_svc_push_video_frame`。
 
-| 端 | 运行平台 | 动作 | 对应 SDK 函数前缀 |
+## 角色划分
+
+| 端 | 平台 | 职责 | API 前缀 |
 |---|---|---|---|
-| **Client**  | Android arm64（native C++，不经 JVM/Context） | 订阅拉流 → 解码前/后帧回调 | `librflow_` |
-| **Service** | Linux arm64（设备/边缘） | 采集/编码/转码 → 发布订阅端 | `librflow_svc_` |
+| Client | Android arm64 / native C++ | 拉流、解码、回调业务层 | `librflow_` |
+| Service | Linux arm64 / 设备侧 | 采集、编码、转码、发布流 | `librflow_svc_` |
 
-共享部分（`log_config` / `signal_config` / `license_config` / `global_config` / `video_frame` / `stream_stats` / 内存释放 / 错误与版本 API）前缀统一为 `librflow_`，两端库各自实现导出。
+共享对象如 `log_config`、`signal_config`、`license_config`、`global_config`、`video_frame`、`stream_stats` 等统一走 `librflow_` 前缀。
 
-## ABI 策略
+## ABI 约定
 
-1. 全部对外类型为 **opaque 指针**：`typedef struct xxx_s* xxx_t;`
-2. 配置对象：`create` / `destroy` + `set_*` / `get_*`
-3. 回调信息对象（frame / stats）：**只读 opaque 句柄 + `get_*`**，栈内有效；跨栈持有用 `retain` / `release`
-4. 错误码分段：通用 `0x0xxx` / 连接 `0x1xxx` / 流 `0x2xxx`；错误文本走 **thread-local** `librflow_get_last_error()`
-5. 枚举 **只增不改**；函数签名 **只增不改**；添加能力用新函数名
-6. 每个 opaque 结构体在内部实现中带 `magic` 字段，便于野指针检测（见 `src/common/internal/handle.h`）
+1. 对外句柄统一使用 opaque pointer。
+2. 配置对象统一使用 `create` / `destroy` + `set_*` / `get_*`。
+3. 回调对象统一通过只读句柄 + `get_*` 访问；跨线程持有时使用 `retain` / `release`。
+4. 错误信息通过 thread-local 的 `librflow_get_last_error()` 获取。
+5. ABI 兼容策略是“只增不改”：新增能力优先通过新增函数暴露。
+6. 内部 opaque 结构都带 `magic` 字段，用于句柄有效性校验。
 
 ## 生命周期
 
 ### Client
 
+```text
+set_global_config
+  -> init
+  -> connect
+  -> open_stream*
+  -> close_stream*
+  -> disconnect
+  -> uninit
 ```
-set_global_config → init → connect → open_stream* → close_stream* → disconnect → uninit
-```
-`disconnect` / `uninit` / `close_stream` 幂等强清理。
 
 ### Service
 
+```text
+svc_set_global_config
+  -> svc_init
+  -> svc_connect
+  -> [svc_create_stream -> svc_start_stream -> (内部采集 或 svc_push_video_frame*)]
+  -> svc_stop_stream
+  -> svc_destroy_stream
+  -> svc_disconnect
+  -> svc_uninit
 ```
-svc_set_global_config → svc_init → svc_connect →
-  [on_pull_request → svc_create_stream → svc_start_stream → svc_push_*_frame*] →
-  svc_stop_stream → svc_destroy_stream → svc_disconnect → svc_uninit
-```
-`svc_disconnect` / `svc_uninit` / `svc_destroy_stream` 幂等强清理。
+
+`disconnect` / `uninit` / `destroy_stream` 相关接口都按幂等清理设计。
 
 ## 详细设计
 
-- Client：见 [client_api_design.md](./client_api_design.md)
-- Service：见 [service_api_design.md](./service_api_design.md)
-- 早期评审纪要：见 [client_api_design_review.md](./client_api_design_review.md)
+- Client：见 [docs/client_api_design.md](./docs/client_api_design.md)
+- Service：见 [docs/service_api_design.md](./docs/service_api_design.md)
+- 早期评审：见 [docs/client_api_design_review.md](./docs/client_api_design_review.md)
 
-## 实现现状
+## 当前实现状态
 
-- ABI 层全部落地：`*_create` / `*_destroy` / `*_set_*` / `*_get_*` 与所有对外函数符号齐备。
-- **Service 推流（`librflow_svc_push_video_frame`）已打通**（需 `RFLOW_SERVICE_ENABLE_WEBRTC_IMPL=ON`）：
-  - `ExternalPushVideoTrackSource`（`src/service/impl/media/external_push_video_track_source.h/.cpp`）：
-    `AdaptedVideoTrackSource` 子类，`PushI420/PushNv12` 把业务帧广播给 WebRTC 编码链路。
-  - `PushStreamer::use_external_video_source`：跳过 V4L2 直采，改用外部源。
-  - `Publisher`（`src/service/impl/publisher.{h,cpp}`）：桥接 C ABI ↔ `PushStreamer` + `SignalingClient`，
-    负责把 `subscriber_join`→`on_pull_request`、`CreateOfferForPeer` 主线程化、SDP/ICE 双向路由。
-  - `librflow_svc_create_stream` / `start_stream` / `push_video_frame` / `stop_stream` / `destroy_stream`
-    全部走 `Publisher`，`librflow_svc_connect_cb_set_on_pull_request/release` 被实际触发。
-- **Client 拉流**（`librflow_open_stream` + `on_video_frame`）在 `RFLOW_CLIENT_ENABLE_WEBRTC_IMPL=ON` 时
-  由 `src/client/impl/rtc_stream/*` 提供。
-- 仍为 stub 的部分（不影响端到端推拉流）：
-  - `librflow_svc_connect` 不做云端鉴权/license 校验，直接 `CONNECTED` + `BIND_BOUND`（`src/service/lifecycle.cpp`）。
-  - `librflow_stream_get_stats` / `librflow_svc_stream_get_stats` 返回 `NOT_SUPPORT`。
-  - Client/Service 两侧信令客户端尚未合并（`src/client/impl/signaling/` vs `src/service/impl/signaling/`）。
-- 线程池为内置最简实现，暂不依赖第三方 executor。
+- ABI 层已经基本落齐：`*_create` / `*_destroy` / `*_set_*` / `*_get_*` 等接口均已实现。
+- Service 推流链路已打通，需 `RFLOW_SERVICE_ENABLE_WEBRTC_IMPL=ON`。
+- Service 侧当前支持两种视频输入模式：
+  - SDK 内部采集模式：通过 `librflow_svc_stream_param_set_video_device_path` 或 `librflow_svc_stream_param_set_video_device_index` 配置视频源。
+  - 业务侧外部投帧模式：通过 `librflow_svc_push_frame_*` + `librflow_svc_push_video_frame` 向 SDK 投入 I420/NV12 帧。
+- `Publisher` 负责桥接 C ABI 与 `PushStreamer` / `SignalingClient`，并根据 stream param 选择内部采集或外部投帧模式。
+- `ExternalPushVideoTrackSource` 负责把业务侧投递的 I420/NV12 帧接入 WebRTC 视频编码链路。
+- Client 拉流链路在 `RFLOW_CLIENT_ENABLE_WEBRTC_IMPL=ON` 时由 `src/client/impl/rtc_stream/` 提供。
+
+仍为 stub 或未完全收敛的部分：
+
+- `librflow_svc_connect` 目前未接入完整云端鉴权 / license 校验流程。
+- `librflow_stream_get_stats` / `librflow_svc_stream_get_stats` 仍返回 `NOT_SUPPORT`。
+- Client / Service 两侧信令实现尚未完全合并。
+- 线程池仍为内置轻量实现，尚未接第三方 executor。
