@@ -24,7 +24,13 @@ option(RFLOW_BUILD_STANDALONE_SERVICE_DEMOS
 
 # --- webrtc demo（push_demo 无 SDL；pull_demo 需 SDL2；mpp_h264_smoke 需 Rockchip MPP）---
 if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_STANDALONE_SERVICE_DEMOS)
-    add_executable(push_demo push_demo.cpp)
+    # push_demo 链路与 librflow_svc 一致：impl 仅含业务对象，须并入 common/core/rtc_webrtc + GIO（Linux）。
+    add_executable(push_demo push_demo.cpp
+        $<TARGET_OBJECTS:rflow_common>
+        $<TARGET_OBJECTS:rflow_core>
+        $<TARGET_OBJECTS:rflow_rtc_webrtc>
+        $<TARGET_OBJECTS:rflow_svc_impl>
+    )
     target_include_directories(push_demo PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src
@@ -32,18 +38,31 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_ST
     )
     target_link_libraries(push_demo PRIVATE
         rflow_warnings
-        rflow_svc_impl
         rflow_webrtc_prebuilt
         Threads::Threads
         ${CMAKE_DL_LIBS}
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(RFLOW_APPS_GIO IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+            if(TARGET PkgConfig::RFLOW_APPS_GIO)
+                target_link_libraries(push_demo PRIVATE PkgConfig::RFLOW_APPS_GIO)
+            endif()
+        endif()
+    endif()
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(push_demo PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
     endif()
 
     find_package(SDL2 QUIET)
     if(TARGET SDL2::SDL2)
-        add_executable(pull_demo pull_demo.cpp)
+        add_executable(pull_demo pull_demo.cpp
+            $<TARGET_OBJECTS:rflow_common>
+            $<TARGET_OBJECTS:rflow_core>
+            $<TARGET_OBJECTS:rflow_rtc_webrtc>
+            $<TARGET_OBJECTS:rflow_svc_impl>
+        )
         target_include_directories(pull_demo PRIVATE
             ${CMAKE_SOURCE_DIR}/include
             ${CMAKE_SOURCE_DIR}/src
@@ -51,12 +70,20 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_ST
         )
         target_link_libraries(pull_demo PRIVATE
             rflow_warnings
-            rflow_svc_impl
             rflow_webrtc_prebuilt
             Threads::Threads
             ${CMAKE_DL_LIBS}
             SDL2::SDL2
         )
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            find_package(PkgConfig QUIET)
+            if(PkgConfig_FOUND)
+                pkg_check_modules(RFLOW_APPS_GIO_PULL IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+                if(TARGET PkgConfig::RFLOW_APPS_GIO_PULL)
+                    target_link_libraries(pull_demo PRIVATE PkgConfig::RFLOW_APPS_GIO_PULL)
+                endif()
+            endif()
+        endif()
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             target_compile_options(pull_demo PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
         endif()
@@ -65,7 +92,12 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_ST
     endif()
 
     if(RFLOW_ENABLE_ROCKCHIP_MPP)
-        add_executable(mpp_h264_smoke mpp_h264_smoke.cpp)
+        add_executable(mpp_h264_smoke mpp_h264_smoke.cpp
+            $<TARGET_OBJECTS:rflow_common>
+            $<TARGET_OBJECTS:rflow_core>
+            $<TARGET_OBJECTS:rflow_rtc_webrtc>
+            $<TARGET_OBJECTS:rflow_svc_impl>
+        )
         target_include_directories(mpp_h264_smoke PRIVATE
             ${CMAKE_SOURCE_DIR}/include
             ${CMAKE_SOURCE_DIR}/src
@@ -73,11 +105,19 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_ST
         )
         target_link_libraries(mpp_h264_smoke PRIVATE
             rflow_warnings
-            rflow_svc_impl
             rflow_webrtc_prebuilt
             Threads::Threads
             ${CMAKE_DL_LIBS}
         )
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            find_package(PkgConfig QUIET)
+            if(PkgConfig_FOUND)
+                pkg_check_modules(RFLOW_APPS_GIO_MPP IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+                if(TARGET PkgConfig::RFLOW_APPS_GIO_MPP)
+                    target_link_libraries(mpp_h264_smoke PRIVATE PkgConfig::RFLOW_APPS_GIO_MPP)
+                endif()
+            endif()
+        endif()
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             target_compile_options(mpp_h264_smoke PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
         endif()

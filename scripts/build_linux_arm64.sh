@@ -43,6 +43,7 @@ cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -G "${GENERATOR}" \
   -DRFLOW_CLIENT_ENABLE_WEBRTC_IMPL=ON \
   -DRFLOW_SERVICE_ENABLE_WEBRTC_IMPL=ON \
   -DRFLOW_ENABLE_ROCKCHIP_MPP="${RFLOW_ENABLE_ROCKCHIP_MPP:-OFF}" \
+  -DRFLOW_BUILD_STANDALONE_SERVICE_DEMOS="${RFLOW_BUILD_STANDALONE_SERVICE_DEMOS:-ON}" \
   ${CMAKE_EXTRA_ARGS:-}
 
 cmake --build "${BUILD_DIR}" --parallel "${BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
@@ -51,4 +52,5 @@ echo "[build] done"
 echo "[build] try:"
 echo "  ${BUILD_DIR}/apps/signaling_server"
 echo "  ${BUILD_DIR}/apps/push_demo_sdk"
+echo "  ${BUILD_DIR}/apps/push_demo   # V4L2 + streams.conf（相机）"
 echo "  ${BUILD_DIR}/apps/pull_demo_sdk"
