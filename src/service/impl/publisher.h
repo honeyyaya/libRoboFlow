@@ -1,10 +1,10 @@
 /**
  * @file   publisher.h
- * @brief  Service C ABI ↔ webrtc_demo::PushStreamer 桥接层
+ * @brief  Service C ABI ↔ rflow::service::impl::PushStreamer 桥接层
  *
  * 负责：
- *   1. 根据 librflow_svc_stream_param_s 构造 webrtc_demo::PushStreamerConfig（启用 external source）
- *   2. 管理 webrtc_demo::SignalingClient：subscriber_join→排队→主 worker 线程 CreateOfferForPeer
+ *   1. 根据 librflow_svc_stream_param_s 构造 rflow::service::impl::PushStreamerConfig（启用 external source）
+ *   2. 管理 rflow::service::impl::SignalingClient：subscriber_join→排队→主 worker 线程 CreateOfferForPeer
  *   3. 把 answer / ice 回调路由回 PushStreamer
  *   4. subscriber_join/leave → 通过 ctx 中的 connect_cb 分发 on_pull_request / on_pull_release
  *   5. 业务层 librflow_svc_push_video_frame → PushStreamer::PushExternalI420/Nv12
@@ -24,12 +24,10 @@
 
 #include "rflow/Service/librflow_service_api.h"
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
+
 class PushStreamer;
 class SignalingClient;
-}  // namespace webrtc_demo
-
-namespace rflow::service::impl {
 
 struct PublisherPullCallbacks {
     librflow_svc_on_pull_request_fn on_pull_request{nullptr};
@@ -81,8 +79,8 @@ private:
     std::string   video_codec_{"h264"};
     PublisherPullCallbacks cbs_{};
 
-    std::unique_ptr<webrtc_demo::PushStreamer>    streamer_;
-    std::unique_ptr<webrtc_demo::SignalingClient> signaling_;
+    std::unique_ptr<PushStreamer>    streamer_;
+    std::unique_ptr<SignalingClient> signaling_;
 
     std::thread             worker_;
     std::atomic<bool>       worker_run_{false};

@@ -7,7 +7,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 static bool IsVideoCaptureDevice(const std::string& path) {
     int fd = open(path.c_str(), O_RDWR);
@@ -110,4 +110,4 @@ int GetWebRtcCaptureDeviceIndexForPath(const std::string& device_path) {
     return -1;
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl

@@ -14,9 +14,10 @@
 #include "media/engine/simulcast_encoder_adapter.h"
 #include "modules/video_coding/codecs/h264/include/h264.h"
 
-// 现阶段仅接入 Rockchip MPP H264 encoder；后续可在同 backend 内扩�?HEVC/AV1 等�?#include "core/rtc/hw/rockchip_mpp/h264_encoder.h"
+// Rockchip MPP H264 encoder; extend with HEVC/AV1 in same backend as needed.
+#include "core/rtc/hw/rockchip_mpp/h264_encoder.h"
 
-namespace webrtc_demo::hw::rockchip_mpp {
+namespace rflow::rtc::hw::rockchip_mpp {
 
 namespace {
 
@@ -44,7 +45,7 @@ public:
     std::unique_ptr<webrtc::VideoEncoder> Create(const webrtc::Environment& env,
                                                  const webrtc::SdpVideoFormat& format) override {
         webrtc::H264EncoderSettings settings = webrtc::H264EncoderSettings::Parse(format);
-        return std::make_unique<webrtc_demo::RkMppH264Encoder>(env, settings);
+        return std::make_unique<RkMppH264Encoder>(env, settings);
     }
 
 private:
@@ -83,5 +84,5 @@ std::unique_ptr<webrtc::VideoEncoderFactory> CreateVideoEncoderFactory() {
     return std::make_unique<PreferredVideoEncoderFactory>();
 }
 
-}  // namespace webrtc_demo::hw::rockchip_mpp
+}  // namespace rflow::rtc::hw::rockchip_mpp
 

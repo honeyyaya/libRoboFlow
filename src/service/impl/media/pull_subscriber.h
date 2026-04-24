@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 enum class PullConnectionState { New, Connecting, Connected, Disconnected, Failed, Closed };
 
@@ -65,6 +65,6 @@ private:
     bool is_playing_{false};
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
 
 #endif

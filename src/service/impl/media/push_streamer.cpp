@@ -44,7 +44,7 @@
 #include <utility>
 #include <vector>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 namespace {
 
@@ -156,7 +156,6 @@ webrtc::PeerConnectionInterface::RTCConfiguration MakeRtcConfiguration(const Pus
 
 class FrameCountingSink : public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
 public:
-    using OnFrameCallback = webrtc_demo::OnFrameCallback;
     explicit FrameCountingSink(OnFrameCallback cb) : on_frame_(std::move(cb)) {}
 
     void OnFrame(const webrtc::VideoFrame& frame) override {
@@ -483,19 +482,19 @@ public:
 
     bool Initialize() {
         std::cout << "[PushStreamer] Initializing WebRTC (native API)..." << std::endl;
-        webrtc_demo::EnsureWebrtcFieldTrialsInitialized();
+        rflow::rtc::EnsureWebrtcFieldTrialsInitialized();
         if (!webrtc::InitializeSSL()) {
             std::cerr << "[PushStreamer] InitializeSSL failed" << std::endl;
             return false;
         }
 
         webrtc::PeerConnectionFactoryDependencies deps;
-        webrtc_demo::PeerConnectionFactoryMediaOptions media_opts;
+        rflow::rtc::PeerConnectionFactoryMediaOptions media_opts;
         media_opts.encoder_backend = config_.backend.use_rockchip_mpp_h264
-                                         ? webrtc_demo::VideoCodecBackendPreference::kRockchipMpp
-                                         : webrtc_demo::VideoCodecBackendPreference::kBuiltin;
-        webrtc_demo::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
-        webrtc_demo::EnsureDedicatedPeerConnectionSignalingThread(deps, &owned_signaling_thread_);
+                                         ? rflow::rtc::VideoCodecBackendPreference::kRockchipMpp
+                                         : rflow::rtc::VideoCodecBackendPreference::kBuiltin;
+        rflow::rtc::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
+        rflow::rtc::EnsureDedicatedPeerConnectionSignalingThread(deps, &owned_signaling_thread_);
 
         factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(deps));
         if (!factory_) {
@@ -833,7 +832,7 @@ public:
         if (!config_.common.video_device_path.empty()) {
             // 与 device_info_v4l2 一致：/dev/videoN → 第 N' 个 CAPTURE 节点的枚举下标（非路径配置等）
             {
-                int path_idx = webrtc_demo::GetWebRtcCaptureDeviceIndexForPath(config_.common.video_device_path);
+                int path_idx = GetWebRtcCaptureDeviceIndexForPath(config_.common.video_device_path);
                 if (path_idx >= 0 && static_cast<uint32_t>(path_idx) < n) {
                     char name[256] = {0};
                     char unique[256] = {0};
@@ -877,7 +876,7 @@ public:
             }
             // WebRTC 的 unique 往往不含 /dev/videoN；用 V4L2 card 与枚举设备名对齐（常见）
             {
-                std::string card = webrtc_demo::GetDeviceCardName(config_.common.video_device_path);
+                std::string card = GetDeviceCardName(config_.common.video_device_path);
                 if (!card.empty()) {
                     for (uint32_t i = 0; i < n; ++i) {
                         char name[256] = {0};
@@ -1723,4 +1722,4 @@ unsigned int PushStreamer::GetDecodedFrameCount() const {
     return impl_->GetDecodedFrameCount();
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl

@@ -3,7 +3,7 @@
  * @brief Android AMediaCodec H.264 解码器实现（从旧工程移植）。
  *
  * 迁移改动：
- *   - 命名空间：webrtc_demo -> rflow::rtc；
+ *   - 命名空间：rflow::rtc；
  *   - 日志：__android_log_print / ALOG* -> RFLOW_LOGW / RFLOW_LOGI；
  *   - 移除对 encoded_tracking_bridge.h / video_decode_sink_timing_bridge.h 的依赖
  *     （旧工程的 E2E 追踪桥接暂未移植）。TODO: 接入 SDK 的 stream_stats / trace 能力。

@@ -11,7 +11,7 @@ class I420Buffer;
 class NV12Buffer;
 }
 
-namespace webrtc_demo {
+namespace rflow::rtc::hw::rockchip_mpp {
 
 class MppNativeDecFrameBuffer;
 
@@ -103,6 +103,6 @@ class RkMppMjpegDecoder {
   bool pipeline_rga_to_mpp_{false};
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::rtc::hw::rockchip_mpp
 
 #endif

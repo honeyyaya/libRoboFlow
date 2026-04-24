@@ -53,7 +53,7 @@ bool Publisher::Start() {
         return true;  // 幂等
     }
 
-    webrtc_demo::PushStreamerConfig cfg;
+    PushStreamerConfig cfg;
     cfg.common.stream_id                     = stream_id_str_;
     cfg.common.video_width                   = width_;
     cfg.common.video_height                  = height_;
@@ -71,9 +71,9 @@ bool Publisher::Start() {
     // Rockchip MPP 硬件编解码：根据编译宏默认打开；运行时再由 WEBRTC_MPP_* 等环境变量二次控制。
     cfg.backend.use_rockchip_mpp_h264 = true;
 
-    streamer_ = std::make_unique<webrtc_demo::PushStreamer>(cfg);
+    streamer_ = std::make_unique<PushStreamer>(cfg);
 
-    signaling_ = std::make_unique<webrtc_demo::SignalingClient>(
+    signaling_ = std::make_unique<SignalingClient>(
         signaling_url_, "publisher", stream_id_str_);
 
     // signaling IO 线程 → Publisher worker 线程：排队主线程统一 CreateOfferForPeer，
@@ -114,8 +114,8 @@ bool Publisher::Start() {
                                                  int mline_index, const std::string& candidate) {
         if (signaling_) signaling_->SendIceCandidate(mid, mline_index, candidate, peer_id);
     });
-    streamer_->SetOnConnectionStateCallback([this](webrtc_demo::ConnectionState state) {
-        using S = webrtc_demo::ConnectionState;
+    streamer_->SetOnConnectionStateCallback([this](ConnectionState state) {
+        using S = ConnectionState;
         const char* names[] = {"New", "Connecting", "Connected", "Disconnected", "Failed", "Closed"};
         RFLOW_LOGI("[publisher idx=%d] rtc state=%s", stream_idx_, names[static_cast<int>(state)]);
         (void)state;

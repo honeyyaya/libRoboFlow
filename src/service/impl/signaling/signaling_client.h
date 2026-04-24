@@ -11,7 +11,7 @@
 #include <string>
 #include <string_view>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 /// P2P signaling client backed by a shared IO thread for multiple service sessions.
 /// Address format: "127.0.0.1:8765" or "ws://127.0.0.1:8765" (ws:// is ignored)
@@ -81,6 +81,6 @@ private:
     mutable std::mutex send_mutex_;
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
 
 #endif  // WEBRTC_DEMO_SIGNALING_CLIENT_H_

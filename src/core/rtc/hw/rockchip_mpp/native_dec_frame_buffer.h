@@ -8,7 +8,7 @@
 #include "api/scoped_refptr.h"
 #include "api/video/video_frame_buffer.h"
 
-namespace webrtc_demo {
+namespace rflow::rtc::hw::rockchip_mpp {
 
 /// WebRTC kNative：持有 MPP MJPEG 解码输出 MppFrame（DRM buffer），供 RkMppH264Encoder 零拷贝入参。
 /// 析构时 mpp_frame_deinit，归还解码器 buffer pool。
@@ -94,6 +94,6 @@ class MppNativeDecFrameBuffer : public webrtc::VideoFrameBuffer {
   std::atomic<int64_t> on_frame_enter_us_{0};
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::rtc::hw::rockchip_mpp
 
 #endif

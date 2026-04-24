@@ -167,7 +167,7 @@ private:
 
 }  // namespace
 
-static webrtc_demo::PullSubscriber* g_player = nullptr;
+static rflow::service::impl::PullSubscriber* g_player = nullptr;
 
 void SignalHandler(int) {
     if (g_player) g_player->Stop();
@@ -299,7 +299,7 @@ int main(int argc, char* argv[]) {
     }
     if (config_path.empty()) config_path = FindConfigPath(argv[0], "");
     int jitter_min_delay_ms = 0;
-    webrtc_demo::ConfigLoader cfg;
+    rflow::service::impl::ConfigLoader cfg;
     if (!config_path.empty() && cfg.Load(config_path)) {
         url = cfg.Get("SIGNALING_ADDR", "127.0.0.1:8765");
         stream_id = cfg.Get("STREAM_ID", "livestream");
@@ -378,10 +378,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    webrtc_demo::PullSubscriberConfig recv_cfg;
+    rflow::service::impl::PullSubscriberConfig recv_cfg;
     recv_cfg.common.jitter_buffer_min_delay_ms = jitter_min_delay_ms;
     recv_cfg.common.skip_sink_argb_conversion = skip_sink_argb;
-    webrtc_demo::PullSubscriber player(url, stream_id, recv_cfg);
+    rflow::service::impl::PullSubscriber player(url, stream_id, recv_cfg);
     g_player = &player;
 
     std::signal(SIGINT, SignalHandler);
@@ -414,7 +414,7 @@ int main(int argc, char* argv[]) {
         }
     });
 
-    player.SetOnConnectionState([](webrtc_demo::PullConnectionState state) {
+    player.SetOnConnectionState([](rflow::service::impl::PullConnectionState state) {
         const char* names[] = {"New", "Connecting", "Connected", "Disconnected", "Failed", "Closed"};
         std::cout << "[State] " << names[static_cast<int>(state)] << std::endl;
     });

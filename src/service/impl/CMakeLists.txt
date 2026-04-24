@@ -1,7 +1,7 @@
 # src/service/impl — 服务端 WebRTC 业务实现（推/拉流、Camera、信令客户端等）。
 #
 # 当前状态：代码已从 legacy sdk/ include/ 扁平化到 camera/ config/ media/ signaling/，
-# 但仍使用 webrtc_demo:: 命名空间，并直接依赖 libwebrtc 预编译产物。暂不接入
+# 使用 rflow::service::impl / rflow::rtc 命名空间，并直接依赖 libwebrtc 预编译产物。暂不接入
 # librflow_svc 的主目标（否则会把 libwebrtc 全量拽入 service SDK）。
 #
 # 启用方式：

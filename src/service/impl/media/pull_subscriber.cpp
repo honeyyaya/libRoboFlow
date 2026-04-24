@@ -39,7 +39,7 @@
 #include <string>
 #include <vector>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 namespace {
 
@@ -407,7 +407,7 @@ private:
 class PullSubscriber::Impl : public webrtc::PeerConnectionObserver {
 public:
     Impl(const std::string& url, const std::string& stream_id, const PullSubscriberConfig& recv)
-        : signaling_(std::make_unique<webrtc_demo::SignalingClient>(url, "subscriber", stream_id)),
+        : signaling_(std::make_unique<SignalingClient>(url, "subscriber", stream_id)),
           recv_config_(recv) {
         stats_.t_construct_us = SignalingNowUs();
     }
@@ -437,17 +437,17 @@ public:
     bool Initialize() {
         std::cout << "[PullSubscriber] Initializing WebRTC (native API)..." << std::endl;
         stats_.t_initialize_begin_us = SignalingNowUs();
-        webrtc_demo::EnsureWebrtcFieldTrialsInitialized(); 
+        rflow::rtc::EnsureWebrtcFieldTrialsInitialized(); 
         if (!webrtc::InitializeSSL()) {
             return false;
         }
         webrtc::PeerConnectionFactoryDependencies deps;
-        webrtc_demo::PeerConnectionFactoryMediaOptions media_opts;
+        rflow::rtc::PeerConnectionFactoryMediaOptions media_opts;
         media_opts.decoder_backend = recv_config_.backend.use_rockchip_mpp_h264_decode
-                                         ? webrtc_demo::VideoCodecBackendPreference::kRockchipMpp
-                                         : webrtc_demo::VideoCodecBackendPreference::kBuiltin;
-        webrtc_demo::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
-        webrtc_demo::EnsureDedicatedPeerConnectionSignalingThread(deps, &owned_signaling_thread_);
+                                         ? rflow::rtc::VideoCodecBackendPreference::kRockchipMpp
+                                         : rflow::rtc::VideoCodecBackendPreference::kBuiltin;
+        rflow::rtc::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
+        rflow::rtc::EnsureDedicatedPeerConnectionSignalingThread(deps, &owned_signaling_thread_);
         factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(deps));
         if (!factory_) {
             webrtc::CleanupSSL();
@@ -733,7 +733,7 @@ public:
         }
     }
 
-    std::unique_ptr<webrtc_demo::SignalingClient> signaling_;
+    std::unique_ptr<SignalingClient> signaling_;
     PullSubscriberConfig recv_config_;
     std::unique_ptr<webrtc::Thread> owned_signaling_thread_;
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
@@ -929,4 +929,4 @@ void PullSubscriber::RequestInboundVideoStatsLog() {
     }
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl

@@ -6,7 +6,7 @@
 #include "api/environment/environment.h"
 #include "api/video_codecs/video_decoder.h"
 
-namespace webrtc_demo::hw::rockchip_mpp {
+namespace rflow::rtc::hw::rockchip_mpp {
 
 /// WebRTC VideoDecoder：H.264 Annex B 码流 → MPP 硬件解码 → I420 VideoFrame。
 class H264Decoder final : public webrtc::VideoDecoder {
@@ -42,7 +42,7 @@ private:
   bool logged_first_frame_{false};
 };
 
-}  // namespace webrtc_demo::hw::rockchip_mpp
+}  // namespace rflow::rtc::hw::rockchip_mpp
 
 #endif
 

@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 struct PushStreamerCommonConfig {
     std::string stream_id{"stream_001"};
@@ -150,6 +150,6 @@ private:
     std::atomic<bool> is_streaming_{false};
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
 
 #endif  // PUSH_STREAMER_H

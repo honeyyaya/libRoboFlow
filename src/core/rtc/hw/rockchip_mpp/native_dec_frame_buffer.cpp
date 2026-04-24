@@ -12,7 +12,7 @@
 #include "rk_mpi.h"
 #include "rk_type.h"
 
-namespace webrtc_demo {
+namespace rflow::rtc::hw::rockchip_mpp {
 
 namespace {
 
@@ -200,4 +200,4 @@ std::string MppNativeDecFrameBuffer::storage_representation() const {
     return "mpp_mjpeg_dec_drm_frame";
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::rtc::hw::rockchip_mpp

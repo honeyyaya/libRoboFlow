@@ -10,7 +10,7 @@
 #include "core/rtc/hw/rockchip_mpp/video_encoder_factory.h"
 #endif
 
-namespace webrtc_demo::hw {
+namespace rflow::rtc::hw {
 
 std::unique_ptr<webrtc::VideoEncoderFactory> CreatePreferredVideoEncoderFactory(
     const VideoBackendPreferences& prefs) {
@@ -18,7 +18,7 @@ std::unique_ptr<webrtc::VideoEncoderFactory> CreatePreferredVideoEncoderFactory(
   const char* dis = std::getenv("WEBRTC_DISABLE_MPP_H264");
   const bool env_disable = dis && dis[0] == '1' && dis[1] == '\0';
   if (prefs.encoder_backend == VideoCodecBackend::kRockchipMpp && !env_disable) {
-    return webrtc_demo::hw::rockchip_mpp::CreateVideoEncoderFactory();
+    return rflow::rtc::hw::rockchip_mpp::CreateVideoEncoderFactory();
   }
 #endif
   return webrtc::CreateBuiltinVideoEncoderFactory();
@@ -30,11 +30,11 @@ std::unique_ptr<webrtc::VideoDecoderFactory> CreatePreferredVideoDecoderFactory(
   const char* dis = std::getenv("WEBRTC_DISABLE_MPP_H264_DECODE");
   const bool env_disable = dis && dis[0] == '1' && dis[1] == '\0';
   if (prefs.decoder_backend == VideoCodecBackend::kRockchipMpp && !env_disable) {
-    return webrtc_demo::hw::rockchip_mpp::CreateVideoDecoderFactory();
+    return rflow::rtc::hw::rockchip_mpp::CreateVideoDecoderFactory();
   }
 #endif
   return webrtc::CreateBuiltinVideoDecoderFactory();
 }
 
-}  // namespace webrtc_demo::hw
+}  // namespace rflow::rtc::hw
 

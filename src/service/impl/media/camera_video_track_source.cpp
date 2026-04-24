@@ -34,7 +34,7 @@
 #include <atomic>
 #endif
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 #if defined(WEBRTC_LINUX) && defined(__linux__)
 namespace {
@@ -582,7 +582,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
     decode_worker_exit_ = false;
 #if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
     if (prefer_mpp_mjpeg_decode_ && direct_pixfmt_ == V4L2_PIX_FMT_MJPEG) {
-        auto dec = std::make_unique<RkMppMjpegDecoder>();
+        auto dec = std::make_unique<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder>();
         if (dec->Init()) {
             dec->SetPipelineV4l2ExtDmabuf(v4l2_ext_dma_config_);
             dec->SetPipelineRgaToMpp(mjpeg_rga_config_);
@@ -675,7 +675,7 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
     const size_t dma_arg_cap = mpp_jpeg_dma ? dma_cap : 0;
     if (mjpeg_mpp_ && direct_pixfmt_ == static_cast<uint32_t>(V4L2_PIX_FMT_MJPEG)) {
         if (PreferMjpegNativeZeroCopyToEnc()) {
-            webrtc::scoped_refptr<MppNativeDecFrameBuffer> native;
+            webrtc::scoped_refptr<rflow::rtc::hw::rockchip_mpp::MppNativeDecFrameBuffer> native;
             // 始终传 mmap 指针：RGA 失败时会 memcpy 回退；EXT_DMA 成功时解码器忽略指针。
             const bool dec_native =
                 mjpeg_mpp_->DecodeJpegToNativeDecFrame(src, bytesused, w, h, &native, dma_arg_fd, dma_arg_cap,
@@ -937,7 +937,8 @@ bool CameraVideoTrackSource::Start(const char* device_unique_id, int width, int 
 
 void CameraVideoTrackSource::OnFrame(const webrtc::VideoFrame& frame) {
 #if defined(WEBRTC_LINUX) && defined(__linux__) && defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
-    if (MppNativeDecFrameBuffer* native = MppNativeDecFrameBuffer::TryGet(frame.video_frame_buffer())) {
+    if (rflow::rtc::hw::rockchip_mpp::MppNativeDecFrameBuffer* native =
+            rflow::rtc::hw::rockchip_mpp::MppNativeDecFrameBuffer::TryGet(frame.video_frame_buffer())) {
         native->SetOnFrameEnterUs(webrtc::TimeMicros());
     }
 #endif
@@ -966,4 +967,4 @@ bool CameraVideoTrackSource::WantMjpegRgaToMpp() const {
 }
 #endif
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
