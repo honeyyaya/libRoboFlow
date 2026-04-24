@@ -2,7 +2,31 @@
 
 #include "internal/handles.h"
 
+#include <cstring>
 #include <new>
+
+namespace {
+
+rflow_err_t copy_out(const std::string& s, char* buf, uint32_t buf_len, uint32_t* out_needed) {
+    if (s.empty()) return RFLOW_ERR_NOT_FOUND;
+
+    const auto sz     = static_cast<uint32_t>(s.size());
+    const auto needed = sz + 1u;
+    if (out_needed) *out_needed = needed;
+
+    if (!buf || buf_len == 0) return RFLOW_ERR_TRUNCATED;
+    if (buf_len < needed) {
+        const auto n = buf_len - 1u;
+        std::memcpy(buf, s.data(), n);
+        buf[n] = '\0';
+        return RFLOW_ERR_TRUNCATED;
+    }
+    std::memcpy(buf, s.data(), sz);
+    buf[sz] = '\0';
+    return RFLOW_OK;
+}
+
+}  // namespace
 
 extern "C" {
 
@@ -95,6 +119,18 @@ rflow_err_t librflow_svc_stream_param_set_enable_transcode(librflow_svc_stream_p
     p->has_enable_transcode = true;
     return RFLOW_OK;
 }
+rflow_err_t librflow_svc_stream_param_set_video_device_path(librflow_svc_stream_param_t p, const char* v) {
+    SVC_SP_CHECK(p);
+    p->video_device_path     = v ? v : "";
+    p->has_video_device_path = true;
+    return RFLOW_OK;
+}
+rflow_err_t librflow_svc_stream_param_set_video_device_index(librflow_svc_stream_param_t p, uint32_t index) {
+    SVC_SP_CHECK(p);
+    p->video_device_index     = index;
+    p->has_video_device_index = true;
+    return RFLOW_OK;
+}
 
 /* ---------------- getters ---------------- */
 
@@ -185,6 +221,21 @@ rflow_err_t librflow_svc_stream_param_get_enable_transcode(librflow_svc_stream_p
     if (!out_enable)              return RFLOW_ERR_PARAM;
     if (!p->has_enable_transcode) return RFLOW_ERR_NOT_FOUND;
     *out_enable = p->enable_transcode;
+    return RFLOW_OK;
+}
+rflow_err_t librflow_svc_stream_param_get_video_device_path(librflow_svc_stream_param_t p,
+                                                            char* buf, uint32_t buf_len,
+                                                            uint32_t* out_needed) {
+    SVC_SP_CHECK(p);
+    if (!p->has_video_device_path) return RFLOW_ERR_NOT_FOUND;
+    return copy_out(p->video_device_path, buf, buf_len, out_needed);
+}
+rflow_err_t librflow_svc_stream_param_get_video_device_index(librflow_svc_stream_param_t p,
+                                                             uint32_t* out_device_index) {
+    SVC_SP_CHECK(p);
+    if (!out_device_index)          return RFLOW_ERR_PARAM;
+    if (!p->has_video_device_index) return RFLOW_ERR_NOT_FOUND;
+    *out_device_index = p->video_device_index;
     return RFLOW_OK;
 }
 

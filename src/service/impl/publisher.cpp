@@ -29,6 +29,9 @@ Publisher::Publisher(int32_t stream_idx,
                      int width, int height, int fps,
                      int target_kbps, int min_kbps, int max_kbps,
                      const std::string& video_codec,
+                     bool use_internal_video_source,
+                     const std::string& video_device_path,
+                     int video_device_index,
                      const PublisherPullCallbacks& cbs)
     : stream_idx_(stream_idx),
       in_codec_(in_codec),
@@ -42,6 +45,9 @@ Publisher::Publisher(int32_t stream_idx,
       min_kbps_(min_kbps > 0 ? min_kbps : 100),
       max_kbps_(max_kbps > 0 ? max_kbps : 2000),
       video_codec_(video_codec.empty() ? std::string("h264") : LowerCopy(video_codec)),
+      use_internal_video_source_(use_internal_video_source),
+      video_device_path_(video_device_path),
+      video_device_index_(video_device_index >= 0 ? video_device_index : 0),
       cbs_(cbs) {}
 
 Publisher::~Publisher() {
@@ -58,7 +64,9 @@ bool Publisher::Start() {
     cfg.common.video_width                   = width_;
     cfg.common.video_height                  = height_;
     cfg.common.video_fps                     = fps_;
-    cfg.common.use_external_video_source     = true;
+    cfg.common.use_external_video_source     = !use_internal_video_source_;
+    cfg.common.video_device_path             = video_device_path_;
+    cfg.common.video_device_index            = video_device_index_;
     cfg.common.signaling_subscriber_offer_only = true;  // 仅在 subscriber_join 时创建 offer
     cfg.common.target_bitrate_kbps           = target_kbps_;
     cfg.common.min_bitrate_kbps              = min_kbps_;
@@ -139,9 +147,17 @@ bool Publisher::Start() {
 
     worker_run_.store(true, std::memory_order_release);
     worker_ = std::thread([this] { WorkerLoop(); });
-    RFLOW_LOGI("[publisher idx=%d] started (signaling=%s, stream_id=%s, %dx%d@%d, codec=%s)",
+    RFLOW_LOGI("[publisher idx=%d] started (signaling=%s, stream_id=%s, %dx%d@%d, codec=%s, source=%s)",
                stream_idx_, signaling_url_.c_str(), stream_id_str_.c_str(),
-               width_, height_, fps_, video_codec_.c_str());
+               width_, height_, fps_, video_codec_.c_str(),
+               use_internal_video_source_ ? "sdk-camera" : "external-push");
+    if (use_internal_video_source_) {
+        if (!video_device_path_.empty()) {
+            RFLOW_LOGI("[publisher idx=%d] camera path=%s", stream_idx_, video_device_path_.c_str());
+        } else {
+            RFLOW_LOGI("[publisher idx=%d] camera index=%d", stream_idx_, video_device_index_);
+        }
+    }
     return true;
 }
 

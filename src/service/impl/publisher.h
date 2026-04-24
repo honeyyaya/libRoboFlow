@@ -45,6 +45,9 @@ public:
               int width, int height, int fps,
               int target_kbps, int min_kbps, int max_kbps,
               const std::string& video_codec,
+              bool use_internal_video_source,
+              const std::string& video_device_path,
+              int video_device_index,
               const PublisherPullCallbacks& cbs);
     ~Publisher();
 
@@ -61,6 +64,7 @@ public:
 
     int32_t stream_idx() const { return stream_idx_; }
     rflow_codec_t in_codec() const { return in_codec_; }
+    bool uses_external_video_source() const { return !use_internal_video_source_; }
 
 private:
     void WorkerLoop();
@@ -77,6 +81,9 @@ private:
     int           min_kbps_{100};
     int           max_kbps_{2000};
     std::string   video_codec_{"h264"};
+    bool          use_internal_video_source_{false};
+    std::string   video_device_path_;
+    int           video_device_index_{0};
     PublisherPullCallbacks cbs_{};
 
     std::unique_ptr<PushStreamer>    streamer_;
