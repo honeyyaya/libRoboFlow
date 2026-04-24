@@ -56,6 +56,8 @@ struct librflow_svc_stream_param_s {
     uint32_t           lowest_kbps;
     uint32_t           highest_kbps;
     bool               enable_transcode;
+    std::string        video_device_path;
+    uint32_t           video_device_index;
 
     /* 追踪每个字段是否被 setter 显式赋值过（NOT_FOUND vs 显式 0 的消歧） */
     bool               has_in_codec;
@@ -69,6 +71,8 @@ struct librflow_svc_stream_param_s {
     bool               has_bitrate;
     bool               has_dynamic_bitrate;
     bool               has_enable_transcode;
+    bool               has_video_device_path;
+    bool               has_video_device_index;
 };
 
 struct librflow_svc_stream_cb_s {

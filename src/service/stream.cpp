@@ -98,6 +98,12 @@ rflow_err_t librflow_svc_create_stream(rflow_stream_index_t          stream_idx,
         uint32_t kbps_min = sh->param.has_dynamic_bitrate ? sh->param.lowest_kbps : 0;
         const std::string video_codec = CodecToString(
             sh->param.has_out_codec ? sh->param.out_codec : RFLOW_CODEC_H264);
+        const bool use_internal_video_source =
+            sh->param.has_video_device_path || sh->param.has_video_device_index;
+        const std::string video_device_path =
+            sh->param.has_video_device_path ? sh->param.video_device_path : std::string();
+        const int video_device_index =
+            sh->param.has_video_device_index ? static_cast<int>(sh->param.video_device_index) : 0;
 
         const std::string signal_url = s.global_config.has_signal
                                            ? s.global_config.signal.url
@@ -122,7 +128,7 @@ rflow_err_t librflow_svc_create_stream(rflow_stream_index_t          stream_idx,
             stream_id_str, signal_url, device_id,
             static_cast<int>(w), static_cast<int>(h), static_cast<int>(fps),
             static_cast<int>(kbps_t), static_cast<int>(kbps_min), static_cast<int>(kbps_max),
-            video_codec, cbs);
+            video_codec, use_internal_video_source, video_device_path, video_device_index, cbs);
         sh->impl = pub;  // shared_ptr<void>
     }
 #endif
@@ -232,6 +238,10 @@ rflow_err_t librflow_svc_push_video_frame(librflow_svc_stream_handle_t handle,
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
     auto pub = AsPublisher(sh->impl);
     if (!pub) return RFLOW_ERR_STATE;
+    if (!pub->uses_external_video_source()) {
+        rflow::set_last_error("stream uses SDK internal video capture; push_video_frame is disabled");
+        return RFLOW_ERR_STATE;
+    }
     if (frame->data.empty()) return RFLOW_ERR_PARAM;
 
     const int width  = frame->has_size ? static_cast<int>(frame->width)
