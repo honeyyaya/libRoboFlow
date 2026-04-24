@@ -9,7 +9,7 @@
  *     （旧工程的 E2E 追踪桥接暂未移植）。TODO: 接入 SDK 的 stream_stats / trace 能力。
  */
 
-#include "android_mediacodec_video_decoder.h"
+#include "core/rtc/hw/android/mediacodec_video_decoder.h"
 
 #include "common/internal/logger.h"
 

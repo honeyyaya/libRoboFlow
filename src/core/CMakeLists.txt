@@ -37,8 +37,8 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
     )
     if(ANDROID)
         list(APPEND _RTC_W_SRCS
-            rtc/decoder/android/android_hw_video_decoder_factory.cpp
-            rtc/decoder/android/android_mediacodec_video_decoder.cpp
+            rtc/hw/android/video_decoder_factory.cpp
+            rtc/hw/android/mediacodec_video_decoder.cpp
         )
     endif()
     if(RFLOW_ENABLE_ROCKCHIP_MPP)

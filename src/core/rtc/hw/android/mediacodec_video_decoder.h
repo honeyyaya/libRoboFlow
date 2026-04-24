@@ -1,11 +1,3 @@
-/**
- * @file   android_mediacodec_video_decoder.h
- * @brief  Android NDK AMediaCodec 封装的 H.264 解码器
- *
- * 与 android_hw_video_decoder_factory 同位于 core/rtc。
- * 注：Decode 工作在内部线程上执行；Configure / Release 同步等待完成。
- */
-
 #pragma once
 
 #include <memory>
@@ -14,6 +6,8 @@
 
 namespace rflow::rtc {
 
+// Android NDK AMediaCodec based H.264 decoder. Decode work runs on an internal
+// worker thread, while Configure/Release wait for worker-side completion.
 class AndroidMediaCodecVideoDecoder : public webrtc::VideoDecoder {
  public:
     AndroidMediaCodecVideoDecoder();
