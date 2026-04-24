@@ -379,7 +379,7 @@ bool RtcStreamSession::RunOnPeerConnectionSignalingThread(const std::function<vo
     if (signaling_thread->IsCurrent()) {
         task();
     } else {
-        signaling_thread->BlockingCall(task);
+        signaling_thread->BlockingCall([task] { task(); });
     }
     return true;
 }
