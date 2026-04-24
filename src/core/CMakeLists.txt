@@ -28,6 +28,7 @@ endif()
 
 if(_RFLOW_NEED_WEBRTC_IMPL)
     set(_RTC_W_SRCS
+        rtc/rtc_factory_common.cpp
         rtc/peer_connection_factory.cpp
         rtc/peer_connection_factory_deps.cpp
         rtc/hw/backend_registry.cpp
