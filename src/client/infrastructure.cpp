@@ -44,6 +44,13 @@ void shutdown_infrastructure() {
 rflow_err_t on_connect_succeeded(const std::string& signal_url,
                                  const std::string& device_id) {
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
+    if (signal_url.empty()) {
+        rflow::set_last_error(
+            "librflow_connect: global_config.signal.url is empty; "
+            "call librflow_signal_config_set_url + librflow_set_global_config before connect");
+        RFLOW_LOGE("[client] connect aborted: missing signal url in global_config");
+        return RFLOW_ERR_PARAM;
+    }
     if (!rflow::rtc::peer_connection_factory()) {
         rflow::set_last_error("peer_connection_factory not ready after rtc::initialize");
         RFLOW_LOGE("[client] on_connect: rtc not ready");

@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/linux-arm64}"
+SVC_LIB_DIR="${BUILD_DIR}/src/service"
+export LD_LIBRARY_PATH="${SVC_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 SIGNAL_HOST="${SIGNAL_HOST:-127.0.0.1}"
 SIGNAL_PORT="${SIGNAL_PORT:-8765}"
 SIGNAL_URL="${SIGNAL_URL:-${SIGNAL_HOST}:${SIGNAL_PORT}}"
@@ -11,6 +13,7 @@ DEVICE_ID="${DEVICE_ID:-demo_device}"
 WIDTH="${WIDTH:-640}"
 HEIGHT="${HEIGHT:-360}"
 FPS="${FPS:-30}"
+STREAM_IDX="${STREAM_IDX:-0}"
 LOG_DIR="${LOG_DIR:-${BUILD_DIR}/run-logs}"
 
 find_binary() {
@@ -79,6 +82,7 @@ echo "[run] push demo : ${PUSH_BIN}"
 echo "[run] signal url: ${SIGNAL_URL}"
 echo "[run] device id : ${DEVICE_ID}"
 echo "[run] frame cfg : ${WIDTH}x${HEIGHT}@${FPS}"
+echo "[run] stream idx: ${STREAM_IDX} (信令 room=${DEVICE_ID}:${STREAM_IDX})"
 echo "[run] logs      : ${LOG_DIR}"
 
 "${SIGNAL_BIN}" "${SIGNAL_PORT}" "${SIGNAL_THREADS}" >"${SIGNAL_LOG}" 2>&1 &
@@ -94,4 +98,4 @@ echo "[run] signaling server ready"
 echo "[run] tail -f ${SIGNAL_LOG}"
 echo "[run] push log  ${PUSH_LOG}"
 
-"${PUSH_BIN}" "${SIGNAL_URL}" "${DEVICE_ID}" "${WIDTH}" "${HEIGHT}" "${FPS}" | tee "${PUSH_LOG}"
+"${PUSH_BIN}" "${SIGNAL_URL}" "${DEVICE_ID}" "${WIDTH}" "${HEIGHT}" "${FPS}" "${STREAM_IDX}" | tee "${PUSH_LOG}"

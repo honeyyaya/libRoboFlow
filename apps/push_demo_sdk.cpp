@@ -3,11 +3,12 @@
  * @brief  基于 librflow_svc C ABI 的推流 demo（合成 I420 帧 → 服务端编码并发布）
  *
  * 用法：
- *   ./push_demo_sdk <signaling_url> [device_id] [width] [height] [fps]
+ *   ./push_demo_sdk <signaling_url> [device_id] [width] [height] [fps] [stream_idx]
  * 默认：
  *   signaling_url = 127.0.0.1:8765
  *   device_id     = demo_device
  *   分辨率/帧率  = 640x360 @ 30
+ *   stream_idx    = 0  （信令 room = device_id + ":" + stream_idx，需与拉流端 open_stream 索引一致）
  *
  * 依赖运行环境：
  *   - signaling_server 已在 <signaling_url> 启动（apps/signaling_server）
@@ -38,7 +39,7 @@ void OnSig(int) { g_stop.store(true); }
 void OnConnectState(rflow_connect_state_t state, rflow_err_t reason, void* /*ud*/) {
     std::cout << "[demo] connect state=" << state << " reason=" << reason << std::endl;
 }
-void OnBindState(rflow_bind_state_t state, const void* /*detail*/, void* /*ud*/) {
+void OnBindState(rflow_bind_state_t state, const char* /*detail*/, void* /*ud*/) {
     std::cout << "[demo] bind state=" << state << std::endl;
 }
 void OnPullRequest(rflow_stream_index_t idx, void* /*ud*/) {
@@ -79,11 +80,13 @@ int main(int argc, char** argv) {
     int width  = 640;
     int height = 360;
     int fps    = 30;
+    rflow_stream_index_t stream_idx = 0;
     if (argc >= 2) signaling_url = argv[1];
     if (argc >= 3) device_id     = argv[2];
     if (argc >= 4) width  = std::atoi(argv[3]);
     if (argc >= 5) height = std::atoi(argv[4]);
     if (argc >= 6) fps    = std::atoi(argv[5]);
+    if (argc >= 7) stream_idx = static_cast<rflow_stream_index_t>(std::atoi(argv[6]));
 
     std::signal(SIGINT, OnSig);
     std::signal(SIGTERM, OnSig);
@@ -138,7 +141,6 @@ int main(int argc, char** argv) {
     librflow_svc_stream_cb_set_on_state(scb, OnStreamState);
 
     librflow_svc_stream_handle_t stream = nullptr;
-    const int32_t stream_idx = 1;
     if (librflow_svc_create_stream(stream_idx, sp, scb, &stream) != RFLOW_OK) {
         std::cerr << "svc_create_stream failed\n";
         librflow_svc_stream_param_destroy(sp);
@@ -159,6 +161,7 @@ int main(int argc, char** argv) {
     }
 
     // ---------- push loop ---------- //
+    std::cout << "[demo] stream_idx=" << stream_idx << " room=" << device_id << ":" << stream_idx << std::endl;
     std::cout << "[demo] pushing I420 " << width << "x" << height << "@" << fps
               << " fps to " << signaling_url << ". Ctrl+C to stop." << std::endl;
 

@@ -174,7 +174,9 @@ bool SignalingClient::SendLine(std::string_view line) {
 }
 
 std::string SignalingClient::ResolveTargetPeer(std::string_view to_peer_id) const {
-    if (!to_peer_id.empty()) return to_peer_id;
+    if (!to_peer_id.empty()) {
+        return std::string(to_peer_id);
+    }
     std::lock_guard<std::mutex> lock(peer_mutex_);
     return last_remote_peer_id_;
 }

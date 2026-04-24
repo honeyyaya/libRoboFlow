@@ -110,6 +110,9 @@ typedef int32_t rflow_err_t;
 #define RFLOW_LIMIT_MAX_DEVICE_ID_LEN         128
 #define RFLOW_LIMIT_MAX_SERVICE_ID_LEN        64
 
+/** 未设置 device_id 时用于信令 stream_id（device_id:stream_index）的默认前缀 */
+#define RFLOW_DEFAULT_DEVICE_ID               "demo_device"
+
 /******************************************************************************
  *                                 枚举
  ******************************************************************************/

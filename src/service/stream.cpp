@@ -11,6 +11,7 @@
 **/
 
 #include "rflow/Service/librflow_service_api.h"
+#include "rflow/librflow_common.h"
 
 #include "internal/handles.h"
 #include "internal/state.h"
@@ -101,11 +102,12 @@ rflow_err_t librflow_svc_create_stream(rflow_stream_index_t          stream_idx,
         const std::string signal_url = s.global_config.has_signal
                                            ? s.global_config.signal.url
                                            : std::string();
-        const std::string device_id  = s.connect_info.device_id;
+        std::string device_id = s.connect_info.device_id;
+        if (device_id.empty()) {
+            device_id = RFLOW_DEFAULT_DEVICE_ID;
+        }
         // stream_id 字符串：使用 device_id + ":" + stream_idx 作为唯一房间标识。
-        const std::string stream_id_str = device_id.empty()
-                                              ? ("stream_" + std::to_string(stream_idx))
-                                              : (device_id + ":" + std::to_string(stream_idx));
+        const std::string stream_id_str = device_id + ":" + std::to_string(stream_idx);
 
         rflow::service::impl::PublisherPullCallbacks cbs{};
         if (s.has_connect_cb) {

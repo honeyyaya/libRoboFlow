@@ -3,11 +3,15 @@
 #include "signaling_io_manager.h"
 
 #include "common/internal/logger.h"
+#include "rflow/librflow_common.h"
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <utility>
+
+#include <netdb.h>
 
 // NOTE: POSIX socket implementation for Android/Linux.
 // TODO: Move transport under a cross-platform core/net layer before enabling Windows.
@@ -38,6 +42,68 @@ void CloseFd(int fd) {
     ::close(fd);
 }
 
+/// 与 BuildRegisterLine / 推流端 stream_id 规则对齐：空 device_id、异常 stream_index 会导致进默认房 livestream。
+void NormalizeSubscriberRegistration(rflow::signal::RegisterRequest& reg) {
+    if (reg.role != rflow::signal::PeerRole::kSubscriber) {
+        return;
+    }
+    if (reg.device_id.empty()) {
+        reg.device_id = RFLOW_DEFAULT_DEVICE_ID;
+    }
+    if (reg.stream_index < 0) {
+        reg.stream_index = 0;
+    }
+}
+
+/** 建立 TCP 连接；先尝试 IPv4 字面量，否则 getaddrinfo（域名 / IPv6 字面量等）。成功返回 fd，失败返回 -1。 */
+int DialSignalingTcp(const std::string& host, uint16_t port, std::string* err) {
+    sockaddr_in addr4{};
+    if (::inet_pton(AF_INET, host.c_str(), &addr4.sin_addr) == 1) {
+        addr4.sin_family = AF_INET;
+        addr4.sin_port = htons(port);
+        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) {
+            if (err) *err = std::string("socket: ") + std::strerror(errno);
+            return -1;
+        }
+        if (::connect(fd, reinterpret_cast<sockaddr*>(&addr4), sizeof(addr4)) == 0) {
+            return fd;
+        }
+        if (err) *err = std::string("connect: ") + std::strerror(errno);
+        CloseFd(fd);
+        return -1;
+    }
+
+    addrinfo hints{};
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_family   = AF_UNSPEC;
+    const std::string port_str = std::to_string(static_cast<int>(port));
+    addrinfo* res = nullptr;
+    const int gai = ::getaddrinfo(host.c_str(), port_str.c_str(), &hints, &res);
+    if (gai != 0) {
+        if (err) *err = std::string("getaddrinfo: ") + ::gai_strerror(gai);
+        return -1;
+    }
+    int out_fd = -1;
+    for (addrinfo* p = res; p != nullptr; p = p->ai_next) {
+        const int fd = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (fd < 0) {
+            continue;
+        }
+        if (::connect(fd, p->ai_addr, static_cast<socklen_t>(p->ai_addrlen)) == 0) {
+            out_fd = fd;
+            break;
+        }
+        CloseFd(fd);
+    }
+    ::freeaddrinfo(res);
+    if (out_fd < 0 && err) {
+        *err = "connect: all addresses failed for host " + host;
+    }
+    return out_fd;
+}
+
 }  // namespace
 
 SignalingClient::SignalingClient(SessionConfig config)
@@ -60,39 +126,35 @@ bool SignalingClient::Connect() {
     }
 
     RFLOW_LOGI("[Signaling] connect %s:%u", host_.c_str(), port_);
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    std::string dial_err;
+    const int fd = DialSignalingTcp(host_, port_, &dial_err);
     if (fd < 0) {
-        ReportError(std::string("socket: ") + std::strerror(errno));
-        return false;
-    }
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port_);
-    if (::inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) <= 0) {
-        ReportError(std::string("invalid host: ") + host_);
-        ::close(fd);
-        return false;
-    }
-
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        ReportError(std::string("connect: ") + std::strerror(errno));
-        ::close(fd);
+        ReportError(dial_err.empty() ? std::string("connect failed") : dial_err);
         return false;
     }
 
     sock_fd_.store(fd, std::memory_order_release);
-    if (!SendLine(BuildRegisterLine(config_.registration))) {
+
+    rflow::signal::RegisterRequest reg = config_.registration;
+    NormalizeSubscriberRegistration(reg);
+    const std::string reg_line = BuildRegisterLine(reg);
+    if (const char* v = std::getenv("RFLOW_VERBOSE_SIGNAL")) {
+        if (v[0] == '1' || v[0] == 'y' || v[0] == 'Y') {
+            RFLOW_LOGI("[Signaling] register_json=%s", reg_line.c_str());
+        }
+    }
+    if (!SendLine(reg_line)) {
         ReportError("send register failed");
         const int bad_fd = sock_fd_.exchange(-1, std::memory_order_acq_rel);
         CloseFd(bad_fd);
         return false;
     }
 
-    RFLOW_LOGI("[Signaling] registered role=%s device_id=%s stream_index=%d",
-               rflow::signal::ToString(config_.registration.role),
-               config_.registration.device_id.c_str(),
-               config_.registration.stream_index);
+    RFLOW_LOGI("[Signaling] registered role=%s device_id=%s stream_index=%d "
+               "(信令房间须与推流 stream_id 一致；疑问题时设 RFLOW_VERBOSE_SIGNAL=1 看 register_json)",
+               rflow::signal::ToString(reg.role),
+               reg.device_id.c_str(),
+               static_cast<int>(reg.stream_index));
     return true;
 }
 

@@ -53,6 +53,7 @@ target_include_directories(rflow_client
         ${CMAKE_SOURCE_DIR}/include
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/impl
 )
 
@@ -79,4 +80,8 @@ if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)
 endif()
 
 target_link_libraries(rflow_client PRIVATE rflow_warnings)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)
+    # libwebrtc headers (e.g. PortInterface::Network) need this on GCC 9.
+    target_compile_options(rflow_client PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
+endif()
 # TODO: 后续通过 version script (GNU) 精准导出公开符号

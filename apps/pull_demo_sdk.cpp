@@ -7,7 +7,7 @@
  * 默认：
  *   signaling_url = 127.0.0.1:8765
  *   device_id     = demo_device
- *   stream_index  = 1
+ *   stream_index  = 0  （须与推流端 librflow_svc_create_stream 的 idx 一致）
  *
  * 依赖：
  *   - 对端 (push_demo_sdk 或兼容 service) 正在以相同 device_id+stream_index 推流；
@@ -56,7 +56,7 @@ void OnVideoFrame(librflow_stream_handle_t /*h*/, librflow_video_frame_t frame, 
 int main(int argc, char** argv) {
     std::string signaling_url = "127.0.0.1:8765";
     std::string device_id     = "demo_device";
-    int32_t stream_index      = 1;
+    int32_t stream_index      = 0;
     if (argc >= 2) signaling_url = argv[1];
     if (argc >= 3) device_id     = argv[2];
     if (argc >= 4) stream_index  = std::atoi(argv[3]);

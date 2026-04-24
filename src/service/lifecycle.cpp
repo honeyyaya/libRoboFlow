@@ -5,6 +5,7 @@
 **/
 
 #include "rflow/Service/librflow_service_api.h"
+#include "rflow/librflow_common.h"
 
 #include "internal/handles.h"
 #include "internal/state.h"
@@ -98,6 +99,9 @@ rflow_err_t librflow_svc_connect(librflow_svc_connect_info_t info,
     }
 
     s.connect_info   = *info;
+    if (s.connect_info.device_id.empty()) {
+        s.connect_info.device_id = RFLOW_DEFAULT_DEVICE_ID;
+    }
     s.connect_cb     = *cb;
     s.has_connect_cb = true;
     s.lifecycle      = rflow::service::LifecycleState::kConnecting;
