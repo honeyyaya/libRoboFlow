@@ -114,6 +114,7 @@ target_include_directories(rflow_core
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -135,6 +136,10 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
             ${CMAKE_CURRENT_SOURCE_DIR}/rtc
     )
     target_link_libraries(rflow_rtc_webrtc PRIVATE rflow_warnings)
+    # libwebrtc headers: PortInterface::Network() vs class Network trips GCC [-fpermissive].
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(rflow_rtc_webrtc PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
+    endif()
     if(ANDROID)
         target_link_libraries(rflow_rtc_webrtc PRIVATE mediandk android log OpenSLES EGL GLESv2)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")

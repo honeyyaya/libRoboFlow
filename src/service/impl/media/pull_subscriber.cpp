@@ -418,13 +418,13 @@ public:
         ++stats_.frames_sink_total;
         stats_.last_frame_us = now_us;
         stats_.last_trace_id = trace_id;
-        if (stats_.first_frame_us <= 0) {
-            stats_.first_frame_us = now_us;
+        if (stats_.t_first_frame_us <= 0) {
+            stats_.t_first_frame_us = now_us;
             std::ostringstream oss;
             oss << "frames=" << stats_.frames_sink_total << " trace_id=" << static_cast<unsigned>(trace_id);
-            if (stats_.t_connected_us > 0 && stats_.first_frame_us >= stats_.t_connected_us) {
+            if (stats_.t_connected_us > 0 && stats_.t_first_frame_us >= stats_.t_connected_us) {
                 oss << " connected_to_first_frame_ms="
-                    << (stats_.first_frame_us - stats_.t_connected_us) / 1000.0;
+                    << (stats_.t_first_frame_us - stats_.t_connected_us) / 1000.0;
             }
             TracePathStat("RX_FIRST_FRAME", oss.str());
         } else if (stats_.frames_sink_total % 120 == 0) {

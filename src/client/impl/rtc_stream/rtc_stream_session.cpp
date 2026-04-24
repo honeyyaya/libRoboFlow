@@ -4,6 +4,7 @@
 #include "signaling/signaling_client.h"
 
 #include "common/internal/logger.h"
+#include "rflow/librflow_common.h"
 
 #include <algorithm>
 #include <memory>
@@ -230,7 +231,13 @@ bool RtcStreamSession::Start() {
         return false;
     }
 
-    RFLOW_LOGI("[pull idx=%d] signaling started, waiting for offer...", index_);
+    {
+        const std::string dev =
+            device_id_.empty() ? std::string(RFLOW_DEFAULT_DEVICE_ID) : device_id_;
+        const std::string room = dev + ":" + std::to_string(index_);
+        RFLOW_LOGI("[pull idx=%d] signaling room=%s (须与推流 stream_id 一致), waiting for offer...",
+                   index_, room.c_str());
+    }
     return true;
 }
 

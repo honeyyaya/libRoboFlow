@@ -1,5 +1,7 @@
 #include "signal/protocol.h"
 
+#include "rflow/librflow_common.h"
+
 #include <cstdlib>
 #include <sstream>
 #include <utility>
@@ -199,21 +201,32 @@ bool ParseMessage(std::string_view line, Message* out) {
 }
 
 std::string BuildRegisterLine(const RegisterRequest& req) {
+    // 与 service/stream.cpp 中 stream_id 规则一致；否则 subscriber 缺省 stream_id 时
+    // 信令服务器会落到 "livestream"，与 publisher 的 "device_id:idx" 不一致，永远收不到 offer。
+    RegisterRequest r = req;
+    if (r.stream_id.empty() && r.stream_index >= 0) {
+        std::string dev = r.device_id;
+        if (dev.empty()) {
+            dev = RFLOW_DEFAULT_DEVICE_ID;
+        }
+        r.stream_id = dev + ":" + std::to_string(r.stream_index);
+    }
+
     std::ostringstream oss;
     bool first_field = true;
     oss << '{';
     AppendJsonStringField(oss, "type", "register", first_field);
-    if (req.role != PeerRole::kUnknown) {
-        AppendJsonStringField(oss, "role", ToString(req.role), first_field);
+    if (r.role != PeerRole::kUnknown) {
+        AppendJsonStringField(oss, "role", ToString(r.role), first_field);
     }
-    if (!req.stream_id.empty()) {
-        AppendJsonStringField(oss, "stream_id", req.stream_id, first_field);
+    if (!r.stream_id.empty()) {
+        AppendJsonStringField(oss, "stream_id", r.stream_id, first_field);
     }
-    if (!req.device_id.empty()) {
-        AppendJsonStringField(oss, "device_id", req.device_id, first_field);
+    if (!r.device_id.empty()) {
+        AppendJsonStringField(oss, "device_id", r.device_id, first_field);
     }
-    if (req.stream_index >= 0) {
-        AppendJsonIntField(oss, "stream_index", req.stream_index, first_field);
+    if (r.stream_index >= 0) {
+        AppendJsonIntField(oss, "stream_index", r.stream_index, first_field);
     }
     oss << '}';
     return oss.str();

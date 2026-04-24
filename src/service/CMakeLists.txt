@@ -52,6 +52,7 @@ target_include_directories(rflow_svc
         ${CMAKE_SOURCE_DIR}/include
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/impl
 )
 
@@ -76,9 +77,19 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
         target_compile_definitions(rflow_svc PRIVATE WEBRTC_LINUX=1)
         find_package(Threads REQUIRED)
         target_link_libraries(rflow_svc PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(RFLOW_LINUX_GIO IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+            if(TARGET PkgConfig::RFLOW_LINUX_GIO)
+                target_link_libraries(rflow_svc PRIVATE PkgConfig::RFLOW_LINUX_GIO)
+            endif()
+        endif()
     endif()
     if(RFLOW_ENABLE_ROCKCHIP_MPP)
         target_compile_definitions(rflow_svc PRIVATE WEBRTC_DEMO_HAVE_ROCKCHIP_MPP=1)
     endif()
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
+    target_compile_options(rflow_svc PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 endif()
 # TODO: 后续通过 version script (GNU) 精准导出公开符号

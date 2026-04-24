@@ -4,6 +4,7 @@
 **/
 
 #include "rflow/Client/librflow_client_api.h"
+#include "rflow/librflow_common.h"
 
 #include "internal/handles.h"
 #include "internal/state.h"
@@ -93,7 +94,7 @@ rflow_err_t librflow_connect(librflow_connect_info_t info,
     auto& s = rflow::client::state();
 
     std::string signal_url;
-    std::string device_id = info->device_id;
+    std::string device_id;
     librflow_connect_cb_s cb_copy{};
 
     {
@@ -112,6 +113,11 @@ rflow_err_t librflow_connect(librflow_connect_info_t info,
         s.connect_cb     = *cb;
         s.has_connect_cb = true;
         s.lifecycle      = rflow::client::LifecycleState::kConnecting;
+
+        if (s.connect_info.device_id.empty()) {
+            s.connect_info.device_id = RFLOW_DEFAULT_DEVICE_ID;
+        }
+        device_id = s.connect_info.device_id;
 
         if (s.global_config.magic == rflow::kMagicGlobalConfig && s.global_config.has_signal) {
             signal_url = s.global_config.signal.url;

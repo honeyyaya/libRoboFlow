@@ -12,10 +12,6 @@
 namespace rflow::client::impl {
 
 namespace {
-
-// 当 signal_config 未配置时的兜底地址；保留旧 demo 值便于本地调试。
-constexpr const char* kDefaultSignalingUrl = "192.168.3.20:8765";
-
 }  // namespace
 
 RtcStreamManager& RtcStreamManager::Instance() {
@@ -30,8 +26,7 @@ rflow_err_t RtcStreamManager::Init(std::string signal_url, std::string device_id
         return RFLOW_ERR_STATE;
     }
 
-    signaling_url_ = signal_url.empty() ? std::string(kDefaultSignalingUrl)
-                                        : std::move(signal_url);
+    signaling_url_ = std::move(signal_url);
     device_id_     = std::move(device_id);
     inited_        = true;
     RFLOW_LOGI("[pull_mgr] init ok, signaling=%s device_id=%s",
