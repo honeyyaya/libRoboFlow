@@ -1,6 +1,6 @@
-#include "android_hw_video_decoder_factory.h"
+#include "core/rtc/hw/android/video_decoder_factory.h"
 
-#include "android_mediacodec_video_decoder.h"
+#include "core/rtc/hw/android/mediacodec_video_decoder.h"
 
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "media/base/media_constants.h"

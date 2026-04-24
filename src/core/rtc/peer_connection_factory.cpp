@@ -15,7 +15,7 @@
 #include "rtc_base/thread.h"
 
 #if defined(WEBRTC_ANDROID)
-#  include "decoder/android/android_hw_video_decoder_factory.h"
+#  include "core/rtc/hw/android/video_decoder_factory.h"
 #endif
 
 namespace rflow::rtc {
