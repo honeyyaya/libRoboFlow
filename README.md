@@ -62,6 +62,43 @@ cmake --build build -j
 | `RFLOW_BUILD_SERVICE` | ON  | 生成 `librflow_svc` |
 | `RFLOW_BUILD_SHARED`  | ON  | `SHARED=.so` / `OFF=.a` |
 | `RFLOW_ENABLE_WERROR` | OFF | `-Werror` |
+| `RFLOW_CLIENT_ENABLE_WEBRTC_IMPL`  | OFF | 将 WebRTC 拉流实现链入 `librflow_client`（需 `dependences/lib/<plat>/<arch>/libwebrtc.a`） |
+| `RFLOW_SERVICE_ENABLE_WEBRTC_IMPL` | OFF | 将 WebRTC 推流实现链入 `librflow_svc`（同上）；开启后 `librflow_svc_push_video_frame` 才真正工作 |
+| `RFLOW_ENABLE_ROCKCHIP_MPP`        | OFF | Service 侧启用 Rockchip MPP 硬件编解码 |
+
+### 打开完整推拉流（示例：Linux arm64）
+
+```bash
+cmake -S . -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DRFLOW_BUILD_CLIENT=ON \
+    -DRFLOW_BUILD_SERVICE=ON \
+    -DRFLOW_CLIENT_ENABLE_WEBRTC_IMPL=ON \
+    -DRFLOW_SERVICE_ENABLE_WEBRTC_IMPL=ON
+cmake --build build -j
+
+# 产物：
+#   build/src/client/librflow_client.so
+#   build/src/service/librflow_svc.so
+#   build/apps/signaling_server
+#   build/apps/push_demo_sdk      (基于 C ABI 的推流 demo)
+#   build/apps/pull_demo_sdk      (基于 C ABI 的拉流 demo)
+```
+
+## SDK 端到端联调（push_demo_sdk + pull_demo_sdk）
+
+```bash
+# 1. 启动信令服务
+./build/apps/signaling_server --host 0.0.0.0 --port 8765 &
+
+# 2. Service 端：推送合成 I420 帧（device_id=dev1, stream_idx=1, 640x360@30）
+./build/apps/push_demo_sdk 127.0.0.1:8765 dev1 640 360 30 &
+
+# 3. Client 端：订阅 dev1 的 stream_idx=1
+./build/apps/pull_demo_sdk 127.0.0.1:8765 dev1 1
+```
+
+业务要把自己的相机/编码器帧喂进 SDK 时，参考 `apps/push_demo_sdk.cpp` 中的 `librflow_svc_push_frame_*` 调用即可（当前支持 `RFLOW_CODEC_I420` / `RFLOW_CODEC_NV12`；其它像素格式先在业务侧转成 I420）。
 
 ## 角色分工
 
@@ -108,9 +145,18 @@ svc_set_global_config → svc_init → svc_connect →
 ## 实现现状
 
 - ABI 层全部落地：`*_create` / `*_destroy` / `*_set_*` / `*_get_*` 与所有对外函数符号齐备。
-- 核心业务逻辑（WebRTC / 编码器 / 信令 IO）以 stub 占位，标记 `TODO`，后续按 Issue 接入 `libwebrtc` 等依赖：
-  - `src/core/rtc/rtc_stub.cpp`
-  - `src/core/signal/signal_stub.cpp`
-  - `src/client/lifecycle.cpp`（connect 处 TODO）
-  - `src/service/stream.cpp`（push_video_frame 处 TODO）
+- **Service 推流（`librflow_svc_push_video_frame`）已打通**（需 `RFLOW_SERVICE_ENABLE_WEBRTC_IMPL=ON`）：
+  - `ExternalPushVideoTrackSource`（`src/service/impl/media/external_push_video_track_source.h/.cpp`）：
+    `AdaptedVideoTrackSource` 子类，`PushI420/PushNv12` 把业务帧广播给 WebRTC 编码链路。
+  - `PushStreamer::use_external_video_source`：跳过 V4L2 直采，改用外部源。
+  - `Publisher`（`src/service/impl/publisher.{h,cpp}`）：桥接 C ABI ↔ `PushStreamer` + `SignalingClient`，
+    负责把 `subscriber_join`→`on_pull_request`、`CreateOfferForPeer` 主线程化、SDP/ICE 双向路由。
+  - `librflow_svc_create_stream` / `start_stream` / `push_video_frame` / `stop_stream` / `destroy_stream`
+    全部走 `Publisher`，`librflow_svc_connect_cb_set_on_pull_request/release` 被实际触发。
+- **Client 拉流**（`librflow_open_stream` + `on_video_frame`）在 `RFLOW_CLIENT_ENABLE_WEBRTC_IMPL=ON` 时
+  由 `src/client/impl/rtc_stream/*` 提供。
+- 仍为 stub 的部分（不影响端到端推拉流）：
+  - `librflow_svc_connect` 不做云端鉴权/license 校验，直接 `CONNECTED` + `BIND_BOUND`（`src/service/lifecycle.cpp`）。
+  - `librflow_stream_get_stats` / `librflow_svc_stream_get_stats` 返回 `NOT_SUPPORT`。
+  - Client/Service 两侧信令客户端尚未合并（`src/client/impl/signaling/` vs `src/service/impl/signaling/`）。
 - 线程池为内置最简实现，暂不依赖第三方 executor。

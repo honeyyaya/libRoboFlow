@@ -2,6 +2,7 @@
 #define PUSH_STREAMER_H
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -19,6 +20,10 @@ struct PushStreamerCommonConfig {
     bool test_capture_only{false};
     bool test_encode_mode{false};
     bool signaling_subscriber_offer_only{false};
+    /// 为 true 时跳过 V4L2 采集，改由业务侧主动 PushExternalI420/Nv12 投帧。
+    /// 该模式下：video_device_index / video_device_path / capture_gate_* / mjpeg 相关
+    /// 配置全部失效；视频宽高以实际 PushExternal* 的帧为准（首帧作为 SDP 参考）。
+    bool use_external_video_source{false};
     std::string stun_server{"stun:stun.l.google.com:19302"};
     std::string turn_server;
     std::string turn_username;
@@ -115,6 +120,20 @@ public:
     void SetOnIceCandidateCallback(OnIceCandidateCallback cb);
     void SetOnConnectionStateCallback(OnConnectionStateCallback cb);
     void SetOnFrameCallback(OnFrameCallback cb);
+
+    /// 外部帧 push（use_external_video_source=true 且 Start() 成功后可调用）
+    /// 线程安全，可在任意业务线程调用；timestamp_us 为媒体时间戳，0 表示 SDK 内部按单调钟生成。
+    bool PushExternalI420(const uint8_t* data_y, int stride_y,
+                          const uint8_t* data_u, int stride_u,
+                          const uint8_t* data_v, int stride_v,
+                          int width, int height, int64_t timestamp_us);
+    bool PushExternalI420Contiguous(const uint8_t* buf, uint32_t size,
+                                    int width, int height, int64_t timestamp_us);
+    bool PushExternalNv12(const uint8_t* data_y, int stride_y,
+                          const uint8_t* data_uv, int stride_uv,
+                          int width, int height, int64_t timestamp_us);
+    bool PushExternalNv12Contiguous(const uint8_t* buf, uint32_t size,
+                                    int width, int height, int64_t timestamp_us);
 
     /// 获取采集帧数（需先 SetOnFrameCallback 或 --test-capture）
     unsigned int GetFrameCount() const;
