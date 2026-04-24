@@ -8,7 +8,7 @@ class VideoEncoderFactory;
 class VideoDecoderFactory;
 }
 
-namespace webrtc_demo::hw {
+namespace rflow::rtc::hw {
 
 enum class VideoCodecBackend {
   kBuiltin = 0,
@@ -26,7 +26,7 @@ std::unique_ptr<webrtc::VideoEncoderFactory> CreatePreferredVideoEncoderFactory(
 std::unique_ptr<webrtc::VideoDecoderFactory> CreatePreferredVideoDecoderFactory(
     const VideoBackendPreferences& prefs);
 
-}  // namespace webrtc_demo::hw
+}  // namespace rflow::rtc::hw
 
 #endif  // __RFLOW_CORE_RTC_HW_BACKEND_REGISTRY_H__
 

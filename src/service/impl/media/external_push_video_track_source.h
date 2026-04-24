@@ -23,7 +23,7 @@
 
 #include "media/base/adapted_video_track_source.h"
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 class ExternalPushVideoTrackSource : public webrtc::AdaptedVideoTrackSource {
 public:
@@ -79,6 +79,6 @@ private:
     mutable std::atomic<int64_t> last_ts_us_{0};
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
 
 #endif  // RFLOW_SERVICE_IMPL_MEDIA_EXTERNAL_PUSH_VIDEO_TRACK_SOURCE_H_

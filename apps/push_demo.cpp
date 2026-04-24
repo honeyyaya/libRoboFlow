@@ -15,7 +15,7 @@
 #include <thread>
 #include <vector>
 
-using namespace webrtc_demo;
+using namespace rflow::service::impl;
 
 static PushStreamer* g_streamer = nullptr;
 static SignalingClient* g_signaling = nullptr;
@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
     std::string camera_arg = (arg_idx < argc) ? argv[arg_idx++] : "";
 
     if (config_path.empty()) config_path = FindConfigPath(argv[0], "");
-    webrtc_demo::ConfigLoader cfg;
+    ConfigLoader cfg;
     bool config_loaded = false;
     if (!config_path.empty()) {
         if (cfg.Load(config_path)) {

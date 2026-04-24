@@ -10,7 +10,7 @@
 #include "api/video/video_frame.h"
 #include "libyuv/convert.h"
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 namespace {
 
@@ -141,4 +141,4 @@ bool ExternalPushVideoTrackSource::PushNv12Contiguous(const uint8_t* buf, uint32
                     width, height, timestamp_us);
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 /// USB 摄像头信息
 struct UsbCameraInfo {
@@ -27,6 +27,6 @@ std::string GetDeviceCardName(const std::string& device_path);
 /// 成功返回 >=0，否则 -1
 int GetWebRtcCaptureDeviceIndexForPath(const std::string& device_path);
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
 
 #endif  // CAMERA_UTILS_H

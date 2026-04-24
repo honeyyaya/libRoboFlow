@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 class SignalingClient;
 
@@ -54,6 +54,6 @@ class SignalingIoManager {
     std::unordered_map<int, std::shared_ptr<SignalingClientSessionSlot>> sessions_;
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
 
 #endif  // WEBRTC_DEMO_SIGNALING_IO_MANAGER_H_

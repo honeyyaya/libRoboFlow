@@ -17,7 +17,7 @@
 #include "system_wrappers/include/field_trial.h"
 #include "core/rtc/hw/backend_registry.h"
 
-namespace webrtc_demo {
+namespace rflow::rtc {
 
 namespace {
   std::once_flag g_field_trials_once;
@@ -109,22 +109,22 @@ void ConfigurePeerConnectionFactoryDependencies(
 #pragma GCC diagnostic pop
 #endif
   if (deps.video_encoder_factory == nullptr) {
-    webrtc_demo::hw::VideoBackendPreferences prefs;
+    rflow::rtc::hw::VideoBackendPreferences prefs;
     if (media_options) {
-      prefs.encoder_backend = media_options->encoder_backend == webrtc_demo::VideoCodecBackendPreference::kRockchipMpp
-                                  ? webrtc_demo::hw::VideoCodecBackend::kRockchipMpp
-                                  : webrtc_demo::hw::VideoCodecBackend::kBuiltin;
+      prefs.encoder_backend = media_options->encoder_backend == VideoCodecBackendPreference::kRockchipMpp
+                                  ? rflow::rtc::hw::VideoCodecBackend::kRockchipMpp
+                                  : rflow::rtc::hw::VideoCodecBackend::kBuiltin;
     }
-    deps.video_encoder_factory = webrtc_demo::hw::CreatePreferredVideoEncoderFactory(prefs);
+    deps.video_encoder_factory = rflow::rtc::hw::CreatePreferredVideoEncoderFactory(prefs);
   }
   if (deps.video_decoder_factory == nullptr) {
-    webrtc_demo::hw::VideoBackendPreferences prefs;
+    rflow::rtc::hw::VideoBackendPreferences prefs;
     if (media_options) {
-      prefs.decoder_backend = media_options->decoder_backend == webrtc_demo::VideoCodecBackendPreference::kRockchipMpp
-                                  ? webrtc_demo::hw::VideoCodecBackend::kRockchipMpp
-                                  : webrtc_demo::hw::VideoCodecBackend::kBuiltin;
+      prefs.decoder_backend = media_options->decoder_backend == VideoCodecBackendPreference::kRockchipMpp
+                                  ? rflow::rtc::hw::VideoCodecBackend::kRockchipMpp
+                                  : rflow::rtc::hw::VideoCodecBackend::kBuiltin;
     }
-    deps.video_decoder_factory = webrtc_demo::hw::CreatePreferredVideoDecoderFactory(prefs);
+    deps.video_decoder_factory = rflow::rtc::hw::CreatePreferredVideoDecoderFactory(prefs);
   }
   webrtc::EnableMedia(deps);
 }
@@ -142,4 +142,4 @@ void EnsureDedicatedPeerConnectionSignalingThread(
   *owned_signaling_thread = std::move(th);
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::rtc

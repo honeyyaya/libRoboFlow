@@ -1,6 +1,6 @@
-// Rockchip MPP H.264 encoder for WebRTC (RK3588 �?BSP 已带 librockchip_mpp).
+// Rockchip MPP H.264 encoder for WebRTC (RK3588 ??BSP ?? librockchip_mpp).
 
-#define MODULE_TAG "webrtc_demo_mpp"
+#define MODULE_TAG "rflow_mpp_h264_enc"
 
 #include "core/rtc/hw/rockchip_mpp/h264_encoder.h"
 
@@ -45,7 +45,7 @@
 #include "rk_venc_cmd.h"
 #include "rk_venc_rc.h"
 
-namespace webrtc_demo {
+namespace rflow::rtc::hw::rockchip_mpp {
 
 namespace {
 
@@ -70,7 +70,7 @@ unsigned MediaTimingTraceEveryN() {
     return every_n;
 }
 
-// 本地墙钟时间，毫秒精度，形如 2026-04-01 14:30:05.123
+// ????????????????????????????? 2026-04-01 14:30:05.123
 std::string CurrentLocalDateTimeYmdHmsMs() {
     using std::chrono::duration_cast;
     using std::chrono::milliseconds;
@@ -101,9 +101,9 @@ std::string CurrentLocalDateTimeYmdHmsMs() {
 
 #define MPP_ALIGN(x, a) (((x) + ((a)-1)) & ~((a)-1))
 
-// 与官�?mpi_enc_test �?H.264 �?mdinfo_size 一致（�?HEVC 分支）：
+// ???????mpi_enc_test ??H.264 ???mdinfo_size ?????????HEVC ??????????
 // (ALIGN(hor_stride,64)>>6) * (ALIGN(ver_stride,16)>>4) * 16
-// 旧版 RK3588 估算 (64x64 MB)*32 �?MPP 期望不一致时会导�?encode_put_frame 失败�?static size_t EncMdInfoBytesH264MpiEncTest(int hor_stride, int ver_stride) {
+// ?????? RK3588 ??? (64x64 MB)*32 ??MPP ?????????????????????encode_put_frame ?????static size_t EncMdInfoBytesH264MpiEncTest(int hor_stride, int ver_stride) {
     return static_cast<size_t>(MPP_ALIGN(hor_stride, 64) >> 6) *
            static_cast<size_t>(MPP_ALIGN(ver_stride, 16) >> 4) * 16;
 }
@@ -136,7 +136,7 @@ static bool AnnexBHasIdrNalu(const uint8_t* p, size_t len) {
     return false;
 }
 
-// MPP stream_type=1 时为 4 字节大端长度 + NAL 负载；WebRTC RTP 分包需�?Annex B 起始码�?// 写入 *out 并返回是否解析成功（复用调用�?vector，避免每帧堆分配）�?static bool FillAvcLengthPrefixedToAnnexB(const uint8_t* p, size_t len, std::vector<uint8_t>* out) {
+// MPP stream_type=1 ???? 4 ??????????? + NAL ?????WebRTC RTP ???????????Annex B ???????// ?????? *out ??????????????????????????????????vector?????????????????????static bool FillAvcLengthPrefixedToAnnexB(const uint8_t* p, size_t len, std::vector<uint8_t>* out) {
     if (!out || len < 4) {
         return false;
     }
@@ -194,7 +194,7 @@ static bool FillAvcLengthPrefixed16ToAnnexB(const uint8_t* p, size_t len, std::v
     return !out->empty();
 }
 
-// �?NAL 单元裸流（无长度、无起始码）
+// ??NAL ????????????????????????????
 static bool FillRawSingleNalToAnnexB(const uint8_t* p, size_t len, std::vector<uint8_t>* out) {
     if (!out || len < 1 || (p[0] & 0x80) != 0) {
         return false;
@@ -209,7 +209,7 @@ static bool FillRawSingleNalToAnnexB(const uint8_t* p, size_t len, std::vector<u
     return true;
 }
 
-/// 半平�?NV12/NV21 源（共用 chroma stride）拷�?MPP 帧缓冲�?static void CopySemiPlanarToMppBuffer(const uint8_t* src_y,
+/// ?????NV12/NV21 ????????? chroma stride????????MPP ?????????static void CopySemiPlanarToMppBuffer(const uint8_t* src_y,
                                       const uint8_t* src_uv,
                                       int src_stride_y,
                                       int src_stride_uv,
@@ -243,7 +243,7 @@ static void CopyNv12ToMppBuffer(const webrtc::NV12BufferInterface* nv12,
 
 static int H264ProfileIdForMpp(const webrtc::VideoCodec* c) {
     (void)c;
-    // SDP �?profile 已协商；编码器侧�?Main 作为稳妥默认（与 streams.conf H264_PROFILE 常见值一致）�?    return 77;  // MPP H.264 main profile id
+    // SDP ??profile ?????????????????Main ???????????? streams.conf H264_PROFILE ???????????????    return 77;  // MPP H.264 main profile id
 }
 
 static int ReadEnvIntInRange(const char* name, int fallback, int min_v, int max_v) {
@@ -262,8 +262,8 @@ static int ReadEnvIntInRange(const char* name, int fallback, int min_v, int max_
     return static_cast<int>(v);
 }
 
-/// MPP JPEG 解码 NV12 输出常见�?64 水平对齐；编码器 prep �?16 对齐时易与解�?stride 不一致，
-/// kNative 直通会退化为每帧 CopySemiPlanarToMppBuffer。默�?64；异�?BSP 可设 WEBRTC_MPP_ENC_HOR_STRIDE_ALIGN=16�?static int MppEncHorStrideAlignPixels() {
+/// MPP JPEG ?? NV12 ??????????64 ???????????? prep ??16 ?????????????stride ????????
+/// kNative ????????????????? CopySemiPlanarToMppBuffer???????64??????BSP ?? WEBRTC_MPP_ENC_HOR_STRIDE_ALIGN=16???static int MppEncHorStrideAlignPixels() {
     const char* e = std::getenv("WEBRTC_MPP_ENC_HOR_STRIDE_ALIGN");
     if (!e || !e[0]) {
         return 64;
@@ -346,7 +346,7 @@ bool RkMppH264Encoder::ApplyRcToCfg() {
 }
 
 int RkMppH264Encoder::MppH264LevelForSize(int width, int height, uint32_t fps) {
-    // H.264 Level�?20p@>30�?080p@>30 需更高 level，否则硬�?码流与规范不匹配�?    if (width * height >= 1920 * 1080) {
+    // H.264 Level??20p@>30???080p@>30 ???????? level????????????????????????????    if (width * height >= 1920 * 1080) {
         return fps > 30u ? 42 : 41;
     }
     if (width * height >= 1280 * 720) {
@@ -407,15 +407,15 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         std::cout << "[Latency] MPP H264 GOP frames=" << gop_ << " fps=" << fps_ << "\n";
     }
     mpp_rc_mode_ = MPP_ENC_RC_MODE_VBR;
-    // 默认打开渐进帧内刷新，降低整�?IDR 峰值突发；可通过环境变量关闭或改策略�?    intra_refresh_mode_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_INTRA_REFRESH_MODE", 1, 0, 3);
+    // ?????????????????????????????????IDR ?????????????????????????????????????????????    intra_refresh_mode_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_INTRA_REFRESH_MODE", 1, 0, 3);
     const int mb_rows = std::max(1, (height_ + 15) / 16);
     const int fps_i = std::max(1, static_cast<int>(fps_));
     const int auto_refresh_arg = std::max(1, (mb_rows + fps_i - 1) / fps_i);
     intra_refresh_arg_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_INTRA_REFRESH_ARG", auto_refresh_arg, 1, 512);
-    // 默认关闭按字节分片；按需通过 WEBRTC_MPP_ENC_SPLIT_BYTES 打开实验�?    split_bytes_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_SPLIT_BYTES", 0, 0, 4096);
+    // ???????????????????????????????????? WEBRTC_MPP_ENC_SPLIT_BYTES ????????????    split_bytes_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_SPLIT_BYTES", 0, 0, 4096);
     split_by_byte_enabled_ = split_bytes_ > 0;
-    // 关键帧请求风暴保护：限制连续 IDR 注入频率，但保留最长等待兜底，避免长期无法快速恢复�?    idr_min_interval_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_MIN_INTERVAL_MS", 800, 0, 5000);
-    // 丢包场景下“快�?I 帧”窗口：当收到关键帧请求且距离上次真�?IDR 已超过该阈值时�?    // 可提前绕�?min_interval（仍�?force_max_wait 的上界兜底保护）�?    idr_loss_quick_trigger_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_LOSS_QUICK_MS", 180, 0, 2000);
+    // ?????????????????????????????? IDR ??????????????????????????????????????????????????????????    idr_min_interval_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_MIN_INTERVAL_MS", 800, 0, 5000);
+    // ???????????????????I ???????????????????????????????????????IDR ?????????????????    // ?????????min_interval?????force_max_wait ??????????????????????    idr_loss_quick_trigger_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_LOSS_QUICK_MS", 180, 0, 2000);
     idr_force_max_wait_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_FORCE_MAX_WAIT_MS", 3000, 200, 15000);
     last_forced_idr_ctrl_us_ = -1;
     last_idr_emit_us_ = -1;
@@ -447,7 +447,7 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         DestroyMpp();
         return WEBRTC_VIDEO_CODEC_ERROR;
     }
-    // �?mpi_enc_test 一致：非分片时每帧一�?get_packet 即结束；若误�?is_eoi 当循环条件会在第二次 get_packet 永久阻塞�?    // 注意：timeout 需�?mpp_init 之后再设置，否则部分平台会忽略�?    RK_S64 output_timeout_ms = 4000;
+    // ??mpi_enc_test ????????????????????????get_packet ??????????????is_eoi ????????????????? get_packet ???????????    // ??????timeout ??????mpp_init ????????????????????????????????    RK_S64 output_timeout_ms = 4000;
     if (const char* ev = std::getenv("WEBRTC_MPP_ENC_OUTPUT_TIMEOUT_MS")) {
         long v = std::strtol(ev, nullptr, 10);
         if (v > 0 && v <= 8000) {
@@ -497,7 +497,7 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     mpp_enc_cfg_set_u32(cfg, "rc:drop_thd", 20);
     mpp_enc_cfg_set_u32(cfg, "rc:drop_gap", 1);
 
-    // 仅写�?cfg，不在此�?MPP_ENC_SET_CFG：避免在 h264 等参数未就绪时提前提交（会导致部�?BSP �?put_frame 失败）�?    FillMppEncRcFields(cfg, target_bps_, min_bps_, max_bps_, fps_);
+    // ????????cfg?????????MPP_ENC_SET_CFG????????? h264 ???????????????????????????????????BSP ??put_frame ???????    FillMppEncRcFields(cfg, target_bps_, min_bps_, max_bps_, fps_);
     if (mpp_rc_mode_ == MPP_ENC_RC_MODE_VBR || mpp_rc_mode_ == MPP_ENC_RC_MODE_AVBR) {
         mpp_enc_cfg_set_s32(cfg, "rc:qp_init", -1);
         mpp_enc_cfg_set_s32(cfg, "rc:qp_max", 51);
@@ -522,7 +522,7 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
             intra_refresh_arg_ = 0;
         }
     }
-    // WebRTC RtpPacketizerH264 依赖 Annex B 起始码解�?NAL；MPP 默认 stream_type=1 为裸 NAL，会导致 0 �?RTP�?    if (mpp_enc_cfg_set_s32(cfg, "h264:stream_type", 0) != MPP_OK) {
+    // WebRTC RtpPacketizerH264 ??? Annex B ????????NAL??MPP ??? stream_type=1 ?? NAL???????? 0 ???RTP???    if (mpp_enc_cfg_set_s32(cfg, "h264:stream_type", 0) != MPP_OK) {
         RTC_LOG(LS_WARNING) << "[RkMppH264] h264:stream_type=0 (Annex B) not applied, RTP may fail";
     }
 
@@ -558,7 +558,7 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         }
     }
 
-    // �?mpi_enc_test 一致：编码 I/O 缓冲�?4 对齐后的 YUV420SP 大小（与 hor/ver �?16 对齐时不同）�?    const size_t enc_io_size = static_cast<size_t>(MPP_ALIGN(hor_stride_, 64)) *
+    // ??mpi_enc_test ?????????? I/O ????????4 ??????? YUV420SP ?????? hor/ver ??16 ?????????????    const size_t enc_io_size = static_cast<size_t>(MPP_ALIGN(hor_stride_, 64)) *
                                static_cast<size_t>(MPP_ALIGN(ver_stride_, 64)) * 3 / 2;
     const size_t nv12_size = enc_io_size;
     const size_t pkt_size = enc_io_size;
@@ -635,9 +635,9 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     }
 
     initialized_ = true;
-    // 每帧单调递增�?VideoFrameTrackingId�?6bit，经 RTP 扩展带到对端）。从 500 起跳，避免与
-    // VideoFrame::kNotSetId==0 混淆；InitEncode 时重置，便于与单次采集日志对齐�?    // 接收�?MPP 解码器把 EncodedImage::VideoFrameTrackingId 写入 VideoFrame::id，[E2E_RX] �?    // trace_id 与之相同；parse_e2e_latency.py �?trace_id 配对。[E2E_TX]/[E2E_RX] �?wall_utc_ms
-    // �?TimeUTCMillis，两�?PC 需 chrony/NTP 同步后差值才表示真实端到端（毫秒）�?    next_video_frame_tracking_id_ = 500;
+    // ??????????????VideoFrameTrackingId??6bit??? RTP ?????????????????? 500 ??????????
+    // VideoFrame::kNotSetId==0 ?????InitEncode ?????????????????????????????????    // ????????MPP ???????? EncodedImage::VideoFrameTrackingId ?????? VideoFrame::id??[E2E_RX] ???    // trace_id ???????????parse_e2e_latency.py ???trace_id ???????[E2E_TX]/[E2E_RX] ???wall_utc_ms
+    // ??TimeUTCMillis?????PC ??? chrony/NTP ??????????????????????????????????    next_video_frame_tracking_id_ = 500;
     RTC_LOG(LS_INFO) << "[RkMppH264] InitEncode ok " << width_ << "x" << height_ << "@" << fps_
                      << "fps stride=" << hor_stride_ << "x" << ver_stride_
                      << " bps=" << target_bps_ << " intra_refresh=" << intra_refresh_mode_ << ":"
@@ -689,7 +689,7 @@ webrtc::VideoEncoder::EncoderInfo RkMppH264Encoder::GetEncoderInfo() const {
     info.has_trusted_rate_controller = false;
     info.is_hardware_accelerated = true;
     info.supports_simulcast = false;
-    // kNative：MPP MJPEG 解码帧直通硬编；NV12/I420 仍为平面路径�?    info.preferred_pixel_formats = {webrtc::VideoFrameBuffer::Type::kNative,
+    // kNative??MPP MJPEG ??????????????NV12/I420 ??????????    info.preferred_pixel_formats = {webrtc::VideoFrameBuffer::Type::kNative,
                                     webrtc::VideoFrameBuffer::Type::kNV12,
                                     webrtc::VideoFrameBuffer::Type::kI420};
     return info;
@@ -861,7 +861,7 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
         const unsigned pn = ++g_pipe_n;
         if (pn % 30u == 0u) {
             const int64_t delta_us = encode_finish_us - frame.timestamp_us();
-            std::cout << "[Pipe MJPEG→H264] frame#" << pn << " v4l2_mjpeg_process_start_to_h264_ready_us=" << delta_us
+            std::cout << "[Pipe MJPEG???H264] frame#" << pn << " v4l2_mjpeg_process_start_to_h264_ready_us=" << delta_us
                       << " (" << (static_cast<double>(delta_us) / 1000.0) << " ms)" << std::endl;
         }
     }
@@ -1127,7 +1127,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             std::cerr << "[RkMppH264Err] dequeue output(task) ret=" << ret << std::endl;
             return recover_or_error("task_dequeue_output", ret);
         }
-        // task 模式默认必须读取 KEY_OUTPUT_PACKET；关闭仅用于定位兼容性问题�?        const bool task_read_packet = task_read_packet_;
+        // task ??????????? KEY_OUTPUT_PACKET?????????????????????????????????        const bool task_read_packet = task_read_packet_;
         if (task_read_packet) {
             ret = mpp_task_meta_get_packet(output_task, KEY_OUTPUT_PACKET, &first_out_pkt);
             if (debug_enabled_) {
@@ -1158,7 +1158,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         if (meta && pkt_buf_) {
             if (mpp_packet_init_with_buffer(&prebound_pkt, reinterpret_cast<MppBuffer>(pkt_buf_)) == MPP_OK &&
                 prebound_pkt) {
-                // 跟官�?mpi_enc_test 一致：绑定输出包前必须清零长度�?                mpp_packet_set_length(prebound_pkt, 0);
+                // ???????mpi_enc_test ?????????????????????????????????????                mpp_packet_set_length(prebound_pkt, 0);
                 mpp_meta_set_packet(meta, KEY_OUTPUT_PACKET, prebound_pkt);
             }
         }
@@ -1198,7 +1198,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         }
     }
 
-    // mpi_enc_test：非分片时每帧通常一包（is_part==0 �?EOI）；分片模式下多包需拼满�?OnEncodedImage�?    split_assembly_buf_.clear();
+    // mpi_enc_test??????????????????????????is_part==0 ??EOI?????????????????????????????OnEncodedImage???    split_assembly_buf_.clear();
     const int max_pkt_iterations = split_by_byte_enabled_ ? 2048 : 64;
     bool frame_output_done = false;
     bool mpp_intra_hint = false;
@@ -1295,4 +1295,4 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     return WEBRTC_VIDEO_CODEC_OK;
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::rtc::hw::rockchip_mpp

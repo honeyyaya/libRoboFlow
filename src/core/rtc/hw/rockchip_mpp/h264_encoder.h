@@ -13,7 +13,7 @@
 #include "api/video_codecs/video_encoder.h"
 #include "modules/video_coding/codecs/h264/include/h264.h"
 
-namespace webrtc_demo {
+namespace rflow::rtc::hw::rockchip_mpp {
 
 /// Rockchip MPP 硬件 H.264 编码器（RK3588 等）。NV12 直拷至 MPP；MPP MJPEG 解码的 kNative 帧在 stride 匹配时可直通缓冲免拷贝。
 /// 与 OpenH264 相同走 Annex B + start code，供 WebRTC RTP 打包。
@@ -103,6 +103,6 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   uint16_t next_video_frame_tracking_id_{0};
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::rtc::hw::rockchip_mpp
 
 #endif

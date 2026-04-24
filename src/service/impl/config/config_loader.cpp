@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cctype>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 static std::string Trim(const std::string& s) {
     auto start = s.find_first_not_of(" \t\r\n");
@@ -61,4 +61,4 @@ int ConfigLoader::GetStreamInt(const std::string& stream_id, const std::string& 
     return std::atoi(s.c_str());
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl

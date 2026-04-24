@@ -4,7 +4,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 /// 简单 KEY=value 配置加载器，兼容 config/streams.conf 格式
 class ConfigLoader {
@@ -30,6 +30,6 @@ private:
     std::unordered_map<std::string, std::string> map_;
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
 
 #endif  // CONFIG_LOADER_H

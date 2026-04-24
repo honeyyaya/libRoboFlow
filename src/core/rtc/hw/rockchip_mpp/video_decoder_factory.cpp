@@ -11,7 +11,7 @@
 
 #include "core/rtc/hw/rockchip_mpp/h264_decoder.h"
 
-namespace webrtc_demo::hw::rockchip_mpp {
+namespace rflow::rtc::hw::rockchip_mpp {
 
 namespace {
 
@@ -50,5 +50,5 @@ std::unique_ptr<webrtc::VideoDecoderFactory> CreateVideoDecoderFactory() {
     return std::make_unique<PreferredVideoDecoderFactory>();
 }
 
-}  // namespace webrtc_demo::hw::rockchip_mpp
+}  // namespace rflow::rtc::hw::rockchip_mpp
 

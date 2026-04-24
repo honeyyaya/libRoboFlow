@@ -13,7 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 
 namespace {
 
@@ -293,4 +293,4 @@ void SignalingIoManager::Run() {
     }
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl

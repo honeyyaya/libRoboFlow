@@ -24,7 +24,11 @@
 #include "api/video/nv12_buffer.h"
 #endif
 
-namespace webrtc_demo {
+namespace rflow::rtc::hw::rockchip_mpp {
+class RkMppMjpegDecoder;
+}
+
+namespace rflow::service::impl {
 
 /// Linux 直采 MJPEG 时的队列与 NV12 池参数（传入 nullptr 则用默认值）。
 struct V4l2MjpegPipelineOptions {
@@ -42,10 +46,6 @@ struct V4l2MjpegPipelineOptions {
     /// 为 true 时默认启用 RGA 拷贝路径（环境变量 WEBRTC_MJPEG_RGA_TO_MPP 未设置时生效）。
     bool mjpeg_rga_to_mpp = false;
 };
-#if defined(WEBRTC_LINUX) && defined(__linux__) && defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
-class RkMppMjpegDecoder;
-#endif
-
 /// Connects VideoCaptureModule output to AdaptedVideoTrackSource for CreateVideoTrack().
 class CameraVideoTrackSource : public webrtc::AdaptedVideoTrackSource,
                                public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
@@ -151,13 +151,13 @@ private:
     /// VIDIOC_EXPBUF 得到的 dma-buf fd，与 mmap 同一块物理内存；-1 表示未导出或失败。
     std::vector<int> direct_expbuf_fd_;
 #if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
-    std::unique_ptr<RkMppMjpegDecoder> mjpeg_mpp_;
+    std::unique_ptr<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder> mjpeg_mpp_;
 #endif
 #endif
     webrtc::scoped_refptr<webrtc::VideoCaptureModule> vcm_;
     std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> device_info_;
 };
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl
 
 #endif

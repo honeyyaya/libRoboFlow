@@ -15,7 +15,7 @@
 #include <iostream>
 #include <cstdlib>
 
-namespace webrtc_demo {
+namespace rflow::service::impl {
 namespace {
 
 void CloseFd(int fd) {
@@ -264,4 +264,4 @@ void SignalingClient::ReportError(std::string_view error) {
     if (on_error_) on_error_(std::string(error));
 }
 
-}  // namespace webrtc_demo
+}  // namespace rflow::service::impl

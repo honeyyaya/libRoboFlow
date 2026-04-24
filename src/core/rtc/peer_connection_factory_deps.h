@@ -9,7 +9,7 @@ namespace webrtc {
 class Thread;
 }
 
-namespace webrtc_demo {
+namespace rflow::rtc {
 
 enum class VideoCodecBackendPreference {
   kBuiltin = 0,
@@ -39,6 +39,6 @@ void EnsureDedicatedPeerConnectionSignalingThread(
     webrtc::PeerConnectionFactoryDependencies& deps,
     std::unique_ptr<webrtc::Thread>* owned_signaling_thread);
 
-}  // namespace webrtc_demo
+}  // namespace rflow::rtc
 
 #endif  // __RFLOW_CORE_RTC_PEER_CONNECTION_FACTORY_DEPS_H__
