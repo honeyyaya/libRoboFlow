@@ -4,10 +4,10 @@
 #include "common/internal/logger.h"
 
 #include <chrono>
-#include <cstring>
 #include <new>
 
 #include "api/video/i420_buffer.h"
+#include "api/video/nv12_buffer.h"
 #include "api/video/video_frame.h"
 #include "api/video/video_frame_buffer.h"
 
@@ -23,34 +23,16 @@ uint64_t NowUtcMs() {
 
 }  // namespace
 
-librflow_video_frame_t MakeVideoFrameFromRtcFrame(const webrtc::VideoFrame& frame,
-                                                  int32_t                   stream_index,
-                                                  uint32_t                  seq) {
-    auto buffer = frame.video_frame_buffer();
-    if (!buffer) return nullptr;
-
-    auto i420 = buffer->ToI420();
-    if (!i420) {
-        RFLOW_LOGW("[frame_conv] ToI420 failed idx=%d", stream_index);
-        return nullptr;
-    }
-
-    const int w = i420->width();
-    const int h = i420->height();
-    if (w <= 0 || h <= 0) return nullptr;
-
-    const size_t y_size   = static_cast<size_t>(w) * static_cast<size_t>(h);
-    const size_t uv_w     = static_cast<size_t>((w + 1) / 2);
-    const size_t uv_h     = static_cast<size_t>((h + 1) / 2);
-    const size_t uv_size  = uv_w * uv_h;
-    const size_t total    = y_size + 2 * uv_size;
-
-    auto* f = new (std::nothrow) librflow_video_frame_s();
-    if (!f) return nullptr;
-
+void FillCommonFields(librflow_video_frame_s* f,
+                      const webrtc::VideoFrame& frame,
+                      int32_t stream_index,
+                      uint32_t seq,
+                      int w,
+                      int h,
+                      rflow_codec_t codec) {
     f->magic        = rflow::kMagicVideoFrame;
     f->refcount.store(1, std::memory_order_relaxed);
-    f->codec        = RFLOW_CODEC_I420;
+    f->codec        = codec;
     f->type         = RFLOW_FRAME_UNKNOWN;
     f->width        = static_cast<uint32_t>(w);
     f->height       = static_cast<uint32_t>(h);
@@ -58,35 +40,65 @@ librflow_video_frame_t MakeVideoFrameFromRtcFrame(const webrtc::VideoFrame& fram
     f->utc_ms       = NowUtcMs();
     f->seq          = seq;
     f->stream_index = stream_index;
+}
 
-    f->payload.resize(total);
-    uint8_t* dst = f->payload.data();
+librflow_video_frame_t MakeVideoFrameFromRtcFrame(const webrtc::VideoFrame& frame,
+                                                  int32_t                   stream_index,
+                                                  uint32_t                  seq) {
+    auto buffer = frame.video_frame_buffer();
+    if (!buffer) return nullptr;
 
-    {
-        const uint8_t* src = i420->DataY();
-        const int      ss  = i420->StrideY();
-        for (int row = 0; row < h; ++row) {
-            std::memcpy(dst + static_cast<size_t>(row) * static_cast<size_t>(w),
-                        src + static_cast<size_t>(row) * static_cast<size_t>(ss),
-                        static_cast<size_t>(w));
-        }
-        dst += y_size;
+    const int w = buffer->width();
+    const int h = buffer->height();
+    if (w <= 0 || h <= 0) return nullptr;
+
+    auto* f = new (std::nothrow) librflow_video_frame_s();
+    if (!f) return nullptr;
+
+    if (const webrtc::NV12BufferInterface* nv12 = buffer->GetNV12()) {
+        FillCommonFields(f, frame, stream_index, seq, w, h, RFLOW_CODEC_NV12);
+        f->plane_count = 2;
+        f->plane_data[0] = nv12->DataY();
+        f->plane_data[1] = nv12->DataUV();
+        f->plane_strides[0] = static_cast<uint32_t>(nv12->StrideY());
+        f->plane_strides[1] = static_cast<uint32_t>(nv12->StrideUV());
+        f->plane_widths[0] = static_cast<uint32_t>(w);
+        f->plane_heights[0] = static_cast<uint32_t>(h);
+        f->plane_widths[1] = static_cast<uint32_t>(nv12->ChromaWidth() * 2);
+        f->plane_heights[1] = static_cast<uint32_t>(nv12->ChromaHeight());
+        f->buffer_ref = buffer;
+        return f;
     }
-    {
-        const uint8_t* src = i420->DataU();
-        const int      ss  = i420->StrideU();
-        for (size_t row = 0; row < uv_h; ++row) {
-            std::memcpy(dst + row * uv_w, src + row * static_cast<size_t>(ss), uv_w);
+
+    const webrtc::I420BufferInterface* i420 = buffer->GetI420();
+    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> backing = buffer;
+    webrtc::scoped_refptr<webrtc::I420BufferInterface> converted_i420;
+    if (!i420) {
+        converted_i420 = buffer->ToI420();
+        if (!converted_i420) {
+            RFLOW_LOGW("[frame_conv] ToI420 failed idx=%d", stream_index);
+            delete f;
+            return nullptr;
         }
-        dst += uv_size;
+        i420 = converted_i420.get();
+        backing = converted_i420;
     }
-    {
-        const uint8_t* src = i420->DataV();
-        const int      ss  = i420->StrideV();
-        for (size_t row = 0; row < uv_h; ++row) {
-            std::memcpy(dst + row * uv_w, src + row * static_cast<size_t>(ss), uv_w);
-        }
-    }
+
+    FillCommonFields(f, frame, stream_index, seq, w, h, RFLOW_CODEC_I420);
+    f->plane_count = 3;
+    f->plane_data[0] = i420->DataY();
+    f->plane_data[1] = i420->DataU();
+    f->plane_data[2] = i420->DataV();
+    f->plane_strides[0] = static_cast<uint32_t>(i420->StrideY());
+    f->plane_strides[1] = static_cast<uint32_t>(i420->StrideU());
+    f->plane_strides[2] = static_cast<uint32_t>(i420->StrideV());
+    f->plane_widths[0] = static_cast<uint32_t>(w);
+    f->plane_heights[0] = static_cast<uint32_t>(h);
+    f->plane_widths[1] = static_cast<uint32_t>((w + 1) / 2);
+    f->plane_heights[1] = static_cast<uint32_t>((h + 1) / 2);
+    f->plane_widths[2] = f->plane_widths[1];
+    f->plane_heights[2] = f->plane_heights[1];
+    f->buffer_ref = backing;
 
     return f;
 }
