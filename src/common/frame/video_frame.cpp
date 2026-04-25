@@ -82,6 +82,50 @@ rflow_native_handle_type_t librflow_video_frame_get_native_handle_type(librflow_
     return IsValidFrame(f) ? f->native_handle_type : RFLOW_NATIVE_HANDLE_NONE;
 }
 
+uint32_t librflow_video_frame_get_oes_texture_id(librflow_video_frame_t f) {
+    if (!IsValidFrame(f) || f->native_handle_type != RFLOW_NATIVE_HANDLE_ANDROID_OES_TEXTURE) {
+        return 0;
+    }
+    return f->oes_texture_id;
+}
+
+void* librflow_video_frame_get_android_hardware_buffer(librflow_video_frame_t f) {
+    if (!IsValidFrame(f) || f->native_handle_type != RFLOW_NATIVE_HANDLE_ANDROID_HARDWARE_BUFFER) {
+        return nullptr;
+    }
+    return f->android_hardware_buffer;
+}
+
+int32_t librflow_video_frame_get_sync_fence_fd(librflow_video_frame_t f) {
+    if (!IsValidFrame(f)) return -1;
+    return f->sync_fence_fd;
+}
+
+rflow_err_t librflow_video_frame_get_gl_prepare_callback(librflow_video_frame_t f,
+                                                         librflow_gl_prepare_fn *out_fn,
+                                                         void **out_userdata) {
+    if (!IsValidFrame(f) || !out_fn || !out_userdata) return RFLOW_ERR_PARAM;
+    *out_fn = nullptr;
+    *out_userdata = nullptr;
+
+    if (!f->gl_prepare_fn) return RFLOW_ERR_NOT_SUPPORT;
+
+    *out_fn = f->gl_prepare_fn;
+    *out_userdata = f->gl_prepare_userdata;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_video_frame_acquire_for_sampling(librflow_video_frame_t f) {
+    if (!IsValidFrame(f)) return RFLOW_ERR_PARAM;
+    if (!f->sampling_acquire_fn) return RFLOW_ERR_NOT_SUPPORT;
+    return f->sampling_acquire_fn(f->sampling_userdata);
+}
+
+void librflow_video_frame_release_after_sampling(librflow_video_frame_t f) {
+    if (!IsValidFrame(f) || !f->sampling_release_fn) return;
+    f->sampling_release_fn(f->sampling_userdata);
+}
+
 rflow_codec_t librflow_video_frame_get_codec(librflow_video_frame_t f) {
     if (!IsValidFrame(f)) return RFLOW_CODEC_UNKNOWN;
     return f->codec;

@@ -10,11 +10,14 @@
  */
 
 #include "core/rtc/hw/android/mediacodec_video_decoder.h"
+#include "core/rtc/hw/android/native_dec_frame_buffer.h"
 
 #include "common/internal/logger.h"
 
 #include <media/NdkMediaCodec.h>
 #include <media/NdkMediaFormat.h>
+#include <media/NdkImage.h>
+#include <media/NdkImageReader.h>
 
 #include <atomic>
 #include <chrono>
@@ -61,6 +64,14 @@ constexpr char kMediaFormatLowLatency[] = "low-latency";
 constexpr int64_t kDrainAfterQueueShortWaitUs = 3000;
 constexpr int64_t kDrainOnInputBackpressureUs = 3000;
 constexpr int64_t kDequeueInputTimeoutUs      = 3000;
+constexpr int32_t kImageReaderMaxImages       = 4;
+
+#if __ANDROID_API__ >= 26
+constexpr uint64_t kImageReaderUsage =
+    AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
+    AHARDWAREBUFFER_USAGE_CPU_READ_NEVER |
+    AHARDWAREBUFFER_USAGE_CPU_WRITE_NEVER;
+#endif
 
 int64_t McMonotonicUs() {
     return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -209,6 +220,13 @@ class PooledI420 final : public webrtc::I420BufferInterface {
 }  // namespace
 
 struct AndroidMediaCodecVideoDecoder::Impl {
+    struct OutputMeta {
+        int64_t                 pts_us = 0;
+        int64_t                 render_time_ms = 0;
+        uint32_t                rtp_timestamp = 0;
+        std::optional<uint16_t> tracking_id;
+    };
+
     std::mutex                        mu_;
     std::condition_variable           cv_;
     std::deque<std::function<void()>> tasks_;
@@ -223,8 +241,15 @@ struct AndroidMediaCodecVideoDecoder::Impl {
     int     y_stride_      = 0;
     int     slice_height_  = 0;
     int32_t color_format_  = 0;
+    bool    use_image_reader_output_ = false;
+
+#if __ANDROID_API__ >= 26
+    AImageReader* image_reader_ = nullptr;
+    ANativeWindow* output_window_ = nullptr;
+#endif
 
     std::vector<uint8_t> avcc_scratch_;
+    std::deque<OutputMeta> pending_output_metas_;
 
     // 输入 PTS 使用单调递增时间戳；RTP 时间戳会回绕/乱序，易让 Codec2 PipelineWatcher 产生噪声告警。
     int64_t next_input_pts_us_ = 0;
@@ -281,6 +306,133 @@ struct AndroidMediaCodecVideoDecoder::Impl {
         }
     }
 
+    void ClearPendingOutputMetas() {
+        std::lock_guard<std::mutex> lk(mu_);
+        pending_output_metas_.clear();
+    }
+
+#if __ANDROID_API__ >= 26
+    static void OnImageAvailable(void* context, AImageReader* reader) {
+        if (!context || !reader) return;
+        static_cast<Impl*>(context)->HandleImageAvailable(reader);
+    }
+
+    bool CreateImageReader(int width, int height) {
+        DestroyImageReader();
+        if (width <= 0 || height <= 0) return false;
+
+        media_status_t st = AImageReader_newWithUsage(
+            width, height, AIMAGE_FORMAT_PRIVATE, kImageReaderUsage,
+            kImageReaderMaxImages, &image_reader_);
+        if (st != AMEDIA_OK || !image_reader_) {
+            RFLOW_LOGW("[mc_dec] AImageReader_newWithUsage failed: %d", static_cast<int>(st));
+            image_reader_ = nullptr;
+            return false;
+        }
+
+        AImageReader_ImageListener image_listener{};
+        image_listener.context = this;
+        image_listener.onImageAvailable = &Impl::OnImageAvailable;
+        st = AImageReader_setImageListener(image_reader_, &image_listener);
+        if (st != AMEDIA_OK) {
+            RFLOW_LOGW("[mc_dec] AImageReader_setImageListener failed: %d", static_cast<int>(st));
+            DestroyImageReader();
+            return false;
+        }
+
+        st = AImageReader_getWindow(image_reader_, &output_window_);
+        if (st != AMEDIA_OK || !output_window_) {
+            RFLOW_LOGW("[mc_dec] AImageReader_getWindow failed: %d", static_cast<int>(st));
+            DestroyImageReader();
+            return false;
+        }
+        return true;
+    }
+
+    void DestroyImageReader() {
+        output_window_ = nullptr;
+        if (image_reader_) {
+            AImageReader_delete(image_reader_);
+            image_reader_ = nullptr;
+        }
+    }
+
+    OutputMeta TakeOutputMeta(int64_t pts_us) {
+        OutputMeta meta;
+        meta.pts_us = pts_us;
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto it = pending_output_metas_.begin(); it != pending_output_metas_.end(); ++it) {
+            if (it->pts_us == pts_us) {
+                meta = *it;
+                pending_output_metas_.erase(it);
+                return meta;
+            }
+        }
+        if (!pending_output_metas_.empty()) {
+            meta = pending_output_metas_.front();
+            pending_output_metas_.pop_front();
+        }
+        return meta;
+    }
+
+    void HandleImageAvailable(AImageReader* reader) {
+        AImage* image = nullptr;
+        media_status_t st = AImageReader_acquireLatestImage(reader, &image);
+        if (st != AMEDIA_OK || !image) return;
+
+        int64_t timestamp_ns = 0;
+        int32_t width = out_width_;
+        int32_t height = out_height_;
+        AHardwareBuffer* hardware_buffer = nullptr;
+        if (AImage_getTimestamp(image, &timestamp_ns) != AMEDIA_OK ||
+            AImage_getHardwareBuffer(image, &hardware_buffer) != AMEDIA_OK ||
+            !hardware_buffer) {
+            AImage_delete(image);
+            return;
+        }
+        (void)AImage_getWidth(image, &width);
+        (void)AImage_getHeight(image, &height);
+
+        AHardwareBuffer_acquire(hardware_buffer);
+        AImage_delete(image);
+
+        const OutputMeta meta = TakeOutputMeta(timestamp_ns / 1000);
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            if (!running_) {
+                AHardwareBuffer_release(hardware_buffer);
+                return;
+            }
+            tasks_.push_back([this, hardware_buffer, width, height, meta]() {
+                webrtc::DecodedImageCallback* cb = nullptr;
+                {
+                    std::lock_guard<std::mutex> lk(mu_);
+                    cb = callback_;
+                }
+                if (cb) {
+                    auto native = AndroidNativeDecFrameBuffer::Create(
+                        hardware_buffer, width, height, -1, nullptr);
+                    if (native) {
+                        webrtc::VideoFrame::Builder fb;
+                        fb.set_video_frame_buffer(native)
+                          .set_rtp_timestamp(meta.rtp_timestamp)
+                          .set_timestamp_us(meta.render_time_ms * 1000);
+                        if (meta.tracking_id.has_value()) {
+                            fb.set_id(*meta.tracking_id);
+                        }
+                        cb->Decoded(fb.build());
+                    }
+                }
+                AHardwareBuffer_release(hardware_buffer);
+            });
+        }
+        cv_.notify_one();
+    }
+#else
+    bool CreateImageReader(int /*width*/, int /*height*/) { return false; }
+    void DestroyImageReader() {}
+#endif
+
     void WorkerLoop() {
         std::unique_lock<std::mutex> lk(mu_);
         while (running_) {
@@ -311,8 +463,11 @@ struct AndroidMediaCodecVideoDecoder::Impl {
             AMediaCodec_delete(codec_);
             codec_ = nullptr;
         }
+        DestroyImageReader();
         out_width_ = out_height_ = y_stride_ = slice_height_ = 0;
         color_format_ = 0;
+        use_image_reader_output_ = false;
+        ClearPendingOutputMetas();
         ClearPool();
     }
 
@@ -363,12 +518,23 @@ struct AndroidMediaCodecVideoDecoder::Impl {
 #if __ANDROID_API__ >= 30
         AMediaFormat_setInt32(format, kMediaFormatLowLatency, 1);
 #endif
-        media_status_t st = AMediaCodec_configure(codec_, format, nullptr, nullptr, 0);
+        use_image_reader_output_ = CreateImageReader(w, h);
+        media_status_t st = AMediaCodec_configure(
+            codec_, format, use_image_reader_output_ ? output_window_ : nullptr, nullptr, 0);
+        if (st != AMEDIA_OK && use_image_reader_output_) {
+            RFLOW_LOGW("[mc_dec] configure with AImageReader failed, fallback to bytebuffer: %d",
+                       static_cast<int>(st));
+            DestroyImageReader();
+            use_image_reader_output_ = false;
+            st = AMediaCodec_configure(codec_, format, nullptr, nullptr, 0);
+        }
         AMediaFormat_delete(format);
         if (st != AMEDIA_OK) {
             RFLOW_LOGW("[mc_dec] AMediaCodec_configure failed: %d", static_cast<int>(st));
             AMediaCodec_delete(codec_);
             codec_ = nullptr;
+            DestroyImageReader();
+            use_image_reader_output_ = false;
             return false;
         }
         st = AMediaCodec_start(codec_);
@@ -376,9 +542,12 @@ struct AndroidMediaCodecVideoDecoder::Impl {
             RFLOW_LOGW("[mc_dec] AMediaCodec_start failed: %d", static_cast<int>(st));
             AMediaCodec_delete(codec_);
             codec_ = nullptr;
+            DestroyImageReader();
+            use_image_reader_output_ = false;
             return false;
         }
         next_input_pts_us_ = 0;
+        ClearPendingOutputMetas();
         RefreshOutputFormat();
         return true;
     }
@@ -413,6 +582,12 @@ struct AndroidMediaCodecVideoDecoder::Impl {
 
             if (info.size > 0 && (out_width_ <= 0 || out_height_ <= 0)) {
                 RefreshOutputFormat();
+            }
+
+            if (use_image_reader_output_) {
+                const bool render = info.size > 0;
+                AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(out_idx), render);
+                continue;
             }
 
             if (info.size > 0 && out_width_ > 0 && out_height_ > 0 && cb &&
@@ -528,6 +703,16 @@ struct AndroidMediaCodecVideoDecoder::Impl {
             RFLOW_LOGW("[mc_dec] queueInputBuffer failed: %d", static_cast<int>(st));
             AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(in_idx), 0, 0, 0, 0);
             return;
+        }
+
+        if (use_image_reader_output_) {
+            OutputMeta meta;
+            meta.pts_us = pts_us;
+            meta.render_time_ms = render_time_ms;
+            meta.rtp_timestamp = rtp_timestamp;
+            meta.tracking_id = video_frame_tracking_id;
+            std::lock_guard<std::mutex> lk(mu_);
+            pending_output_metas_.push_back(std::move(meta));
         }
 
         int delivered0 = 0;

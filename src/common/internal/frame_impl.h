@@ -18,6 +18,9 @@
 #include "api/scoped_refptr.h"
 #include "api/video/video_frame_buffer.h"
 
+using librflow_sampling_acquire_fn = rflow_err_t (*)(void* userdata);
+using librflow_sampling_release_fn = void (*)(void* userdata);
+
 struct librflow_video_frame_s {
     uint32_t                magic;
     std::atomic<int32_t>    refcount;
@@ -38,6 +41,15 @@ struct librflow_video_frame_s {
     uint32_t                plane_strides[3] = {0, 0, 0};
     uint32_t                plane_widths[3] = {0, 0, 0};
     uint32_t                plane_heights[3] = {0, 0, 0};
+
+    uint32_t                oes_texture_id = 0;
+    void*                   android_hardware_buffer = nullptr;
+    int32_t                 sync_fence_fd = -1;
+    librflow_gl_prepare_fn  gl_prepare_fn = nullptr;
+    void*                   gl_prepare_userdata = nullptr;
+    librflow_sampling_acquire_fn sampling_acquire_fn = nullptr;
+    librflow_sampling_release_fn sampling_release_fn = nullptr;
+    void*                   sampling_userdata = nullptr;
 
     webrtc::scoped_refptr<webrtc::VideoFrameBuffer> buffer_ref;
     mutable std::mutex      payload_mu;
