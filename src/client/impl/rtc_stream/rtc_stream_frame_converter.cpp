@@ -11,6 +11,10 @@
 #include "api/video/video_frame.h"
 #include "api/video/video_frame_buffer.h"
 
+#if defined(WEBRTC_ANDROID)
+#include "core/rtc/hw/android/native_dec_frame_buffer.h"
+#endif
+
 namespace rflow::client::impl {
 
 namespace {
@@ -34,6 +38,14 @@ void FillCommonFields(librflow_video_frame_s* f,
     f->refcount.store(1, std::memory_order_relaxed);
     f->backend      = RFLOW_VIDEO_FRAME_BACKEND_CPU_PLANAR;
     f->native_handle_type = RFLOW_NATIVE_HANDLE_NONE;
+    f->oes_texture_id = 0;
+    f->android_hardware_buffer = nullptr;
+    f->sync_fence_fd = -1;
+    f->gl_prepare_fn = nullptr;
+    f->gl_prepare_userdata = nullptr;
+    f->sampling_acquire_fn = nullptr;
+    f->sampling_release_fn = nullptr;
+    f->sampling_userdata = nullptr;
     f->codec        = codec;
     f->type         = RFLOW_FRAME_UNKNOWN;
     f->width        = static_cast<uint32_t>(w);
@@ -56,6 +68,18 @@ librflow_video_frame_t MakeVideoFrameFromRtcFrame(const webrtc::VideoFrame& fram
 
     auto* f = new (std::nothrow) librflow_video_frame_s();
     if (!f) return nullptr;
+
+#if defined(WEBRTC_ANDROID)
+    if (auto* native = rflow::rtc::AndroidNativeDecFrameBuffer::TryGet(buffer)) {
+        FillCommonFields(f, frame, stream_index, seq, w, h, RFLOW_CODEC_UNKNOWN);
+        f->backend = RFLOW_VIDEO_FRAME_BACKEND_HARDWARE_BUFFER;
+        f->native_handle_type = RFLOW_NATIVE_HANDLE_ANDROID_HARDWARE_BUFFER;
+        f->android_hardware_buffer = native->hardware_buffer();
+        f->sync_fence_fd = native->sync_fence_fd();
+        f->buffer_ref = buffer;
+        return f;
+    }
+#endif
 
     if (const webrtc::NV12BufferInterface* nv12 = buffer->GetNV12()) {
         FillCommonFields(f, frame, stream_index, seq, w, h, RFLOW_CODEC_NV12);

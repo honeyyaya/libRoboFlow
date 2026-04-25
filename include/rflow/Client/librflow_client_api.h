@@ -111,6 +111,9 @@ typedef void (*librflow_on_stream_state_fn)(librflow_stream_handle_t handle,
  * Recommended access pattern:
  *   - I420: use librflow_video_frame_get_plane_* for Y/U/V
  *   - NV12: use librflow_video_frame_get_plane_* for Y and interleaved UV
+ *   - GPU/native texture: check get_backend()/get_native_handle_type() first,
+ *     then call acquire_for_sampling() -> optional gl_prepare callback ->
+ *     read OES texture id or AHardwareBuffer/sync fence -> release_after_sampling()
  *   - use librflow_video_frame_get_data/get_data_size only when your pipeline
  *     strictly requires one contiguous buffer
  *
