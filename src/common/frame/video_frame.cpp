@@ -74,6 +74,14 @@ bool EnsurePayloadMaterialized(const librflow_video_frame_s* f) {
 
 extern "C" {
 
+rflow_video_frame_backend_t librflow_video_frame_get_backend(librflow_video_frame_t f) {
+    return IsValidFrame(f) ? f->backend : RFLOW_VIDEO_FRAME_BACKEND_UNKNOWN;
+}
+
+rflow_native_handle_type_t librflow_video_frame_get_native_handle_type(librflow_video_frame_t f) {
+    return IsValidFrame(f) ? f->native_handle_type : RFLOW_NATIVE_HANDLE_NONE;
+}
+
 rflow_codec_t librflow_video_frame_get_codec(librflow_video_frame_t f) {
     if (!IsValidFrame(f)) return RFLOW_CODEC_UNKNOWN;
     return f->codec;

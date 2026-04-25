@@ -90,6 +90,9 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_set_preferred_max_size(lib
                                                                              uint32_t max_width,
                                                                              uint32_t max_height);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_set_preferred_fps     (librflow_stream_param_t p, uint32_t fps);
+/* 输出偏好：当前默认/实际仍为 CPU planar，后续可扩展为 GPU/native texture。 */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_set_video_output_mode (librflow_stream_param_t p,
+                                                                             rflow_video_output_mode_t mode);
 
 /******************************************************************************
  *                          StreamCb

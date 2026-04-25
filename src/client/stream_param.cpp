@@ -11,11 +11,13 @@ librflow_stream_param_t librflow_stream_param_create(void) {
     if (!p) return nullptr;
     p->magic               = rflow::client::kMagicStreamParam;
     p->preferred_codec     = RFLOW_CODEC_UNKNOWN;
+    p->video_output_mode   = RFLOW_VIDEO_OUTPUT_MODE_CPU_PLANAR;
     p->max_width           = 0;
     p->max_height          = 0;
     p->fps                 = 0;
     p->open_timeout_ms     = 0;
     p->has_preferred_codec = false;
+    p->has_video_output_mode = false;
     p->has_max_size        = false;
     p->has_fps             = false;
     p->has_open_timeout_ms = false;
@@ -48,6 +50,14 @@ rflow_err_t librflow_stream_param_set_preferred_fps(librflow_stream_param_t p, u
     RFLOW_CHECK_HANDLE(p, rflow::client::kMagicStreamParam);
     p->fps     = fps;
     p->has_fps = true;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_stream_param_set_video_output_mode(librflow_stream_param_t p,
+                                                        rflow_video_output_mode_t mode) {
+    RFLOW_CHECK_HANDLE(p, rflow::client::kMagicStreamParam);
+    p->video_output_mode = mode;
+    p->has_video_output_mode = true;
     return RFLOW_OK;
 }
 

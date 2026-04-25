@@ -32,6 +32,8 @@ void FillCommonFields(librflow_video_frame_s* f,
                       rflow_codec_t codec) {
     f->magic        = rflow::kMagicVideoFrame;
     f->refcount.store(1, std::memory_order_relaxed);
+    f->backend      = RFLOW_VIDEO_FRAME_BACKEND_CPU_PLANAR;
+    f->native_handle_type = RFLOW_NATIVE_HANDLE_NONE;
     f->codec        = codec;
     f->type         = RFLOW_FRAME_UNKNOWN;
     f->width        = static_cast<uint32_t>(w);

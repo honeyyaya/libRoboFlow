@@ -22,6 +22,8 @@ struct librflow_video_frame_s {
     uint32_t                magic;
     std::atomic<int32_t>    refcount;
 
+    rflow_video_frame_backend_t backend = RFLOW_VIDEO_FRAME_BACKEND_UNKNOWN;
+    rflow_native_handle_type_t  native_handle_type = RFLOW_NATIVE_HANDLE_NONE;
     rflow_codec_t           codec;
     rflow_frame_type_t      type;
     uint32_t                width;
