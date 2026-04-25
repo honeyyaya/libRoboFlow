@@ -151,6 +151,25 @@ typedef enum {
     RFLOW_FRAME_B       = 3,
 } rflow_frame_type_t;
 
+typedef enum {
+    RFLOW_VIDEO_FRAME_BACKEND_UNKNOWN         = 0,
+    RFLOW_VIDEO_FRAME_BACKEND_CPU_PLANAR      = 1,
+    RFLOW_VIDEO_FRAME_BACKEND_GPU_EXTERNAL    = 2,
+    RFLOW_VIDEO_FRAME_BACKEND_HARDWARE_BUFFER = 3,
+} rflow_video_frame_backend_t;
+
+typedef enum {
+    RFLOW_NATIVE_HANDLE_NONE                    = 0,
+    RFLOW_NATIVE_HANDLE_ANDROID_OES_TEXTURE     = 1,
+    RFLOW_NATIVE_HANDLE_ANDROID_HARDWARE_BUFFER = 2,
+} rflow_native_handle_type_t;
+
+typedef enum {
+    RFLOW_VIDEO_OUTPUT_MODE_CPU_PLANAR = 0,
+    RFLOW_VIDEO_OUTPUT_MODE_PREFER_GPU = 1,
+    RFLOW_VIDEO_OUTPUT_MODE_REQUIRE_GPU = 2,
+} rflow_video_output_mode_t;
+
 /* 连接状态 */
 typedef enum {
     RFLOW_CONN_IDLE         = 0,
@@ -403,6 +422,8 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_region     (librflow_
  *   - 当帧底层是多平面 buffer 时，SDK 会在首次调用 get_data 时按 codec
  *     规则拼出连续缓存；新代码优先使用 plane getter，避免额外拷贝。
  */
+LIBRFLOW_API_EXPORT rflow_video_frame_backend_t librflow_video_frame_get_backend(librflow_video_frame_t f);
+LIBRFLOW_API_EXPORT rflow_native_handle_type_t  librflow_video_frame_get_native_handle_type(librflow_video_frame_t f);
 LIBRFLOW_API_EXPORT rflow_codec_t      librflow_video_frame_get_codec    (librflow_video_frame_t f);
 LIBRFLOW_API_EXPORT rflow_frame_type_t librflow_video_frame_get_type     (librflow_video_frame_t f);
 LIBRFLOW_API_EXPORT uint32_t           librflow_video_frame_get_plane_count (librflow_video_frame_t f);

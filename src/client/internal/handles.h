@@ -40,6 +40,7 @@ struct librflow_connect_cb_s {
 struct librflow_stream_param_s {
     uint32_t        magic;
     rflow_codec_t   preferred_codec;
+    rflow_video_output_mode_t video_output_mode;
     uint32_t        max_width;
     uint32_t        max_height;
     uint32_t        fps;
@@ -48,6 +49,7 @@ struct librflow_stream_param_s {
     /* 追踪每个字段是否被 setter 显式赋值过：
      * 用于区分 "未设置" 与 "显式设置为 0/UNKNOWN"，支撑 getter 返回 NOT_FOUND 语义。 */
     bool            has_preferred_codec;
+    bool            has_video_output_mode;
     bool            has_max_size;
     bool            has_fps;
     bool            has_open_timeout_ms;
