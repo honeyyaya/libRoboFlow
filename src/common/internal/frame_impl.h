@@ -11,9 +11,12 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 #include "handle.h"
+#include "api/scoped_refptr.h"
+#include "api/video/video_frame_buffer.h"
 
 struct librflow_video_frame_s {
     uint32_t                magic;
@@ -28,7 +31,15 @@ struct librflow_video_frame_s {
     uint32_t                seq;
     int32_t                 stream_index;
 
-    std::vector<uint8_t>    payload;
+    uint32_t                plane_count = 0;
+    const uint8_t*          plane_data[3] = {nullptr, nullptr, nullptr};
+    uint32_t                plane_strides[3] = {0, 0, 0};
+    uint32_t                plane_widths[3] = {0, 0, 0};
+    uint32_t                plane_heights[3] = {0, 0, 0};
+
+    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> buffer_ref;
+    mutable std::mutex      payload_mu;
+    mutable std::vector<uint8_t> payload;
 };
 
 struct librflow_stream_stats_s {

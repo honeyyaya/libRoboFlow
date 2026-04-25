@@ -3,35 +3,127 @@
 #include "../internal/frame_impl.h"
 
 #include <cstddef>
+#include <cstring>
+
+namespace {
+
+bool IsValidFrame(librflow_video_frame_t f) {
+    return f && f->magic == rflow::kMagicVideoFrame;
+}
+
+bool EnsurePayloadMaterialized(const librflow_video_frame_s* f) {
+    if (!f) return false;
+
+    std::lock_guard<std::mutex> lk(f->payload_mu);
+    if (!f->payload.empty()) return true;
+    if (f->plane_count == 0) return false;
+
+    switch (f->codec) {
+        case RFLOW_CODEC_I420: {
+            if (f->plane_count < 3) return false;
+            size_t total = 0;
+            for (uint32_t i = 0; i < 3; ++i) {
+                total += static_cast<size_t>(f->plane_widths[i]) *
+                         static_cast<size_t>(f->plane_heights[i]);
+            }
+            f->payload.resize(total);
+            uint8_t* dst = f->payload.data();
+            for (uint32_t i = 0; i < 3; ++i) {
+                const uint32_t row_bytes = f->plane_widths[i];
+                const uint32_t rows = f->plane_heights[i];
+                for (uint32_t row = 0; row < rows; ++row) {
+                    std::memcpy(dst,
+                                f->plane_data[i] +
+                                    static_cast<size_t>(row) * f->plane_strides[i],
+                                row_bytes);
+                    dst += row_bytes;
+                }
+            }
+            return true;
+        }
+        case RFLOW_CODEC_NV12: {
+            if (f->plane_count < 2) return false;
+            const size_t y_size =
+                static_cast<size_t>(f->plane_widths[0]) * f->plane_heights[0];
+            const size_t uv_size =
+                static_cast<size_t>(f->plane_widths[1]) * f->plane_heights[1];
+            f->payload.resize(y_size + uv_size);
+            uint8_t* dst = f->payload.data();
+            for (uint32_t row = 0; row < f->plane_heights[0]; ++row) {
+                std::memcpy(dst,
+                            f->plane_data[0] +
+                                static_cast<size_t>(row) * f->plane_strides[0],
+                            f->plane_widths[0]);
+                dst += f->plane_widths[0];
+            }
+            for (uint32_t row = 0; row < f->plane_heights[1]; ++row) {
+                std::memcpy(dst,
+                            f->plane_data[1] +
+                                static_cast<size_t>(row) * f->plane_strides[1],
+                            f->plane_widths[1]);
+                dst += f->plane_widths[1];
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+}  // namespace
 
 extern "C" {
 
 rflow_codec_t librflow_video_frame_get_codec(librflow_video_frame_t f) {
-    if (!f || f->magic != rflow::kMagicVideoFrame) return RFLOW_CODEC_UNKNOWN;
+    if (!IsValidFrame(f)) return RFLOW_CODEC_UNKNOWN;
     return f->codec;
 }
 
 rflow_frame_type_t librflow_video_frame_get_type(librflow_video_frame_t f) {
-    if (!f || f->magic != rflow::kMagicVideoFrame) return RFLOW_FRAME_UNKNOWN;
+    if (!IsValidFrame(f)) return RFLOW_FRAME_UNKNOWN;
     return f->type;
 }
 
+uint32_t librflow_video_frame_get_plane_count(librflow_video_frame_t f) {
+    return IsValidFrame(f) ? f->plane_count : 0;
+}
+
+const uint8_t* librflow_video_frame_get_plane_data(librflow_video_frame_t f, uint32_t plane_index) {
+    if (!IsValidFrame(f) || plane_index >= f->plane_count) return nullptr;
+    return f->plane_data[plane_index];
+}
+
+uint32_t librflow_video_frame_get_plane_stride(librflow_video_frame_t f, uint32_t plane_index) {
+    if (!IsValidFrame(f) || plane_index >= f->plane_count) return 0;
+    return f->plane_strides[plane_index];
+}
+
+uint32_t librflow_video_frame_get_plane_width(librflow_video_frame_t f, uint32_t plane_index) {
+    if (!IsValidFrame(f) || plane_index >= f->plane_count) return 0;
+    return f->plane_widths[plane_index];
+}
+
+uint32_t librflow_video_frame_get_plane_height(librflow_video_frame_t f, uint32_t plane_index) {
+    if (!IsValidFrame(f) || plane_index >= f->plane_count) return 0;
+    return f->plane_heights[plane_index];
+}
+
 const uint8_t* librflow_video_frame_get_data(librflow_video_frame_t f) {
-    if (!f || f->magic != rflow::kMagicVideoFrame) return nullptr;
+    if (!IsValidFrame(f) || !EnsurePayloadMaterialized(f)) return nullptr;
     return f->payload.data();
 }
 
 uint32_t librflow_video_frame_get_data_size(librflow_video_frame_t f) {
-    if (!f || f->magic != rflow::kMagicVideoFrame) return 0;
+    if (!IsValidFrame(f) || !EnsurePayloadMaterialized(f)) return 0;
     return static_cast<uint32_t>(f->payload.size());
 }
 
-uint32_t librflow_video_frame_get_width (librflow_video_frame_t f) { return f ? f->width  : 0; }
-uint32_t librflow_video_frame_get_height(librflow_video_frame_t f) { return f ? f->height : 0; }
-uint64_t librflow_video_frame_get_pts_ms(librflow_video_frame_t f) { return f ? f->pts_ms : 0; }
-uint64_t librflow_video_frame_get_utc_ms(librflow_video_frame_t f) { return f ? f->utc_ms : 0; }
-uint32_t librflow_video_frame_get_seq   (librflow_video_frame_t f) { return f ? f->seq    : 0; }
-int32_t  librflow_video_frame_get_index (librflow_video_frame_t f) { return f ? f->stream_index : -1; }
+uint32_t librflow_video_frame_get_width (librflow_video_frame_t f) { return IsValidFrame(f) ? f->width  : 0; }
+uint32_t librflow_video_frame_get_height(librflow_video_frame_t f) { return IsValidFrame(f) ? f->height : 0; }
+uint64_t librflow_video_frame_get_pts_ms(librflow_video_frame_t f) { return IsValidFrame(f) ? f->pts_ms : 0; }
+uint64_t librflow_video_frame_get_utc_ms(librflow_video_frame_t f) { return IsValidFrame(f) ? f->utc_ms : 0; }
+uint32_t librflow_video_frame_get_seq   (librflow_video_frame_t f) { return IsValidFrame(f) ? f->seq    : 0; }
+int32_t  librflow_video_frame_get_index (librflow_video_frame_t f) { return IsValidFrame(f) ? f->stream_index : -1; }
 
 librflow_video_frame_t librflow_video_frame_retain(librflow_video_frame_t f) {
     if (!f || f->magic != rflow::kMagicVideoFrame) return nullptr;
