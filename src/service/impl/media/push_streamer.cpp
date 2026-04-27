@@ -745,15 +745,18 @@ public:
                           << config_.common.max_bitrate_kbps << " kbps"
                           << " max_fps=" << max_fps
                           << " network_priority=" << config_.common.video_network_priority << std::endl;
-                if (LatencyTraceEnabled()) {
+                {
                     const char* deg = "maintain_framerate";
                     if (config_.common.degradation_preference == "maintain_resolution") {
                         deg = "maintain_resolution";
                     } else if (config_.common.degradation_preference == "balanced") {
                         deg = "balanced";
                     }
-                    std::cout << "[Latency] WebRTC degradation_preference=" << deg
-                              << " (弱网时影响降质策略与排队感知)\n";
+                    std::cout << "[PushStreamer] degradation_preference=" << deg
+                              << " (maintain_framerate: 弱网时优先保帧、倾向降分辨率)\n";
+                }
+                if (LatencyTraceEnabled()) {
+                    std::cout << "[Latency] WebRTC degradation_preference trace ok\n";
                 }
             }
             break;

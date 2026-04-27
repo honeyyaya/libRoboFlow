@@ -411,7 +411,9 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
 #if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
     const bool prefer_mjpeg_pixfmt = prefer_mpp_mjpeg_decode_;
 #else
-    const bool prefer_mjpeg_pixfmt = false;
+    // 常见 UVC：720p 及以上 YUYV 带宽不足（多为 ~10fps），MJPEG 才有 60fps；低分辨率仍优先 YUYV。
+    const int64_t px = static_cast<int64_t>(width) * static_cast<int>(height);
+    const bool prefer_mjpeg_pixfmt = px >= static_cast<int64_t>(1280) * 720;
 #endif
     bool fmt_ok = prefer_mjpeg_pixfmt
                       ? (try_sfmt_exact(mjpeg, width, height) || try_sfmt_exact(yuyv, width, height))
