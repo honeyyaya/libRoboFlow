@@ -81,7 +81,13 @@ librflow_video_frame_t MakeVideoFrameFromRtcFrame(const webrtc::VideoFrame& fram
     }
 #endif
 
-    if (const webrtc::NV12BufferInterface* nv12 = buffer->GetNV12()) {
+    if (buffer->type() == webrtc::VideoFrameBuffer::Type::kNV12) {
+        const webrtc::NV12BufferInterface* nv12 = buffer->GetNV12();
+        if (!nv12) {
+            RFLOW_LOGW("[frame_conv] GetNV12 failed idx=%d", stream_index);
+            delete f;
+            return nullptr;
+        }
         FillCommonFields(f, frame, stream_index, seq, w, h, RFLOW_CODEC_NV12);
         f->plane_count = 2;
         f->plane_data[0] = nv12->DataY();
