@@ -14,7 +14,7 @@ struct PushStreamerCommonConfig {
     std::string stream_id{"stream_001"};
     int video_width{1280};
     int video_height{720};
-    int video_fps{30};
+    int video_fps{60};
     int video_device_index{0};
     std::string video_device_path;
     bool test_capture_only{false};
@@ -50,12 +50,12 @@ struct PushStreamerCommonConfig {
 struct PushStreamerBackendConfig {
     bool use_rockchip_mpp_h264{true};
     bool use_rockchip_mpp_mjpeg_decode{true};
-    bool use_rockchip_dual_mpp_mjpeg_h264{false};
-    bool mjpeg_queue_latest_only{false};
-    int mjpeg_queue_max{8};
+    bool use_rockchip_dual_mpp_mjpeg_h264{true};
+    bool mjpeg_queue_latest_only{true};
+    int mjpeg_queue_max{2};
     int v4l2_buffer_count{2};
-    int v4l2_poll_timeout_ms{50};
-    int nv12_pool_slots{6};
+    int v4l2_poll_timeout_ms{5};
+    int nv12_pool_slots{4};
     bool mjpeg_decode_inline{false};
     bool mjpeg_v4l2_ext_dma{false};
     bool mjpeg_rga_to_mpp{false};
