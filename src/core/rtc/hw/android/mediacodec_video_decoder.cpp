@@ -61,10 +61,10 @@ constexpr int32_t kColorFormatQtiSurface     = 2141391876;
 constexpr char kMediaFormatLowLatency[] = "low-latency";
 
 // queue 后 drain：先非阻塞清空已就绪帧，再单次短阻塞吸收「刚完成」的 output。
-constexpr int64_t kDrainAfterQueueShortWaitUs = 3000;
-constexpr int64_t kDrainOnInputBackpressureUs = 3000;
-constexpr int64_t kDequeueInputTimeoutUs      = 3000;
-constexpr int32_t kImageReaderMaxImages       = 4;
+constexpr int64_t kDrainAfterQueueShortWaitUs = 1000;
+constexpr int64_t kDrainOnInputBackpressureUs = 1000;
+constexpr int64_t kDequeueInputTimeoutUs      = 1000;
+constexpr int32_t kImageReaderMaxImages       = 2;
 
 #if __ANDROID_API__ >= 26
 constexpr uint64_t kImageReaderUsage =
@@ -250,6 +250,8 @@ struct AndroidMediaCodecVideoDecoder::Impl {
 
     std::vector<uint8_t> avcc_scratch_;
     std::deque<OutputMeta> pending_output_metas_;
+    uint64_t decoded_frames_ = 0;
+    uint64_t image_reader_frames_ = 0;
 
     // 输入 PTS 使用单调递增时间戳；RTP 时间戳会回绕/乱序，易让 Codec2 PipelineWatcher 产生噪声告警。
     int64_t next_input_pts_us_ = 0;
@@ -397,6 +399,18 @@ struct AndroidMediaCodecVideoDecoder::Impl {
         AImage_delete(image);
 
         const OutputMeta meta = TakeOutputMeta(timestamp_ns / 1000);
+        size_t meta_backlog = 0;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            meta_backlog = pending_output_metas_.size();
+        }
+        ++image_reader_frames_;
+        if (meta_backlog > 1 &&
+            (image_reader_frames_ <= 5 || (image_reader_frames_ % 120) == 0)) {
+            RFLOW_LOGI("[mc_dec] image reader backlog=%zu frames=%llu",
+                       meta_backlog,
+                       static_cast<unsigned long long>(image_reader_frames_));
+        }
         {
             std::lock_guard<std::mutex> lk(mu_);
             if (!running_) {
@@ -548,8 +562,23 @@ struct AndroidMediaCodecVideoDecoder::Impl {
             return false;
         }
         next_input_pts_us_ = 0;
+        decoded_frames_ = 0;
+        image_reader_frames_ = 0;
         ClearPendingOutputMetas();
         RefreshOutputFormat();
+        RFLOW_LOGI("[mc_dec] configured w=%d h=%d low_latency=%d image_reader=%d max_images=%d "
+                   "dq_in_timeout_us=%lld drain_wait_us=%lld backpressure_wait_us=%lld",
+                   w, h,
+#if __ANDROID_API__ >= 30
+                   1,
+#else
+                   0,
+#endif
+                   use_image_reader_output_ ? 1 : 0,
+                   kImageReaderMaxImages,
+                   static_cast<long long>(kDequeueInputTimeoutUs),
+                   static_cast<long long>(kDrainAfterQueueShortWaitUs),
+                   static_cast<long long>(kDrainOnInputBackpressureUs));
         return true;
     }
 
@@ -644,6 +673,13 @@ struct AndroidMediaCodecVideoDecoder::Impl {
                         }
                         webrtc::VideoFrame frame = fb.build();
                         cb->Decoded(frame);
+                        ++decoded_frames_;
+                        if (delivered_frames && *delivered_frames == 0 &&
+                            (decoded_frames_ <= 5 || (decoded_frames_ % 120) == 0)) {
+                            RFLOW_LOGI("[mc_dec] first cpu frame after queue decoded=%llu color=%d",
+                                       static_cast<unsigned long long>(decoded_frames_),
+                                       static_cast<int>(color_format_));
+                        }
                         if (delivered_frames) ++(*delivered_frames);
                         // TODO: E2E 耗时追踪已随 encoded_tracking_bridge 移除，后续由 SDK 统一 stats 实现。
                     } else {
@@ -712,8 +748,16 @@ struct AndroidMediaCodecVideoDecoder::Impl {
             meta.render_time_ms = render_time_ms;
             meta.rtp_timestamp = rtp_timestamp;
             meta.tracking_id = video_frame_tracking_id;
-            std::lock_guard<std::mutex> lk(mu_);
-            pending_output_metas_.push_back(std::move(meta));
+            size_t backlog = 0;
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                pending_output_metas_.push_back(std::move(meta));
+                backlog = pending_output_metas_.size();
+            }
+            if (backlog > 1 && (pts_us < 5 || (pts_us % 120) == 0)) {
+                RFLOW_LOGI("[mc_dec] queued output meta backlog=%zu pts=%lld",
+                           backlog, static_cast<long long>(pts_us));
+            }
         }
 
         int delivered0 = 0;
