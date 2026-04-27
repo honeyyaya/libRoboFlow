@@ -3,10 +3,12 @@
 #include "core/rtc/rtc.h"
 #include "signaling/signaling_client.h"
 
+#include "common/internal/frame_impl.h"
 #include "common/internal/logger.h"
 #include "rflow/librflow_common.h"
 
 #include <algorithm>
+#include <condition_variable>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -18,6 +20,7 @@
 #include "api/rtp_receiver_interface.h"
 #include "api/rtp_transceiver_interface.h"
 #include "api/set_remote_description_observer_interface.h"
+#include "api/stats/rtc_stats_collector_callback.h"
 #include "rtc_base/thread.h"
 
 namespace rflow::client::impl {
@@ -77,6 +80,21 @@ class SetLocalDescObserver : public webrtc::SetSessionDescriptionObserver {
     std::function<void()> ok_;
     std::function<void(webrtc::RTCError)> fail_;
 };
+
+class StatsCollectorCallback : public webrtc::RTCStatsCollectorCallback {
+ public:
+    explicit StatsCollectorCallback(
+        std::function<void(const webrtc::scoped_refptr<const webrtc::RTCStatsReport>&)> cb)
+        : cb_(std::move(cb)) {}
+
+    void OnStatsDelivered(
+        const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) override {
+        if (cb_) cb_(report);
+    }
+
+ private:
+    std::function<void(const webrtc::scoped_refptr<const webrtc::RTCStatsReport>&)> cb_;
+ };
 
 }  // namespace
 
@@ -587,6 +605,99 @@ void RtcStreamSession::HandleRemoteIceCandidate(const std::string& mid,
     }
 
     AddRemoteIceCandidateNow(mid, mline_index, candidate);
+}
+
+bool RtcStreamSession::CollectStats(librflow_stream_stats_s* out_stats) {
+    if (!out_stats || !peer_connection_) {
+        return false;
+    }
+
+    struct Snapshot {
+        bool done = false;
+        uint64_t in_bytes = 0;
+        uint64_t in_pkts = 0;
+        uint32_t lost_pkts = 0;
+        uint32_t fps = 0;
+        uint32_t jitter_ms = 0;
+        uint32_t freeze_count = 0;
+        uint32_t decode_fail_count = 0;
+        uint32_t rtt_ms = 0;
+        uint32_t bitrate_kbps = 0;
+    };
+
+    std::mutex mu;
+    std::condition_variable cv;
+    Snapshot snapshot;
+
+    auto callback = webrtc::make_ref_counted<StatsCollectorCallback>(
+        [&mu, &cv, &snapshot](const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
+            Snapshot local;
+            if (report) {
+                for (const auto* inbound : report->GetStatsOfType<webrtc::RTCInboundRtpStreamStats>()) {
+                    if (!inbound || !inbound->kind || *inbound->kind != "video") continue;
+
+                    if (inbound->bytes_received) local.in_bytes += *inbound->bytes_received;
+                    if (inbound->packets_received) local.in_pkts += *inbound->packets_received;
+                    if (inbound->packets_lost && *inbound->packets_lost > 0) {
+                        local.lost_pkts += static_cast<uint32_t>(*inbound->packets_lost);
+                    }
+                    if (inbound->frames_per_second) {
+                        local.fps = std::max(local.fps,
+                                             static_cast<uint32_t>(*inbound->frames_per_second + 0.5));
+                    }
+                    if (inbound->jitter) {
+                        local.jitter_ms = std::max(
+                            local.jitter_ms, static_cast<uint32_t>(*inbound->jitter * 1000.0 + 0.5));
+                    }
+                    if (inbound->freeze_count) {
+                        local.freeze_count = std::max(local.freeze_count, *inbound->freeze_count);
+                    }
+                    if (inbound->frames_dropped) {
+                        local.decode_fail_count =
+                            std::max(local.decode_fail_count, *inbound->frames_dropped);
+                    }
+                }
+
+                for (const auto* pair : report->GetStatsOfType<webrtc::RTCIceCandidatePairStats>()) {
+                    if (!pair) continue;
+                    if (pair->current_round_trip_time) {
+                        local.rtt_ms = std::max(
+                            local.rtt_ms,
+                            static_cast<uint32_t>(*pair->current_round_trip_time * 1000.0 + 0.5));
+                    }
+                    if (pair->available_incoming_bitrate) {
+                        local.bitrate_kbps = std::max(
+                            local.bitrate_kbps,
+                            static_cast<uint32_t>(*pair->available_incoming_bitrate / 1000.0 + 0.5));
+                    }
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                snapshot = local;
+                snapshot.done = true;
+            }
+            cv.notify_one();
+        });
+
+    peer_connection_->GetStats(callback.get());
+
+    std::unique_lock<std::mutex> lk(mu);
+    if (!cv.wait_for(lk, std::chrono::milliseconds(1500), [&snapshot] { return snapshot.done; })) {
+        return false;
+    }
+
+    out_stats->in_bound_bytes = snapshot.in_bytes;
+    out_stats->in_bound_pkts = snapshot.in_pkts;
+    out_stats->lost_pkts = snapshot.lost_pkts;
+    out_stats->fps = snapshot.fps;
+    out_stats->jitter_ms = snapshot.jitter_ms;
+    out_stats->freeze_count = snapshot.freeze_count;
+    out_stats->decode_fail_count = snapshot.decode_fail_count;
+    out_stats->rtt_ms = snapshot.rtt_ms;
+    out_stats->bitrate_kbps = snapshot.bitrate_kbps;
+    return true;
 }
 
 }  // namespace rflow::client::impl

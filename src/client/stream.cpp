@@ -1,12 +1,6 @@
 /**
  * @file   stream.cpp
  * @brief  open_stream / close_stream / get_stats
- *
- * 实现要点：
- *   - open_stream 在已 connect 的前提下，向 RtcStreamManager 申请一路 RtcStreamSession；
- *     通过 state_sink / frame_sink 把底层事件桥接回用户的 stream_cb；
- *   - close_stream 幂等：从 State::streams 取出 shared_ptr，释放 impl 时会触发其 Close。
- *   - 所有用户回调均在锁外触发，避免与 state.mu 形成重入死锁。
  */
 
 #include "rflow/Client/librflow_client_api.h"
@@ -14,11 +8,16 @@
 #include "internal/handles.h"
 #include "internal/state.h"
 
+#include "common/internal/handle.h"
 #include "common/internal/last_error.h"
 #include "common/internal/logger.h"
+#include "common/internal/frame_impl.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <memory>
+#include <new>
 #include <utility>
 
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
@@ -28,26 +27,97 @@
 #  include "api/video/video_frame.h"
 #endif
 
+namespace {
+
+librflow_stream_stats_t MakeEmptyStatsSnapshot() {
+    auto* s = new (std::nothrow) librflow_stream_stats_s();
+    if (!s) return nullptr;
+    s->magic = rflow::kMagicStreamStats;
+    s->refcount.store(1, std::memory_order_relaxed);
+    return s;
+}
+
+void FillLocalStatsSnapshot(const librflow_stream_s& sh, librflow_stream_stats_s* stats) {
+    if (!stats) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (sh.opened_at != std::chrono::steady_clock::time_point{}) {
+        stats->duration_ms = static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - sh.opened_at).count());
+    }
+    stats->in_bound_pkts = sh.video_frames_received.load(std::memory_order_relaxed);
+}
+
+void ResetOpenedStats(librflow_stream_s& sh) {
+    const auto now = std::chrono::steady_clock::now();
+    sh.opened_at = now;
+    sh.last_stats_emit_at = now;
+    sh.video_frames_received.store(0, std::memory_order_relaxed);
+    sh.last_stats_frames_received.store(0, std::memory_order_relaxed);
+}
+
+void MaybeEmitPeriodicStats(librflow_stream_s& sh) {
+    if (!sh.cb.on_stream_stats) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (sh.last_stats_emit_at != std::chrono::steady_clock::time_point{} &&
+        now - sh.last_stats_emit_at < std::chrono::seconds(1)) {
+        return;
+    }
+
+    auto stats = MakeEmptyStatsSnapshot();
+    if (!stats) {
+        return;
+    }
+
+    auto* ms = const_cast<librflow_stream_stats_s*>(stats);
+    FillLocalStatsSnapshot(sh, ms);
+
+#if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
+    if (sh.impl) {
+        auto pull = std::static_pointer_cast<rflow::client::impl::RtcStreamSession>(sh.impl);
+        pull->CollectStats(ms);
+    }
+#endif
+
+    const uint64_t current = sh.video_frames_received.load(std::memory_order_relaxed);
+    const uint64_t previous =
+        sh.last_stats_frames_received.exchange(current, std::memory_order_relaxed);
+    const int64_t elapsed_ms = sh.last_stats_emit_at == std::chrono::steady_clock::time_point{}
+        ? 1000
+        : std::max<int64_t>(
+              1,
+              std::chrono::duration_cast<std::chrono::milliseconds>(now - sh.last_stats_emit_at)
+                  .count());
+    ms->fps = static_cast<uint32_t>(((current - previous) * 1000ULL) / elapsed_ms);
+    sh.last_stats_emit_at = now;
+
+    sh.cb.on_stream_stats(stats, sh.cb.userdata);
+    librflow_stream_stats_release(stats);
+}
+
+}  // namespace
+
 extern "C" {
 
 rflow_err_t librflow_open_stream(int32_t index,
-                                  librflow_stream_param_t param,
-                                  librflow_stream_cb_t    cb,
-                                  librflow_stream_handle_t* out_handle) {
+                                 librflow_stream_param_t param,
+                                 librflow_stream_cb_t cb,
+                                 librflow_stream_handle_t* out_handle) {
     if (!out_handle) return RFLOW_ERR_PARAM;
     *out_handle = nullptr;
 
     if (param && param->magic != rflow::client::kMagicStreamParam) return RFLOW_ERR_PARAM;
-    if (!cb || cb->magic != rflow::client::kMagicStreamCb)         return RFLOW_ERR_PARAM;
+    if (!cb || cb->magic != rflow::client::kMagicStreamCb) return RFLOW_ERR_PARAM;
 
     auto& s = rflow::client::state();
 
-    // 1. 构造 handle，登记到 State::streams；过程中做状态 & 去重检查
-    auto sh   = std::make_shared<librflow_stream_s>();
+    auto sh = std::make_shared<librflow_stream_s>();
     sh->magic = rflow::client::kMagicStream;
     sh->index = index;
     sh->state.store(RFLOW_STREAM_IDLE);
-    sh->cb    = *cb;
+    sh->cb = *cb;
 
     {
         std::lock_guard<std::mutex> lk(s.mu);
@@ -65,16 +135,17 @@ rflow_err_t librflow_open_stream(int32_t index,
     }
 
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-    // 2. 构造 sinks（弱引用 stream_s，避免与 impl 形成环）
     std::weak_ptr<librflow_stream_s> wsh = sh;
     const int32_t captured_index = index;
-    // seq 计数器：跨回调持久，放 shared_ptr 便于闭包拷贝
     auto seq_counter = std::make_shared<std::atomic<uint32_t>>(0);
 
     auto state_sink = [wsh](rflow_stream_state_t st, rflow_err_t reason) {
         auto p = wsh.lock();
         if (!p) return;
         p->state.store(st);
+        if (st == RFLOW_STREAM_OPENED) {
+            ResetOpenedStats(*p);
+        }
         if (p->cb.on_state) {
             p->cb.on_state(p.get(), st, reason, p->cb.userdata);
         }
@@ -82,15 +153,22 @@ rflow_err_t librflow_open_stream(int32_t index,
 
     auto frame_sink = [wsh, captured_index, seq_counter](const webrtc::VideoFrame& vf) {
         auto p = wsh.lock();
-        if (!p || !p->cb.on_video) return;
+        if (!p) return;
+
         const uint32_t seq = seq_counter->fetch_add(1, std::memory_order_relaxed);
         auto f = rflow::client::impl::MakeVideoFrameFromRtcFrame(vf, captured_index, seq);
         if (!f) return;
-        p->cb.on_video(p.get(), f, p->cb.userdata);
+
+        p->video_frames_received.fetch_add(1, std::memory_order_relaxed);
+
+        if (p->cb.on_video) {
+            p->cb.on_video(p.get(), f, p->cb.userdata);
+        }
         librflow_video_frame_release(f);
+
+        MaybeEmitPeriodicStats(*p);
     };
 
-    // 3. 调用 Manager 建底层流（锁外；sinks 可能在此调用期间就同步触达一次）
     std::shared_ptr<rflow::client::impl::RtcStreamSession> pull;
     rflow_err_t e = rflow::client::impl::RtcStreamManager::Instance().OpenStream(
         index, param, std::move(state_sink), std::move(frame_sink), &pull);
@@ -103,8 +181,8 @@ rflow_err_t librflow_open_stream(int32_t index,
 
     sh->impl = std::static_pointer_cast<void>(pull);
 #else
-    // 无 WebRTC 实现时：保留历史 stub 行为，直接 OPENED
     sh->state.store(RFLOW_STREAM_OPENED);
+    ResetOpenedStats(*sh);
     if (sh->cb.on_state) {
         sh->cb.on_state(sh.get(), RFLOW_STREAM_OPENED, RFLOW_OK, sh->cb.userdata);
     }
@@ -116,7 +194,7 @@ rflow_err_t librflow_open_stream(int32_t index,
 }
 
 rflow_err_t librflow_close_stream(librflow_stream_handle_t handle) {
-    if (!handle) return RFLOW_OK;  // 幂等
+    if (!handle) return RFLOW_OK;
 
     auto& s = rflow::client::state();
 
@@ -130,7 +208,6 @@ rflow_err_t librflow_close_stream(librflow_stream_handle_t handle) {
     }
 
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-    // 先析构底层实现（其 Close 会通过 state_sink 触达用户 on_state(CLOSED)）。
     if (auto impl = std::move(sh->impl)) {
         auto pull = std::static_pointer_cast<rflow::client::impl::RtcStreamSession>(impl);
         pull->Close();
@@ -149,12 +226,38 @@ rflow_err_t librflow_close_stream(librflow_stream_handle_t handle) {
 }
 
 rflow_err_t librflow_stream_get_stats(librflow_stream_handle_t handle,
-                                       librflow_stream_stats_t*  out_stats) {
+                                      librflow_stream_stats_t* out_stats) {
     if (!handle || handle->magic != rflow::client::kMagicStream) return RFLOW_ERR_PARAM;
     if (!out_stats) return RFLOW_ERR_PARAM;
-    // TODO: 经 RtcStreamSession/PeerConnection::GetStats 拉取并映射到 librflow_stream_stats_s
-    *out_stats = nullptr;
-    return RFLOW_ERR_NOT_SUPPORT;
+
+    auto stats = MakeEmptyStatsSnapshot();
+    if (!stats) {
+        *out_stats = nullptr;
+        return RFLOW_ERR_FAIL;
+    }
+
+    auto* ms = const_cast<librflow_stream_stats_s*>(stats);
+    FillLocalStatsSnapshot(*handle, ms);
+
+#if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
+    bool collected = false;
+    if (handle->impl) {
+        auto pull = std::static_pointer_cast<rflow::client::impl::RtcStreamSession>(handle->impl);
+        collected = pull->CollectStats(ms);
+    }
+    if (!collected && ms->fps == 0) {
+        const uint32_t duration_ms = std::max<uint32_t>(1, ms->duration_ms);
+        const uint64_t frames = handle->video_frames_received.load(std::memory_order_relaxed);
+        ms->fps = static_cast<uint32_t>((frames * 1000ULL) / duration_ms);
+    }
+#else
+    const uint32_t duration_ms = std::max<uint32_t>(1, ms->duration_ms);
+    const uint64_t frames = handle->video_frames_received.load(std::memory_order_relaxed);
+    ms->fps = static_cast<uint32_t>((frames * 1000ULL) / duration_ms);
+#endif
+
+    *out_stats = stats;
+    return RFLOW_OK;
 }
 
 }  // extern "C"
