@@ -1,6 +1,7 @@
 #include "publisher.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <chrono>
 #include <iostream>
 #include <utility>
@@ -74,6 +75,12 @@ bool Publisher::Start() {
     cfg.common.video_codec                   = video_codec_;
     if (min_kbps_ == max_kbps_) {
         cfg.common.bitrate_mode = "cbr";
+    }
+    cfg.common.degradation_preference = "maintain_framerate";
+    if (const char* deg = std::getenv("RFLOW_SVC_DEGRADATION_PREFERENCE")) {
+        if (deg[0] != '\0') {
+            cfg.common.degradation_preference = deg;
+        }
     }
 
     // Rockchip MPP 硬件编解码：根据编译宏默认打开；运行时再由 WEBRTC_MPP_* 等环境变量二次控制。

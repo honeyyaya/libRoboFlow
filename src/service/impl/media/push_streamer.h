@@ -33,7 +33,8 @@ struct PushStreamerCommonConfig {
     int target_bitrate_kbps{1000};
     int min_bitrate_kbps{100};
     int max_bitrate_kbps{2000};
-    std::string degradation_preference{"balanced"};
+    /// WebRTC 弱网降质：maintain_framerate = 优先保帧率、倾向降分辨率（非 balanced / maintain_resolution）。
+    std::string degradation_preference{"maintain_framerate"};
     bool ice_prioritize_likely_pairs{true};
     std::string video_network_priority{"high"};
     int video_encoding_max_framerate{0};
