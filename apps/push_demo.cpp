@@ -164,7 +164,7 @@ int main(int argc, char* argv[]) {
                                       cfg.Get("SIGNALING_ADDR", "127.0.0.1:8765"));
         config.common.video_width = cfg.GetStreamInt(stream_id, "WIDTH", 1280);
         config.common.video_height = cfg.GetStreamInt(stream_id, "HEIGHT", 720);
-        config.common.video_fps = cfg.GetStreamInt(stream_id, "FPS", 30);
+        config.common.video_fps = cfg.GetStreamInt(stream_id, "FPS", 60);
         if (camera_arg.empty()) {
             camera_arg = cfg.GetStream(stream_id, "CAMERA", "");
         }
@@ -207,7 +207,7 @@ int main(int argc, char* argv[]) {
         config.backend.use_rockchip_mpp_mjpeg_decode =
             cfg.GetStreamInt(stream_id, "USE_ROCKCHIP_MPP_MJPEG_DECODE", 1) != 0;
         config.backend.use_rockchip_dual_mpp_mjpeg_h264 =
-            cfg.GetStreamInt(stream_id, "USE_DUAL_MPP_MJPEG_H264", 0) != 0;
+            cfg.GetStreamInt(stream_id, "USE_DUAL_MPP_MJPEG_H264", 1) != 0;
         {
             std::string mql = cfg.GetStream(stream_id, "MJPEG_QUEUE_LATEST_ONLY", "");
             if (mql.empty()) {
