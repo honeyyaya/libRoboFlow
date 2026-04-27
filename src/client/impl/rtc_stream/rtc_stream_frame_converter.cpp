@@ -25,6 +25,13 @@ uint64_t NowUtcMs() {
             std::chrono::system_clock::now().time_since_epoch()).count());
 }
 
+rflow_err_t AcquireHardwareBufferForSampling(void* /*userdata*/) {
+    return RFLOW_OK;
+}
+
+void ReleaseHardwareBufferAfterSampling(void* /*userdata*/) {
+}
+
 }  // namespace
 
 void FillCommonFields(librflow_video_frame_s* f,
@@ -76,6 +83,8 @@ librflow_video_frame_t MakeVideoFrameFromRtcFrame(const webrtc::VideoFrame& fram
         f->native_handle_type = RFLOW_NATIVE_HANDLE_ANDROID_HARDWARE_BUFFER;
         f->android_hardware_buffer = native->hardware_buffer();
         f->sync_fence_fd = native->sync_fence_fd();
+        f->sampling_acquire_fn = &AcquireHardwareBufferForSampling;
+        f->sampling_release_fn = &ReleaseHardwareBufferAfterSampling;
         f->buffer_ref = buffer;
         return f;
     }
