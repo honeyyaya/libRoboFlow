@@ -58,16 +58,20 @@ struct librflow_video_frame_s {
 
 struct librflow_stream_stats_s {
     uint32_t magic;
+    std::atomic<int32_t> refcount;
 
-    uint32_t duration_ms;
-    uint64_t in_bound_bytes;
-    uint64_t in_bound_pkts;
-    uint64_t out_bound_bytes;
-    uint64_t out_bound_pkts;
-    uint32_t lost_pkts;
-    uint32_t bitrate_kbps;
-    uint32_t rtt_ms;
-    uint32_t fps;
+    uint32_t duration_ms = 0;
+    uint64_t in_bound_bytes = 0;
+    uint64_t in_bound_pkts = 0;
+    uint64_t out_bound_bytes = 0;
+    uint64_t out_bound_pkts = 0;
+    uint32_t lost_pkts = 0;
+    uint32_t bitrate_kbps = 0;
+    uint32_t rtt_ms = 0;
+    uint32_t fps = 0;
+    uint32_t jitter_ms = 0;
+    uint32_t freeze_count = 0;
+    uint32_t decode_fail_count = 0;
 };
 
 #endif  // __RFLOW_INTERNAL_FRAME_IMPL_H__
