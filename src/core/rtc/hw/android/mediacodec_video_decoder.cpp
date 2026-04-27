@@ -420,7 +420,8 @@ struct AndroidMediaCodecVideoDecoder::Impl {
                         if (meta.tracking_id.has_value()) {
                             fb.set_id(*meta.tracking_id);
                         }
-                        cb->Decoded(fb.build());
+                        webrtc::VideoFrame frame = fb.build();
+                        cb->Decoded(frame);
                     }
                 }
                 AHardwareBuffer_release(hardware_buffer);

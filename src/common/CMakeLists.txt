@@ -24,4 +24,12 @@ target_include_directories(rflow_common
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL OR RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
+    target_include_directories(rflow_common SYSTEM PRIVATE
+        ${CMAKE_SOURCE_DIR}/include/webrtc
+        ${CMAKE_SOURCE_DIR}/include/webrtc/third_party/abseil-cpp
+        ${CMAKE_SOURCE_DIR}/include/webrtc/third_party/libyuv/include
+    )
+endif()
+
 target_link_libraries(rflow_common PRIVATE rflow_warnings)
