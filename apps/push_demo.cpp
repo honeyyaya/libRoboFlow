@@ -177,7 +177,7 @@ int main(int argc, char* argv[]) {
         config.common.max_bitrate_kbps = cfg.GetStreamInt(stream_id, "MAX_BITRATE", 3500);
         config.common.degradation_preference = cfg.GetStream(stream_id, "DEGRADATION_PREFERENCE", "");
         if (config.common.degradation_preference.empty()) {
-            config.common.degradation_preference = "balanced";
+            config.common.degradation_preference = "maintain_framerate";
         }
         {
             std::string icep = cfg.GetStream(stream_id, "ICE_PRIORITIZE_LIKELY_PAIRS", "");
