@@ -28,7 +28,7 @@ void CloseFd(int fd) {
 
 bool SignalingTimingTraceEnabled() {
     static const bool enabled = []() {
-        const char* v = std::getenv("WEBRTC_DEMO_SIGNALING_TIMING_TRACE");
+        const char* v = std::getenv("RFLOW_SIGNALING_TIMING_TRACE");
         return v && v[0] == '1';
     }();
     return enabled;

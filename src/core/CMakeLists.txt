@@ -103,10 +103,26 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
     endif()
     if(RFLOW_ENABLE_ROCKCHIP_MPP)
         target_compile_definitions(rflow_rtc_webrtc PRIVATE
-            WEBRTC_DEMO_HAVE_ROCKCHIP_MPP=1)
+            RFLOW_HAVE_ROCKCHIP_MPP=1)
         # 调用方 (service/impl 等) 编译期也能看到该宏
         target_compile_definitions(rflow_rtc_webrtc INTERFACE
-            WEBRTC_DEMO_HAVE_ROCKCHIP_MPP=1)
+            RFLOW_HAVE_ROCKCHIP_MPP=1)
+        find_path(RFLOW_MPP_INCLUDE_DIR
+            NAMES mpp_buffer.h
+            PATH_SUFFIXES rockchip
+            PATHS /usr/include /usr/local/include
+        )
+        find_library(RFLOW_MPP_LIB
+            NAMES rockchip_mpp mpp
+            PATHS /usr/lib /usr/lib64 /usr/local/lib /usr/local/lib64
+        )
+        if(NOT RFLOW_MPP_INCLUDE_DIR OR NOT RFLOW_MPP_LIB)
+            message(FATAL_ERROR
+                "RFLOW_ENABLE_ROCKCHIP_MPP=ON but mpp headers/libs not found. "
+                "Need mpp_buffer.h and librockchip_mpp/libmpp.")
+        endif()
+        target_include_directories(rflow_rtc_webrtc PRIVATE ${RFLOW_MPP_INCLUDE_DIR})
+        target_link_libraries(rflow_rtc_webrtc PRIVATE ${RFLOW_MPP_LIB})
     endif()
 endif()
 

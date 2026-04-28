@@ -50,7 +50,7 @@ namespace {
 
 bool SignalingTimingTraceEnabled() {
     static const bool enabled = []() {
-        const char* v = std::getenv("WEBRTC_DEMO_SIGNALING_TIMING_TRACE");
+        const char* v = std::getenv("RFLOW_SIGNALING_TIMING_TRACE");
         return v && v[0] == '1';
     }();
     return enabled;
@@ -937,11 +937,13 @@ public:
         }
 
         bool mpp_mjpeg_decode = config_.backend.use_rockchip_mpp_mjpeg_decode;
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
         bool allow_dual_mpp = config_.backend.use_rockchip_dual_mpp_mjpeg_h264;
         if (const char* ev = std::getenv("WEBRTC_DUAL_MPP_MJPEG_H264")) {
             if (ev[0] == '1' || ev[0] == 'y' || ev[0] == 'Y' || ev[0] == 't' || ev[0] == 'T') {
                 allow_dual_mpp = true;
+            } else if (ev[0] == '0' || ev[0] == 'n' || ev[0] == 'N' || ev[0] == 'f' || ev[0] == 'F') {
+                allow_dual_mpp = false;
             }
         }
         if (mpp_mjpeg_decode && config_.backend.use_rockchip_mpp_h264 && !allow_dual_mpp) {

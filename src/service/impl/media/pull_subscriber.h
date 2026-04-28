@@ -1,5 +1,5 @@
-#ifndef WEBRTC_DEMO_PULL_SUBSCRIBER_H_
-#define WEBRTC_DEMO_PULL_SUBSCRIBER_H_
+#ifndef RFLOW_PULL_SUBSCRIBER_H_
+#define RFLOW_PULL_SUBSCRIBER_H_
 
 #include <functional>
 #include <memory>
@@ -67,4 +67,4 @@ private:
 
 }  // namespace rflow::service::impl
 
-#endif
+#endif  // RFLOW_PULL_SUBSCRIBER_H_

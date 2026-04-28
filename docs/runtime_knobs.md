@@ -1,0 +1,67 @@
+# libRoboFlow Runtime Knobs (Low Latency)
+
+本文档只给出 `libRoboFlow` 当前生效的运行时变量命名。  
+历史 `webrtc_demo` 中的 `WEBRTC_DEMO_*` 在本仓库不再作为主口径，请统一使用 `RFLOW_*`。
+
+## 1) 低延迟核心变量（拉流侧）
+
+- `RFLOW_ZERO_PLAYOUT_MIN_PACING_MS`  
+  控制最小 playout pacing。`0` 最激进，越大越稳但会增加尾延迟。
+- `RFLOW_MAX_DECODE_QUEUE_SIZE`  
+  解码队列上限，建议低延迟场景 `4~8`。
+- `RFLOW_ENABLE_DECODE_QUEUE_GUARD` / `RFLOW_DECODE_QUEUE_GUARD_CAP`  
+  解码队列保护阈值，建议开启。
+
+## 2) 线程/调度变量（媒体线程）
+
+- `RFLOW_MEDIA_THREAD_SCHED`  
+  `rr` 使用 `SCHED_RR`；其他值走 `nice`/默认策略；`0|false|off` 关闭调度调整。
+- `RFLOW_MEDIA_THREAD_RR_PRIO`  
+  RR 优先级（`1~90`，默认 `20`）。
+- `RFLOW_MEDIA_THREAD_NICE`  
+  nice 值（`-20~19`，默认 `-8`）。
+- `RFLOW_MJPEG_DECODE_CPU`  
+  MJPEG 解码线程绑核。
+- `RFLOW_V4L2_CAPTURE_CPU`  
+  V4L2 采集线程绑核。
+
+## 3) Trace/观测变量
+
+- `RFLOW_SIGNALING_TIMING_TRACE=1`  
+  打印信令时序日志（push/pull/signaling client）。
+- `RFLOW_MEDIA_TIMING_TRACE=1`  
+  打印媒体 timing 日志（pull 侧）。
+- `RFLOW_MEDIA_TIMING_TRACE_EVERY_N=30`  
+  每 N 帧打印一次 timing。
+- `WEBRTC_E2E_LATENCY_TRACE=1`  
+  打开 E2E trace 关联（含 frame tracking id）。
+
+## 4) 与 webrtc_demo 命名迁移
+
+- `WEBRTC_DEMO_ENABLE_FLEXFEC` -> `RFLOW_ENABLE_FLEXFEC`
+- `WEBRTC_DEMO_SIGNALING_TIMING_TRACE` -> `RFLOW_SIGNALING_TIMING_TRACE`
+- `WEBRTC_DEMO_MEDIA_TIMING_TRACE` -> `RFLOW_MEDIA_TIMING_TRACE`
+- `WEBRTC_DEMO_MEDIA_TIMING_TRACE_EVERY_N` -> `RFLOW_MEDIA_TIMING_TRACE_EVERY_N`
+- `WEBRTC_DEMO_MEDIA_THREAD_SCHED` -> `RFLOW_MEDIA_THREAD_SCHED`
+- `WEBRTC_DEMO_MEDIA_THREAD_RR_PRIO` -> `RFLOW_MEDIA_THREAD_RR_PRIO`
+- `WEBRTC_DEMO_MEDIA_THREAD_NICE` -> `RFLOW_MEDIA_THREAD_NICE`
+- `WEBRTC_DEMO_MJPEG_DECODE_CPU` -> `RFLOW_MJPEG_DECODE_CPU`
+- `WEBRTC_DEMO_V4L2_CAPTURE_CPU` -> `RFLOW_V4L2_CAPTURE_CPU`
+- `WEBRTC_DEMO_ZERO_PLAYOUT_MIN_PACING_MS` -> `RFLOW_ZERO_PLAYOUT_MIN_PACING_MS`
+- `WEBRTC_DEMO_MAX_DECODE_QUEUE_SIZE` -> `RFLOW_MAX_DECODE_QUEUE_SIZE`
+
+## 5) 一键 720p60 ultra-lowlat 参考
+
+```bash
+export E2E_LOWLAT_PROFILE=steady
+export PUSH_LOWLATENCY_PROFILE=stable
+export E2E_CPU_PIN_MODE=auto
+export E2E_SCHED_MODE=auto
+export E2E_FRAMES=800
+export E2E_SKIP_FIRST_PAIRS=60
+export RFLOW_SIGNALING_TIMING_TRACE=1
+export RFLOW_MEDIA_TIMING_TRACE=1
+export WEBRTC_E2E_LATENCY_TRACE=1
+export WEBRTC_PREFER_MJPEG_PIXFMT=1
+./scripts/pull.sh --e2e 127.0.0.1:8765 livestream /dev/video0
+```

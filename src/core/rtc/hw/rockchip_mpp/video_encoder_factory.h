@@ -1,5 +1,5 @@
-#ifndef WEBRTC_DEMO_HW_ROCKCHIP_MPP_VIDEO_ENCODER_FACTORY_H_
-#define WEBRTC_DEMO_HW_ROCKCHIP_MPP_VIDEO_ENCODER_FACTORY_H_
+#ifndef RFLOW_HW_ROCKCHIP_MPP_VIDEO_ENCODER_FACTORY_H_
+#define RFLOW_HW_ROCKCHIP_MPP_VIDEO_ENCODER_FACTORY_H_
 
 #include <memory>
 
@@ -14,5 +14,5 @@ std::unique_ptr<webrtc::VideoEncoderFactory> CreateVideoEncoderFactory();
 
 }  // namespace rflow::rtc::hw::rockchip_mpp
 
-#endif
+#endif  // RFLOW_HW_ROCKCHIP_MPP_VIDEO_ENCODER_FACTORY_H_
 

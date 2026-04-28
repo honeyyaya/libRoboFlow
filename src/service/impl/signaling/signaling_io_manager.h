@@ -1,5 +1,5 @@
-#ifndef WEBRTC_DEMO_SIGNALING_IO_MANAGER_H_
-#define WEBRTC_DEMO_SIGNALING_IO_MANAGER_H_
+#ifndef RFLOW_SIGNALING_IO_MANAGER_H_
+#define RFLOW_SIGNALING_IO_MANAGER_H_
 
 #include <atomic>
 #include <memory>
@@ -19,6 +19,7 @@ struct SignalingClientSessionSlot {
     std::atomic<int>              fd{-1};
     std::atomic<bool>             active{true};
     std::string                   read_buffer;
+    size_t                        parse_offset{0};
 };
 
 class SignalingIoManager {
@@ -56,4 +57,4 @@ class SignalingIoManager {
 
 }  // namespace rflow::service::impl
 
-#endif  // WEBRTC_DEMO_SIGNALING_IO_MANAGER_H_
+#endif  // RFLOW_SIGNALING_IO_MANAGER_H_

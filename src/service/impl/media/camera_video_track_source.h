@@ -1,5 +1,5 @@
-#ifndef WEBRTC_DEMO_CAMERA_VIDEO_TRACK_SOURCE_H_
-#define WEBRTC_DEMO_CAMERA_VIDEO_TRACK_SOURCE_H_
+#ifndef RFLOW_CAMERA_VIDEO_TRACK_SOURCE_H_
+#define RFLOW_CAMERA_VIDEO_TRACK_SOURCE_H_
 
 #include <atomic>
 #include <cstdint>
@@ -32,13 +32,13 @@ namespace rflow::service::impl {
 
 /// Linux 直采 MJPEG 时的队列与 NV12 池参数（传入 nullptr 则用默认值）。
 struct V4l2MjpegPipelineOptions {
-    bool mjpeg_queue_latest_only = true;
-    int mjpeg_queue_max = 2;
-    int nv12_pool_slots = 4;
+    bool mjpeg_queue_latest_only = false;
+    int mjpeg_queue_max = 8;
+    int nv12_pool_slots = 6;
     /// V4L2 MMAP 缓冲个数；低延迟可设 2（需解码跟得上采集）。范围 2～32。
     int v4l2_buffer_count = 2;
     /// poll 超时毫秒；有数据即返回，仅影响无数据时的唤醒间隔。
-    int v4l2_poll_timeout_ms = 5;
+    int v4l2_poll_timeout_ms = 50;
     /// 为 true 时不使用解码工作线程，MJPEG 在采集线程内解码（低延迟，采集易受解码耗时影响）。
     bool mjpeg_decode_inline = false;
     /// 为 true 时默认启用 V4L2 MJPEG → MPP EXT_DMA（环境变量 WEBRTC_MJPEG_V4L2_DMABUF 未设置时生效；设置了则以环境为准）。
@@ -125,17 +125,17 @@ private:
     std::condition_variable jpeg_queue_cv_;
     std::deque<MjpegPendingBuf> jpeg_queue_;
     bool decode_worker_exit_{false};
-    bool mjpeg_queue_latest_only_{true};
-    size_t mjpeg_queue_max_{2};
-    int nv12_pool_slots_{4};
+    bool mjpeg_queue_latest_only_{false};
+    size_t mjpeg_queue_max_{8};
+    int nv12_pool_slots_{6};
     int v4l2_buffer_count_{2};
-    int v4l2_poll_timeout_ms_{5};
+    int v4l2_poll_timeout_ms_{50};
     std::vector<webrtc::scoped_refptr<webrtc::NV12Buffer>> nv12_pool_;
     int nv12_pool_w_{0};
     int nv12_pool_h_{0};
     size_t nv12_ring_next_{0};
     bool mjpeg_decode_inline_{false};
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     bool v4l2_ext_dma_config_{false};
     bool mjpeg_rga_config_{false};
     bool WantV4l2ExtDmabufToMpp() const;
@@ -150,7 +150,7 @@ private:
     std::vector<size_t> direct_mmap_len_;
     /// VIDIOC_EXPBUF 得到的 dma-buf fd，与 mmap 同一块物理内存；-1 表示未导出或失败。
     std::vector<int> direct_expbuf_fd_;
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     std::unique_ptr<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder> mjpeg_mpp_;
 #endif
 #endif
@@ -160,4 +160,4 @@ private:
 
 }  // namespace rflow::service::impl
 
-#endif
+#endif  // RFLOW_CAMERA_VIDEO_TRACK_SOURCE_H_

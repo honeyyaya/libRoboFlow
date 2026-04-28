@@ -1,5 +1,5 @@
-#ifndef WEBRTC_DEMO_MPP_NATIVE_DEC_FRAME_BUFFER_H_
-#define WEBRTC_DEMO_MPP_NATIVE_DEC_FRAME_BUFFER_H_
+#ifndef RFLOW_MPP_NATIVE_DEC_FRAME_BUFFER_H_
+#define RFLOW_MPP_NATIVE_DEC_FRAME_BUFFER_H_
 
 #include <atomic>
 #include <cstdint>
@@ -96,4 +96,4 @@ class MppNativeDecFrameBuffer : public webrtc::VideoFrameBuffer {
 
 }  // namespace rflow::rtc::hw::rockchip_mpp
 
-#endif
+#endif  // RFLOW_MPP_NATIVE_DEC_FRAME_BUFFER_H_

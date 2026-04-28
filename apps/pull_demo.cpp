@@ -1,7 +1,9 @@
 #include "media/pull_subscriber.h"
 #include "config/config_loader.h"
 
+#if RFLOW_APP_HAS_SDL2
 #include <SDL.h>
+#endif
 #include "rtc_base/time_utils.h"
 
 #include <atomic>
@@ -22,6 +24,7 @@
 namespace {
 
 // 拉流窗口（仅非 headless），与可执行文件同编译单元，避免多文件
+#if RFLOW_APP_HAS_SDL2
 class SdlDisplay {
 public:
     explicit SdlDisplay(const std::string& title) : title_(title) {
@@ -164,6 +167,18 @@ private:
     uint16_t frame_trace_id_{0};
     int64_t frame_sink_callback_done_us_{0};
 };
+#else
+class SdlDisplay {
+public:
+    explicit SdlDisplay(const std::string&) {}
+    ~SdlDisplay() = default;
+    SdlDisplay(const SdlDisplay&) = delete;
+    SdlDisplay& operator=(const SdlDisplay&) = delete;
+    void UpdateFrame(const uint8_t*, int, int, int, uint16_t, int64_t) {}
+    bool PollAndRender() { return true; }
+    bool IsOpen() const { return false; }
+};
+#endif
 
 }  // namespace
 
@@ -316,6 +331,12 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+#if !RFLOW_APP_HAS_SDL2
+    if (!headless) {
+        std::cout << "[PullDemo] SDL2 not available in this build, force headless mode." << std::endl;
+        headless = true;
+    }
+#endif
 
     if (strict_fps && !headless) {
         std::cerr << "[Headless] --strict-fps needs --headless; ignored\n";

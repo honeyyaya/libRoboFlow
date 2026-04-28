@@ -1,5 +1,5 @@
-#ifndef WEBRTC_DEMO_RK_MPP_MJPEG_DECODER_H_
-#define WEBRTC_DEMO_RK_MPP_MJPEG_DECODER_H_
+#ifndef RFLOW_RK_MPP_MJPEG_DECODER_H_
+#define RFLOW_RK_MPP_MJPEG_DECODER_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -105,4 +105,4 @@ class RkMppMjpegDecoder {
 
 }  // namespace rflow::rtc::hw::rockchip_mpp
 
-#endif
+#endif  // RFLOW_RK_MPP_MJPEG_DECODER_H_
