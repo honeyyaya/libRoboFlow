@@ -1,0 +1,90 @@
+# ---- Build directories ----
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+/dist/
+
+# ---- CMake / Make / Ninja generated ----
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/Makefile
+/compile_commands.json
+/CTestTestfile.cmake
+/Testing/
+/install_manifest.txt
+/build.ninja
+/.ninja_deps
+/.ninja_log
+
+# ---- Autotools / configure leftovers ----
+/aclocal.m4
+/autom4te.cache/
+/config.log
+/config.status
+/configure
+/libtool
+/m4/
+/makedep*
+
+# ---- Binaries / libraries / objects ----
+*.o
+*.obj
+*.lo
+*.la
+*.dylib
+*.dll
+*.lib
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+*.elf
+
+# ---- Debug / profiling / coverage ----
+*.dSYM/
+*.su
+*.idb
+*.pdb
+*.mod*
+*.cmd
+*.gcno
+*.gcda
+*.gcov
+*.prof
+*.profraw
+*.profdata
+*.lcov
+coverage/
+
+# ---- Logs / runtime temp ----
+*.log
+*.pid
+*.pid.lock
+*.seed
+*.stackdump
+tmp/
+temp/
+
+# ---- Dependency caches ----
+.cache/
+.ccache/
+
+# ---- Editors / IDE ----
+.vscode/
+.idea/
+*.iml
+*.suo
+*.user
+*.userossc
+*.sln.docstates
+*.swp
+*.swo
+*~
+
+# ---- OS files ----
+.DS_Store
+Thumbs.db
