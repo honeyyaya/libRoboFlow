@@ -1,8 +1,9 @@
-#ifndef WEBRTC_DEMO_RK_MPP_H264_ENCODER_H_
-#define WEBRTC_DEMO_RK_MPP_H264_ENCODER_H_
+#ifndef RFLOW_RK_MPP_H264_ENCODER_H_
+#define RFLOW_RK_MPP_H264_ENCODER_H_
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "api/scoped_refptr.h"
@@ -91,13 +92,22 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   bool use_sync_encode_{false};
   bool use_task_encode_{false};
   bool task_read_packet_{true};
+  bool native_zero_copy_enabled_{true};
+  bool native_zero_copy_strict_{false};
+  int native_zero_copy_failures_{0};
+  int native_zero_copy_fail_disable_threshold_{3};
+  uint64_t native_zero_copy_frames_{0};
+  uint64_t native_copy_fallback_frames_{0};
   unsigned trace_every_n_{45};
 
   bool initialized_{false};
+  mutable std::mutex mpp_mu_;
   /// Annex-B 转换复用缓冲，避免每帧 std::vector 堆分配（容量随帧增长后保持稳定）。
   std::vector<uint8_t> annex_scratch_;
   /// MPP_ENC_SPLIT_BY_BYTE 多包输出时在 EOI 前累积裸码流，EOI 后一次性回调 WebRTC。
   std::vector<uint8_t> split_assembly_buf_;
+  /// Cached codec header (SPS/PPS) converted to Annex-B at InitEncode.
+  std::vector<uint8_t> cached_extra_info_annexb_;
 
   /// 与 WebRTC-VideoFrameTrackingIdAdvertised 配合，供接收端 RTP 扩展关联帧。
   uint16_t next_video_frame_tracking_id_{0};
@@ -105,4 +115,4 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
 
 }  // namespace rflow::rtc::hw::rockchip_mpp
 
-#endif
+#endif  // RFLOW_RK_MPP_H264_ENCODER_H_

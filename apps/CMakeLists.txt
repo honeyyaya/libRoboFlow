@@ -24,6 +24,23 @@ option(RFLOW_BUILD_STANDALONE_SERVICE_DEMOS
 
 # --- webrtc demo（push_demo 无 SDL；pull_demo 需 SDL2；mpp_h264_smoke 需 Rockchip MPP）---
 if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_STANDALONE_SERVICE_DEMOS)
+    set(_RFLOW_APPS_MPP_LINK_TARGET "")
+    if(RFLOW_ENABLE_ROCKCHIP_MPP)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(RFLOW_APPS_MPP IMPORTED_TARGET rockchip_mpp)
+            if(TARGET PkgConfig::RFLOW_APPS_MPP)
+                set(_RFLOW_APPS_MPP_LINK_TARGET PkgConfig::RFLOW_APPS_MPP)
+            endif()
+        endif()
+        if(NOT _RFLOW_APPS_MPP_LINK_TARGET)
+            find_library(RFLOW_APPS_MPP_LIB NAMES rockchip_mpp mpp
+                PATHS /usr/lib/aarch64-linux-gnu /usr/lib /usr/lib64 /usr/local/lib /usr/local/lib64)
+            if(RFLOW_APPS_MPP_LIB)
+                set(_RFLOW_APPS_MPP_LINK_TARGET ${RFLOW_APPS_MPP_LIB})
+            endif()
+        endif()
+    endif()
     # push_demo 链路与 librflow_svc 一致：impl 仅含业务对象，须并入 common/core/rtc_webrtc + GIO（Linux）。
     add_executable(push_demo push_demo.cpp
         $<TARGET_OBJECTS:rflow_common>
@@ -54,41 +71,49 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_ST
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(push_demo PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
     endif()
+    if(_RFLOW_APPS_MPP_LINK_TARGET)
+        target_link_libraries(push_demo PRIVATE ${_RFLOW_APPS_MPP_LINK_TARGET})
+    endif()
 
+    add_executable(pull_demo pull_demo.cpp
+        $<TARGET_OBJECTS:rflow_common>
+        $<TARGET_OBJECTS:rflow_core>
+        $<TARGET_OBJECTS:rflow_rtc_webrtc>
+        $<TARGET_OBJECTS:rflow_svc_impl>
+    )
+    target_include_directories(pull_demo PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/service/impl
+    )
+    target_link_libraries(pull_demo PRIVATE
+        rflow_warnings
+        rflow_webrtc_prebuilt
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
+    )
+    target_compile_definitions(pull_demo PRIVATE RFLOW_APP_HAS_SDL2=0)
     find_package(SDL2 QUIET)
     if(TARGET SDL2::SDL2)
-        add_executable(pull_demo pull_demo.cpp
-            $<TARGET_OBJECTS:rflow_common>
-            $<TARGET_OBJECTS:rflow_core>
-            $<TARGET_OBJECTS:rflow_rtc_webrtc>
-            $<TARGET_OBJECTS:rflow_svc_impl>
-        )
-        target_include_directories(pull_demo PRIVATE
-            ${CMAKE_SOURCE_DIR}/include
-            ${CMAKE_SOURCE_DIR}/src
-            ${CMAKE_SOURCE_DIR}/src/service/impl
-        )
-        target_link_libraries(pull_demo PRIVATE
-            rflow_warnings
-            rflow_webrtc_prebuilt
-            Threads::Threads
-            ${CMAKE_DL_LIBS}
-            SDL2::SDL2
-        )
-        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            find_package(PkgConfig QUIET)
-            if(PkgConfig_FOUND)
-                pkg_check_modules(RFLOW_APPS_GIO_PULL IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
-                if(TARGET PkgConfig::RFLOW_APPS_GIO_PULL)
-                    target_link_libraries(pull_demo PRIVATE PkgConfig::RFLOW_APPS_GIO_PULL)
-                endif()
+        target_link_libraries(pull_demo PRIVATE SDL2::SDL2)
+        target_compile_definitions(pull_demo PRIVATE RFLOW_APP_HAS_SDL2=1)
+    else()
+        message(STATUS "apps: pull_demo built headless (SDL2::SDL2 not available)")
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(RFLOW_APPS_GIO_PULL IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+            if(TARGET PkgConfig::RFLOW_APPS_GIO_PULL)
+                target_link_libraries(pull_demo PRIVATE PkgConfig::RFLOW_APPS_GIO_PULL)
             endif()
         endif()
-        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-            target_compile_options(pull_demo PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
-        endif()
-    else()
-        message(STATUS "apps: pull_demo skipped (SDL2::SDL2 not available)")
+    endif()
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(pull_demo PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
+    endif()
+    if(_RFLOW_APPS_MPP_LINK_TARGET)
+        target_link_libraries(pull_demo PRIVATE ${_RFLOW_APPS_MPP_LINK_TARGET})
     endif()
 
     if(RFLOW_ENABLE_ROCKCHIP_MPP)
@@ -102,6 +127,7 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_ST
             ${CMAKE_SOURCE_DIR}/include
             ${CMAKE_SOURCE_DIR}/src
             ${CMAKE_SOURCE_DIR}/src/service/impl
+            /usr/include/rockchip
         )
         target_link_libraries(mpp_h264_smoke PRIVATE
             rflow_warnings
@@ -120,6 +146,9 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND TARGET rflow_svc_impl AND RFLOW_BUILD_ST
         endif()
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             target_compile_options(mpp_h264_smoke PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
+        endif()
+        if(_RFLOW_APPS_MPP_LINK_TARGET)
+            target_link_libraries(mpp_h264_smoke PRIVATE ${_RFLOW_APPS_MPP_LINK_TARGET})
         endif()
     else()
         message(STATUS "apps: mpp_h264_smoke skipped (RFLOW_ENABLE_ROCKCHIP_MPP=OFF)")

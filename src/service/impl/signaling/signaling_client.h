@@ -1,5 +1,5 @@
-#ifndef WEBRTC_DEMO_SIGNALING_CLIENT_H_
-#define WEBRTC_DEMO_SIGNALING_CLIENT_H_
+#ifndef RFLOW_SIGNALING_CLIENT_H_
+#define RFLOW_SIGNALING_CLIENT_H_
 
 #include "core/signal/protocol.h"
 #include "signaling/signaling_io_manager.h"
@@ -83,4 +83,4 @@ private:
 
 }  // namespace rflow::service::impl
 
-#endif  // WEBRTC_DEMO_SIGNALING_CLIENT_H_
+#endif  // RFLOW_SIGNALING_CLIENT_H_

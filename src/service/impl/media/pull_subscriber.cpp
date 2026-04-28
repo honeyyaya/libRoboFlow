@@ -45,7 +45,7 @@ namespace {
 
 bool SignalingTimingTraceEnabled() {
     static const bool enabled = []() {
-        const char* v = std::getenv("WEBRTC_DEMO_SIGNALING_TIMING_TRACE");
+        const char* v = std::getenv("RFLOW_SIGNALING_TIMING_TRACE");
         return v && v[0] == '1';
     }();
     return enabled;
@@ -66,7 +66,7 @@ void TraceSigTiming(const std::string& msg) {
 
 bool MediaTimingTraceEnabled() {
     static const bool enabled = []() {
-        const char* v = std::getenv("WEBRTC_DEMO_MEDIA_TIMING_TRACE");
+        const char* v = std::getenv("RFLOW_MEDIA_TIMING_TRACE");
         return v && v[0] == '1';
     }();
     return enabled;
@@ -74,7 +74,7 @@ bool MediaTimingTraceEnabled() {
 
 unsigned MediaTimingTraceEveryN() {
     static const unsigned every_n = []() {
-        if (const char* v = std::getenv("WEBRTC_DEMO_MEDIA_TIMING_TRACE_EVERY_N")) {
+        if (const char* v = std::getenv("RFLOW_MEDIA_TIMING_TRACE_EVERY_N")) {
             const int n = std::atoi(v);
             if (n >= 1 && n <= 600) {
                 return static_cast<unsigned>(n);
@@ -375,6 +375,7 @@ public:
         }
         const int64_t t_callback_done_us = e2e_trace ? webrtc::TimeMicros() : 0;
         on_frame_(argb_.data(), w, h, stride, frame.id(), t_callback_done_us);
+        MaybeShrinkArgbBuffer(w, h, n);
         if (on_frame_stats_) {
             on_frame_stats_(frame.id(), t_callback_done_us);
         }
@@ -398,6 +399,19 @@ public:
     }
 
 private:
+    void MaybeShrinkArgbBuffer(int w, int h, unsigned frame_index) {
+        if (frame_index == 0 || (frame_index % 300u) != 0u || w <= 0 || h <= 0) {
+            return;
+        }
+        const size_t expected = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
+        if (expected == 0 || argb_.capacity() <= expected * 4u || argb_.size() != expected) {
+            return;
+        }
+        std::vector<uint8_t> compact;
+        compact.assign(argb_.begin(), argb_.end());
+        argb_.swap(compact);
+    }
+
     Callback on_frame_;
     bool skip_argb_conversion_{false};
     StatsCallback on_frame_stats_;
@@ -899,12 +913,16 @@ void PullSubscriber::Play() {
     });
 
     if (!impl_->Initialize()) {
+        impl_->signaling_->Stop();
+        impl_->Shutdown();
         if (on_error_) {
             on_error_("WebRTC init failed");
         }
         return;
     }
     if (!impl_->signaling_->Start()) {
+        impl_->signaling_->Stop();
+        impl_->Shutdown();
         if (on_error_) {
             on_error_("Signaling failed. Run: ./build/bin/signaling_server");
         }

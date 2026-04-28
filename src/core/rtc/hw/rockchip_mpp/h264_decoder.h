@@ -1,5 +1,5 @@
-#ifndef WEBRTC_DEMO_HW_ROCKCHIP_MPP_H264_DECODER_H_
-#define WEBRTC_DEMO_HW_ROCKCHIP_MPP_H264_DECODER_H_
+#ifndef RFLOW_HW_ROCKCHIP_MPP_H264_DECODER_H_
+#define RFLOW_HW_ROCKCHIP_MPP_H264_DECODER_H_
 
 #include <vector>
 
@@ -44,5 +44,5 @@ private:
 
 }  // namespace rflow::rtc::hw::rockchip_mpp
 
-#endif
+#endif  // RFLOW_HW_ROCKCHIP_MPP_H264_DECODER_H_
 

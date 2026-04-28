@@ -16,6 +16,8 @@
 namespace rflow::service::impl {
 
 namespace {
+constexpr size_t kSignalingReadChunkBytes = 64 * 1024;
+constexpr size_t kSignalingMaxBufferedBytes = 4 * 1024 * 1024;
 
 void CloseFd(int fd) {
     if (fd < 0) return;
@@ -220,16 +222,27 @@ void SignalingIoManager::HandleReadable(const std::shared_ptr<SignalingClientSes
         return;
     }
 
-    char tmp[65536];
-    const ssize_t n = ::recv(fd, tmp, sizeof(tmp) - 1, 0);
+    char tmp[kSignalingReadChunkBytes];
+    const ssize_t n = ::recv(fd, tmp, sizeof(tmp), 0);
     if (n > 0) {
-        tmp[n] = '\0';
         slot->read_buffer.append(tmp, static_cast<size_t>(n));
-        size_t pos = 0;
-        while ((pos = slot->read_buffer.find('\n')) != std::string::npos) {
-            std::string line = slot->read_buffer.substr(0, pos);
-            slot->read_buffer.erase(0, pos + 1);
+        if (slot->read_buffer.size() > kSignalingMaxBufferedBytes) {
+            CloseSession(slot, "signaling receive buffer overflow (missing newline)");
+            return;
+        }
+        while (true) {
+            const size_t pos = slot->read_buffer.find('\n', slot->parse_offset);
+            if (pos == std::string::npos) {
+                break;
+            }
+            std::string line = slot->read_buffer.substr(slot->parse_offset, pos - slot->parse_offset);
+            slot->parse_offset = pos + 1;
             DispatchLine(slot, line);
+        }
+        if (slot->parse_offset > 0 &&
+            (slot->parse_offset == slot->read_buffer.size() || slot->parse_offset >= (slot->read_buffer.size() / 2))) {
+            slot->read_buffer.erase(0, slot->parse_offset);
+            slot->parse_offset = 0;
         }
         return;
     }

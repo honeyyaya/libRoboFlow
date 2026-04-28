@@ -51,7 +51,7 @@ namespace {
 
 bool MediaTimingTraceEnabled() {
     static const bool enabled = []() {
-        const char* v = std::getenv("WEBRTC_DEMO_MEDIA_TIMING_TRACE");
+        const char* v = std::getenv("RFLOW_MEDIA_TIMING_TRACE");
         return v && v[0] == '1';
     }();
     return enabled;
@@ -59,7 +59,8 @@ bool MediaTimingTraceEnabled() {
 
 unsigned MediaTimingTraceEveryN() {
     static const unsigned every_n = []() {
-        if (const char* v = std::getenv("WEBRTC_DEMO_MEDIA_TIMING_TRACE_EVERY_N")) {
+        const char* v = std::getenv("RFLOW_MEDIA_TIMING_TRACE_EVERY_N");
+        if (v) {
             const int n = std::atoi(v);
             if (n >= 1 && n <= 600) {
                 return static_cast<unsigned>(n);
@@ -103,7 +104,8 @@ std::string CurrentLocalDateTimeYmdHmsMs() {
 
 // ???????mpi_enc_test ??H.264 ???mdinfo_size ?????????HEVC ??????????
 // (ALIGN(hor_stride,64)>>6) * (ALIGN(ver_stride,16)>>4) * 16
-// ?????? RK3588 ??? (64x64 MB)*32 ??MPP ?????????????????????encode_put_frame ?????static size_t EncMdInfoBytesH264MpiEncTest(int hor_stride, int ver_stride) {
+// Old RK3588 estimate (64x64 MB)*32 can mismatch MPP expectation and break encode_put_frame.
+static size_t EncMdInfoBytesH264MpiEncTest(int hor_stride, int ver_stride) {
     return static_cast<size_t>(MPP_ALIGN(hor_stride, 64) >> 6) *
            static_cast<size_t>(MPP_ALIGN(ver_stride, 16) >> 4) * 16;
 }
@@ -136,7 +138,9 @@ static bool AnnexBHasIdrNalu(const uint8_t* p, size_t len) {
     return false;
 }
 
-// MPP stream_type=1 ???? 4 ??????????? + NAL ?????WebRTC RTP ???????????Annex B ???????// ?????? *out ??????????????????????????????????vector?????????????????????static bool FillAvcLengthPrefixedToAnnexB(const uint8_t* p, size_t len, std::vector<uint8_t>* out) {
+// MPP stream_type=1 uses 4-byte length-prefixed NAL payload. WebRTC RTP packetizer expects Annex-B.
+// Write converted Annex-B into *out and reuse caller-provided vector to avoid per-frame heap alloc.
+static bool FillAvcLengthPrefixedToAnnexB(const uint8_t* p, size_t len, std::vector<uint8_t>* out) {
     if (!out || len < 4) {
         return false;
     }
@@ -209,7 +213,8 @@ static bool FillRawSingleNalToAnnexB(const uint8_t* p, size_t len, std::vector<u
     return true;
 }
 
-/// ?????NV12/NV21 ????????? chroma stride????????MPP ?????????static void CopySemiPlanarToMppBuffer(const uint8_t* src_y,
+/// Copy semiplanar NV12/NV21 source (shared chroma stride) into MPP frame buffer.
+static void CopySemiPlanarToMppBuffer(const uint8_t* src_y,
                                       const uint8_t* src_uv,
                                       int src_stride_y,
                                       int src_stride_uv,
@@ -243,7 +248,8 @@ static void CopyNv12ToMppBuffer(const webrtc::NV12BufferInterface* nv12,
 
 static int H264ProfileIdForMpp(const webrtc::VideoCodec* c) {
     (void)c;
-    // SDP ??profile ?????????????????Main ???????????? streams.conf H264_PROFILE ???????????????    return 77;  // MPP H.264 main profile id
+    // Keep output aligned with negotiated main profile in current signaling config.
+    return 77;  // MPP H.264 main profile id
 }
 
 static int ReadEnvIntInRange(const char* name, int fallback, int min_v, int max_v) {
@@ -262,8 +268,30 @@ static int ReadEnvIntInRange(const char* name, int fallback, int min_v, int max_
     return static_cast<int>(v);
 }
 
+void MaybeShrinkScratchBuffer(std::vector<uint8_t>* buf,
+                              size_t max_capacity,
+                              size_t max_live_size,
+                              uint16_t periodic_tick) {
+    if (!buf || buf->capacity() <= max_capacity) {
+        return;
+    }
+    if ((periodic_tick % 300u) != 0u) {
+        return;
+    }
+    if (buf->size() > max_live_size) {
+        return;
+    }
+    std::vector<uint8_t> compact;
+    if (!buf->empty()) {
+        compact.assign(buf->begin(), buf->end());
+    }
+    buf->swap(compact);
+}
+
 /// MPP JPEG ?? NV12 ??????????64 ???????????? prep ??16 ?????????????stride ????????
-/// kNative ????????????????? CopySemiPlanarToMppBuffer???????64??????BSP ?? WEBRTC_MPP_ENC_HOR_STRIDE_ALIGN=16???static int MppEncHorStrideAlignPixels() {
+/// kNative pass-through degrades to CopySemiPlanarToMppBuffer when stride mismatches.
+/// Default to 64; abnormal BSP can force WEBRTC_MPP_ENC_HOR_STRIDE_ALIGN=16.
+static int MppEncHorStrideAlignPixels() {
     const char* e = std::getenv("WEBRTC_MPP_ENC_HOR_STRIDE_ALIGN");
     if (!e || !e[0]) {
         return 64;
@@ -331,7 +359,11 @@ void RkMppH264Encoder::DestroyMpp() {
         mpi_ = nullptr;
     }
     annex_scratch_.clear();
+    std::vector<uint8_t>().swap(annex_scratch_);
     split_assembly_buf_.clear();
+    std::vector<uint8_t>().swap(split_assembly_buf_);
+    cached_extra_info_annexb_.clear();
+    std::vector<uint8_t>().swap(cached_extra_info_annexb_);
 }
 
 bool RkMppH264Encoder::ApplyRcToCfg() {
@@ -346,7 +378,8 @@ bool RkMppH264Encoder::ApplyRcToCfg() {
 }
 
 int RkMppH264Encoder::MppH264LevelForSize(int width, int height, uint32_t fps) {
-    // H.264 Level??20p@>30???080p@>30 ???????? level????????????????????????????    if (width * height >= 1920 * 1080) {
+    // H.264 Level: 720p@>30 and 1080p@>30 require higher level.
+    if (width * height >= 1920 * 1080) {
         return fps > 30u ? 42 : 41;
     }
     if (width * height >= 1280 * 720) {
@@ -357,6 +390,7 @@ int RkMppH264Encoder::MppH264LevelForSize(int width, int height, uint32_t fps) {
 
 int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
                                  const webrtc::VideoEncoder::Settings& settings) {
+    std::lock_guard<std::mutex> lock(mpp_mu_);
     (void)settings;
     if (!inst || inst->codecType != webrtc::kVideoCodecH264) {
         return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
@@ -368,7 +402,7 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
     }
 
-    Release();
+    DestroyMpp();
 
     width_ = static_cast<int>(inst->width);
     height_ = static_cast<int>(inst->height);
@@ -407,15 +441,20 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         std::cout << "[Latency] MPP H264 GOP frames=" << gop_ << " fps=" << fps_ << "\n";
     }
     mpp_rc_mode_ = MPP_ENC_RC_MODE_VBR;
-    // ?????????????????????????????????IDR ?????????????????????????????????????????????    intra_refresh_mode_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_INTRA_REFRESH_MODE", 1, 0, 3);
+    // Keep default aligned with mpp_h264_smoke unless explicitly enabled.
+    intra_refresh_mode_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_INTRA_REFRESH_MODE", 0, 0, 3);
     const int mb_rows = std::max(1, (height_ + 15) / 16);
     const int fps_i = std::max(1, static_cast<int>(fps_));
     const int auto_refresh_arg = std::max(1, (mb_rows + fps_i - 1) / fps_i);
     intra_refresh_arg_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_INTRA_REFRESH_ARG", auto_refresh_arg, 1, 512);
-    // ???????????????????????????????????? WEBRTC_MPP_ENC_SPLIT_BYTES ????????????    split_bytes_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_SPLIT_BYTES", 0, 0, 4096);
+    // Default off for byte-splitting; enable for experiments via WEBRTC_MPP_ENC_SPLIT_BYTES.
+    split_bytes_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_SPLIT_BYTES", 0, 0, 4096);
     split_by_byte_enabled_ = split_bytes_ > 0;
-    // ?????????????????????????????? IDR ??????????????????????????????????????????????????????????    idr_min_interval_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_MIN_INTERVAL_MS", 800, 0, 5000);
-    // ???????????????????I ???????????????????????????????????????IDR ?????????????????    // ?????????min_interval?????force_max_wait ??????????????????????    idr_loss_quick_trigger_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_LOSS_QUICK_MS", 180, 0, 2000);
+    // Keyframe storm protection: limit continuous IDR injections with max-wait fallback.
+    idr_min_interval_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_MIN_INTERVAL_MS", 800, 0, 5000);
+    // In loss cases, allow quick-IDR window when last real IDR is old enough.
+    // Still bounded by force_max_wait upper limit.
+    idr_loss_quick_trigger_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_LOSS_QUICK_MS", 180, 0, 2000);
     idr_force_max_wait_ms_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_IDR_FORCE_MAX_WAIT_MS", 3000, 200, 15000);
     last_forced_idr_ctrl_us_ = -1;
     last_idr_emit_us_ = -1;
@@ -429,7 +468,19 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     mjpeg_to_h264_trace_enabled_ = ReadEnvIntInRange("WEBRTC_MJPEG_TO_H264_TRACE", 0, 0, 1) == 1;
     use_sync_encode_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_USE_SYNC", 0, 0, 1) == 1;
     use_task_encode_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_USE_TASK", 0, 0, 1) == 1;
+    if (use_task_encode_) {
+        RTC_LOG(LS_WARNING) << "[RkMppH264] task encode path is temporarily disabled; falling back to sync/non-task";
+        use_task_encode_ = false;
+        use_sync_encode_ = true;
+    }
     task_read_packet_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_TASK_READ_PACKET", 1, 0, 1) == 1;
+    native_zero_copy_enabled_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_NATIVE_ZERO_COPY", 1, 0, 1) == 1;
+    native_zero_copy_strict_ = ReadEnvIntInRange("WEBRTC_MPP_ENC_NATIVE_ZERO_COPY_STRICT", 0, 0, 1) == 1;
+    native_zero_copy_failures_ = 0;
+    native_zero_copy_fail_disable_threshold_ =
+        ReadEnvIntInRange("WEBRTC_MPP_ENC_NATIVE_ZERO_COPY_FAILS", 3, 1, 50);
+    native_zero_copy_frames_ = 0;
+    native_copy_fallback_frames_ = 0;
     trace_every_n_ =
         static_cast<unsigned>(ReadEnvIntInRange("WEBRTC_MPP_ENC_TRACE_EVERY_N", 45, 1, 600));
 
@@ -447,7 +498,9 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         DestroyMpp();
         return WEBRTC_VIDEO_CODEC_ERROR;
     }
-    // ??mpi_enc_test ????????????????????????get_packet ??????????????is_eoi ????????????????? get_packet ???????????    // ??????timeout ??????mpp_init ????????????????????????????????    RK_S64 output_timeout_ms = 4000;
+    // Same as mpi_enc_test: non-split mode should finish with one get_packet per frame.
+    // Timeout must be set after mpp_init on some platforms.
+    RK_S64 output_timeout_ms = 4000;
     if (const char* ev = std::getenv("WEBRTC_MPP_ENC_OUTPUT_TIMEOUT_MS")) {
         long v = std::strtol(ev, nullptr, 10);
         if (v > 0 && v <= 8000) {
@@ -461,11 +514,19 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
             input_timeout_ms = static_cast<RK_S64>(v);
         }
     }
-    if (mpi->control(ctx, MPP_SET_INPUT_TIMEOUT, &input_timeout_ms) != MPP_OK) {
-        RTC_LOG(LS_WARNING) << "[RkMppH264] MPP_SET_INPUT_TIMEOUT failed";
+    const MPP_RET set_in_to_ret = mpi->control(ctx, MPP_SET_INPUT_TIMEOUT, &input_timeout_ms);
+    if (set_in_to_ret != MPP_OK) {
+        RTC_LOG(LS_WARNING) << "[RkMppH264] MPP_SET_INPUT_TIMEOUT failed ret=" << set_in_to_ret
+                            << " val_ms=" << input_timeout_ms;
+    } else if (debug_enabled_) {
+        std::cout << "[RkMppH264Dbg] MPP_SET_INPUT_TIMEOUT ok val_ms=" << input_timeout_ms << std::endl;
     }
-    if (mpi->control(ctx, MPP_SET_OUTPUT_TIMEOUT, &output_timeout_ms) != MPP_OK) {
-        RTC_LOG(LS_WARNING) << "[RkMppH264] MPP_SET_OUTPUT_TIMEOUT failed";
+    const MPP_RET set_out_to_ret = mpi->control(ctx, MPP_SET_OUTPUT_TIMEOUT, &output_timeout_ms);
+    if (set_out_to_ret != MPP_OK) {
+        RTC_LOG(LS_WARNING) << "[RkMppH264] MPP_SET_OUTPUT_TIMEOUT failed ret=" << set_out_to_ret
+                            << " val_ms=" << output_timeout_ms;
+    } else if (debug_enabled_) {
+        std::cout << "[RkMppH264Dbg] MPP_SET_OUTPUT_TIMEOUT ok val_ms=" << output_timeout_ms << std::endl;
     }
 
     MppEncCfg cfg = nullptr;
@@ -497,7 +558,8 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     mpp_enc_cfg_set_u32(cfg, "rc:drop_thd", 20);
     mpp_enc_cfg_set_u32(cfg, "rc:drop_gap", 1);
 
-    // ????????cfg?????????MPP_ENC_SET_CFG????????? h264 ???????????????????????????????????BSP ??put_frame ???????    FillMppEncRcFields(cfg, target_bps_, min_bps_, max_bps_, fps_);
+    // Fill cfg only here; avoid premature MPP_ENC_SET_CFG before h264 fields are ready.
+    FillMppEncRcFields(cfg, target_bps_, min_bps_, max_bps_, fps_);
     if (mpp_rc_mode_ == MPP_ENC_RC_MODE_VBR || mpp_rc_mode_ == MPP_ENC_RC_MODE_AVBR) {
         mpp_enc_cfg_set_s32(cfg, "rc:qp_init", -1);
         mpp_enc_cfg_set_s32(cfg, "rc:qp_max", 51);
@@ -509,7 +571,7 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
 
     const int prof = H264ProfileIdForMpp(inst);
     mpp_enc_cfg_set_s32(cfg, "h264:profile", prof);
-    mpp_enc_cfg_set_s32(cfg, "h264:level", MppH264LevelForSize(width_, height_, fps_));
+    mpp_enc_cfg_set_s32(cfg, "h264:level", 40);
     mpp_enc_cfg_set_s32(cfg, "h264:cabac_en", 1);
     mpp_enc_cfg_set_s32(cfg, "h264:cabac_idc", 0);
     mpp_enc_cfg_set_s32(cfg, "h264:trans8x8", prof >= 100 ? 1 : 0);
@@ -522,7 +584,8 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
             intra_refresh_arg_ = 0;
         }
     }
-    // WebRTC RtpPacketizerH264 ??? Annex B ????????NAL??MPP ??? stream_type=1 ?? NAL???????? 0 ???RTP???    if (mpp_enc_cfg_set_s32(cfg, "h264:stream_type", 0) != MPP_OK) {
+    // WebRTC RtpPacketizerH264 expects Annex-B start codes.
+    if (mpp_enc_cfg_set_s32(cfg, "h264:stream_type", 0) != MPP_OK) {
         RTC_LOG(LS_WARNING) << "[RkMppH264] h264:stream_type=0 (Annex B) not applied, RTP may fail";
     }
 
@@ -548,20 +611,33 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     if (mpi->control(ctx, MPP_ENC_SET_HEADER_MODE, &header_mode) != MPP_OK) {
         RTC_LOG(LS_WARNING) << "[RkMppH264] MPP_ENC_SET_HEADER_MODE failed";
     }
-    if (debug_enabled_) {
+    {
         MppPacket extra = nullptr;
         if (mpi->control(ctx, MPP_ENC_GET_EXTRA_INFO, &extra) == MPP_OK && extra) {
-            std::cout << "[RkMppH264Dbg] extra_info len=" << mpp_packet_get_length(extra) << std::endl;
+            const uint8_t* ep = static_cast<const uint8_t*>(mpp_packet_get_pos(extra));
+            const size_t elen = static_cast<size_t>(mpp_packet_get_length(extra));
+            if (ep && elen > 0) {
+                if (!webrtc::H264::FindNaluIndices(webrtc::ArrayView<const uint8_t>(ep, elen)).empty()) {
+                    cached_extra_info_annexb_.assign(ep, ep + elen);
+                } else if (!FillAvcLengthPrefixedToAnnexB(ep, elen, &cached_extra_info_annexb_)) {
+                    if (!FillAvcLengthPrefixed16ToAnnexB(ep, elen, &cached_extra_info_annexb_)) {
+                        cached_extra_info_annexb_.clear();
+                    }
+                }
+            }
+            if (debug_enabled_) {
+                std::cout << "[RkMppH264Dbg] extra_info len=" << mpp_packet_get_length(extra)
+                          << " cached_annexb=" << cached_extra_info_annexb_.size() << std::endl;
+            }
             mpp_packet_deinit(&extra);
-        } else {
+        } else if (debug_enabled_) {
             std::cout << "[RkMppH264Dbg] extra_info unavailable" << std::endl;
         }
     }
 
-    // ??mpi_enc_test ?????????? I/O ????????4 ??????? YUV420SP ?????? hor/ver ??16 ?????????????    const size_t enc_io_size = static_cast<size_t>(MPP_ALIGN(hor_stride_, 64)) *
-                               static_cast<size_t>(MPP_ALIGN(ver_stride_, 64)) * 3 / 2;
-    const size_t nv12_size = enc_io_size;
-    const size_t pkt_size = enc_io_size;
+    // Align with mpp_h264_smoke: allocate by configured stride directly.
+    const size_t nv12_size = static_cast<size_t>(hor_stride_) * static_cast<size_t>(ver_stride_) * 3 / 2;
+    const size_t pkt_size = nv12_size;
     MppBuffer fb = nullptr;
     MppBuffer pb = nullptr;
     MppBuffer mb = nullptr;
@@ -635,9 +711,9 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     }
 
     initialized_ = true;
-    // ??????????????VideoFrameTrackingId??6bit??? RTP ?????????????????? 500 ??????????
-    // VideoFrame::kNotSetId==0 ?????InitEncode ?????????????????????????????????    // ????????MPP ???????? EncodedImage::VideoFrameTrackingId ?????? VideoFrame::id??[E2E_RX] ???    // trace_id ???????????parse_e2e_latency.py ???trace_id ???????[E2E_TX]/[E2E_RX] ???wall_utc_ms
-    // ??TimeUTCMillis?????PC ??? chrony/NTP ??????????????????????????????????    next_video_frame_tracking_id_ = 500;
+    // Monotonic 16-bit VideoFrameTrackingId carried via RTP header extension.
+    // Start from 500 to avoid confusion with VideoFrame::kNotSetId==0.
+    next_video_frame_tracking_id_ = 500;
     RTC_LOG(LS_INFO) << "[RkMppH264] InitEncode ok " << width_ << "x" << height_ << "@" << fps_
                      << "fps stride=" << hor_stride_ << "x" << ver_stride_
                      << " bps=" << target_bps_ << " intra_refresh=" << intra_refresh_mode_ << ":"
@@ -654,11 +730,13 @@ int32_t RkMppH264Encoder::RegisterEncodeCompleteCallback(webrtc::EncodedImageCal
 }
 
 int32_t RkMppH264Encoder::Release() {
+    std::lock_guard<std::mutex> lock(mpp_mu_);
     DestroyMpp();
     return WEBRTC_VIDEO_CODEC_OK;
 }
 
 void RkMppH264Encoder::SetRates(const webrtc::VideoEncoder::RateControlParameters& parameters) {
+    std::lock_guard<std::mutex> lock(mpp_mu_);
     if (!initialized_) {
         return;
     }
@@ -679,7 +757,9 @@ void RkMppH264Encoder::SetRates(const webrtc::VideoEncoder::RateControlParameter
                   << " min_bps=" << min_bps_ << " max_bps=" << max_bps_
                   << " fps=" << parameters.framerate_fps << std::endl;
     }
-    ApplyRcToCfg();
+    // Temporary stabilization: avoid runtime MPP_ENC_SET_CFG churn until encoder path is stable.
+    // TODO: restore guarded ApplyRcToCfg once crash root cause is fully resolved.
+    // ApplyRcToCfg();
 }
 
 webrtc::VideoEncoder::EncoderInfo RkMppH264Encoder::GetEncoderInfo() const {
@@ -689,7 +769,8 @@ webrtc::VideoEncoder::EncoderInfo RkMppH264Encoder::GetEncoderInfo() const {
     info.has_trusted_rate_controller = false;
     info.is_hardware_accelerated = true;
     info.supports_simulcast = false;
-    // kNative??MPP MJPEG ??????????????NV12/I420 ??????????    info.preferred_pixel_formats = {webrtc::VideoFrameBuffer::Type::kNative,
+    // kNative for MPP MJPEG decode pass-through; keep NV12/I420 planar paths.
+    info.preferred_pixel_formats = {webrtc::VideoFrameBuffer::Type::kNative,
                                     webrtc::VideoFrameBuffer::Type::kNV12,
                                     webrtc::VideoFrameBuffer::Type::kI420};
     return info;
@@ -706,7 +787,9 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
     const uint8_t* raw = split_assembly_buf_.data();
     const size_t len = split_assembly_buf_.size();
     webrtc::scoped_refptr<webrtc::EncodedImageBuffer> buf;
-    if (!webrtc::H264::FindNaluIndices(webrtc::ArrayView<const uint8_t>(raw, len)).empty()) {
+    const auto nal_indices = webrtc::H264::FindNaluIndices(webrtc::ArrayView<const uint8_t>(raw, len));
+    const bool detected_annexb = !nal_indices.empty();
+    if (detected_annexb) {
         buf = webrtc::EncodedImageBuffer::Create(len);
         memcpy(buf->data(), raw, len);
     } else {
@@ -726,6 +809,34 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
         buf = webrtc::EncodedImageBuffer::Create(annex_scratch_.size());
         memcpy(buf->data(), annex_scratch_.data(), annex_scratch_.size());
     }
+    {
+        const auto out_nals = webrtc::H264::FindNaluIndices(
+            webrtc::ArrayView<const uint8_t>(buf->data(), buf->size()));
+        bool has_sps = false;
+        bool has_pps = false;
+        bool has_idr = false;
+        for (const auto& nalu : out_nals) {
+            if (nalu.payload_start_offset >= buf->size()) {
+                continue;
+            }
+            const uint8_t t = static_cast<uint8_t>(buf->data()[nalu.payload_start_offset] & 0x1f);
+            has_sps = has_sps || (t == 7);
+            has_pps = has_pps || (t == 8);
+            has_idr = has_idr || (t == 5);
+        }
+        if (has_idr && (!has_sps || !has_pps) && !cached_extra_info_annexb_.empty()) {
+            auto merged = webrtc::EncodedImageBuffer::Create(cached_extra_info_annexb_.size() + buf->size());
+            memcpy(merged->data(), cached_extra_info_annexb_.data(), cached_extra_info_annexb_.size());
+            memcpy(merged->data() + cached_extra_info_annexb_.size(), buf->data(), buf->size());
+            buf = merged;
+            if (debug_enabled_) {
+                std::cout << "[RkMppH264Dbg] prepended cached sps/pps bytes="
+                          << cached_extra_info_annexb_.size() << " for idr frame" << std::endl;
+            }
+        }
+    }
+    (void)detected_annexb;
+    (void)nal_indices;
     webrtc::H264BitstreamParser qp_parser;
     webrtc::EncodedImage encoded;
     encoded.SetEncodedData(buf);
@@ -785,7 +896,7 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
                       << static_cast<unsigned>(trace_tid) << " rtp_ts=" << encoded.RtpTimestamp()
                       << " t_frame_ts_us=" << frame.timestamp_us() << " t_encode_done_us=" << encode_finish_us
                       << " t_after_onencoded_us=" << after_on_encoded_cb_us
-                      << " onencoded_cb_cost_us=" << webrtc_onencodedimage_us << std::endl;
+                      << " onencoded_cb_cost_us=" << webrtc_onencodedimage_us << '\n';
         }
     }
     if (debug_enabled_) {
@@ -818,7 +929,7 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
         std::cout << "[E2E_TX] rtp_ts=" << encoded.RtpTimestamp() << " trace_id=" << static_cast<unsigned>(trace_tid)
                   << " t_mjpeg_input_us=" << t_mjpeg_input_us << " t_v4l2_us=" << t_v4l2_us
                   << " t_on_frame_us=" << t_on_frame_us << " t_enc_done_us=" << encode_finish_us
-                  << " t_after_onencoded_us=" << after_on_encoded_cb_us << " wall_utc_ms=" << wall_utc_ms << std::endl;
+                  << " t_after_onencoded_us=" << after_on_encoded_cb_us << " wall_utc_ms=" << wall_utc_ms << '\n';
     }
     if (trace_periodic_log) {
         int64_t mjpeg_input_to_encode_done_us = encode_finish_us - frame.timestamp_us();
@@ -861,7 +972,7 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
         const unsigned pn = ++g_pipe_n;
         if (pn % 30u == 0u) {
             const int64_t delta_us = encode_finish_us - frame.timestamp_us();
-            std::cout << "[Pipe MJPEG???H264] frame#" << pn << " v4l2_mjpeg_process_start_to_h264_ready_us=" << delta_us
+            std::cout << "[Pipe MJPEG->H264] frame#" << pn << " v4l2_mjpeg_process_start_to_h264_ready_us=" << delta_us
                       << " (" << (static_cast<double>(delta_us) / 1000.0) << " ms)" << std::endl;
         }
     }
@@ -889,6 +1000,7 @@ bool RkMppH264Encoder::HandleOutputFailureAndMaybeRecover(const char* stage, int
 
 int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                                  const std::vector<webrtc::VideoFrameType>* frame_types) {
+    std::lock_guard<std::mutex> lock(mpp_mu_);
     if (!initialized_ || !callback_ || !mpi_ || !mpp_ctx_) {
         return WEBRTC_VIDEO_CODEC_UNINITIALIZED;
     }
@@ -920,56 +1032,82 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     }
     MppBuffer input_mpp_buf = reinterpret_cast<MppBuffer>(frm_buf_);
 
+    bool used_native_zero_copy = false;
+    auto copy_i420_to_encoder_buffer = [&](const webrtc::scoped_refptr<webrtc::VideoFrameBuffer>& any_vfb) -> int32_t {
+        webrtc::scoped_refptr<webrtc::I420BufferInterface> i420 = any_vfb->ToI420();
+        if (!i420) {
+            return WEBRTC_VIDEO_CODEC_ENCODER_FAILURE;
+        }
+        if (i420->width() != width_ || i420->height() != height_) {
+            RTC_LOG(LS_WARNING) << "[RkMppH264] frame size mismatch expect " << width_ << "x" << height_
+                                << " got " << i420->width() << "x" << i420->height();
+            return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
+        }
+        uint8_t* dst_uv = dst + static_cast<size_t>(hor_stride_) * static_cast<size_t>(ver_stride_);
+        libyuv::I420ToNV12(i420->DataY(), i420->StrideY(), i420->DataU(), i420->StrideU(), i420->DataV(),
+                           i420->StrideV(), dst, hor_stride_, dst_uv, hor_stride_, width_, height_);
+        return WEBRTC_VIDEO_CODEC_OK;
+    };
+
     if (vfb->type() == webrtc::VideoFrameBuffer::Type::kNative) {
         MppNativeDecFrameBuffer* native = MppNativeDecFrameBuffer::TryGet(vfb);
         if (native) {
             MppBuffer ext = reinterpret_cast<MppBuffer>(native->mpp_buffer_handle());
             if (!ext) {
-                return WEBRTC_VIDEO_CODEC_ERROR;
-            }
-            const auto* src_base = static_cast<const uint8_t*>(mpp_buffer_get_ptr(ext));
-            if (!src_base) {
-                return WEBRTC_VIDEO_CODEC_ERROR;
-            }
-            const RK_U32 fmt = static_cast<RK_U32>(native->mpp_fmt());
-            const int nhs = native->hor_stride();
-            const int nvs = native->ver_stride();
-            const uint8_t* src_y = src_base;
-            const uint8_t* src_uv = src_base + static_cast<size_t>(nhs) * static_cast<size_t>(nvs);
-            const bool dims_ok = (native->width() == width_ && native->height() == height_);
-            const bool stride_ok = (nhs == hor_stride_ && nvs == ver_stride_);
-            const bool nv12_mpp = (fmt == MPP_FMT_YUV420SP);
-            if (dims_ok && stride_ok && nv12_mpp) {
-                input_mpp_buf = ext;
-            } else if (dims_ok && (nv12_mpp || fmt == MPP_FMT_YUV420SP_VU)) {
-                if (fmt == MPP_FMT_YUV420SP) {
-                    CopySemiPlanarToMppBuffer(src_y, src_uv, nhs, nhs, dst, hor_stride_, ver_stride_, width_, height_);
-                } else {
-                    uint8_t* dst_uv = dst + static_cast<size_t>(hor_stride_) * static_cast<size_t>(ver_stride_);
-                    if (libyuv::NV21ToNV12(src_y, nhs, src_uv, nhs, dst, hor_stride_, dst_uv, hor_stride_, width_,
-                                           height_) != 0) {
-                        return WEBRTC_VIDEO_CODEC_ENCODER_FAILURE;
-                    }
+                if (native_zero_copy_strict_) {
+                    RTC_LOG(LS_ERROR) << "[RkMppH264] strict native zero-copy: native frame has null mpp buffer";
+                    return WEBRTC_VIDEO_CODEC_ERROR;
+                }
+                const int32_t rc = copy_i420_to_encoder_buffer(vfb);
+                if (rc != WEBRTC_VIDEO_CODEC_OK) {
+                    return rc;
                 }
             } else {
-                RTC_LOG(LS_WARNING) << "[RkMppH264] native dec frame mismatch expect " << width_ << "x" << height_
-                                    << " stride " << hor_stride_ << "x" << ver_stride_ << " fmt " << fmt << " got "
-                                    << native->width() << "x" << native->height() << " stride " << nhs << "x" << nvs;
-                return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
+                const auto* src_base = static_cast<const uint8_t*>(mpp_buffer_get_ptr(ext));
+                if (!src_base) {
+                    if (native_zero_copy_strict_) {
+                        RTC_LOG(LS_ERROR) << "[RkMppH264] strict native zero-copy: mpp_buffer_get_ptr(ext) is null";
+                        return WEBRTC_VIDEO_CODEC_ERROR;
+                    }
+                    return WEBRTC_VIDEO_CODEC_ERROR;
+                }
+                const RK_U32 fmt = static_cast<RK_U32>(native->mpp_fmt());
+                const int nhs = native->hor_stride();
+                const int nvs = native->ver_stride();
+                const uint8_t* src_y = src_base;
+                const uint8_t* src_uv = src_base + static_cast<size_t>(nhs) * static_cast<size_t>(nvs);
+                const bool dims_ok = (native->width() == width_ && native->height() == height_);
+                const bool stride_ok = (nhs == hor_stride_ && nvs == ver_stride_);
+                const bool nv12_mpp = (fmt == MPP_FMT_YUV420SP);
+                if (dims_ok && stride_ok && nv12_mpp && native_zero_copy_enabled_) {
+                    input_mpp_buf = ext;
+                    used_native_zero_copy = true;
+                } else if (dims_ok && (nv12_mpp || fmt == MPP_FMT_YUV420SP_VU)) {
+                    if (fmt == MPP_FMT_YUV420SP) {
+                        CopySemiPlanarToMppBuffer(src_y, src_uv, nhs, nhs, dst, hor_stride_, ver_stride_, width_, height_);
+                    } else {
+                        uint8_t* dst_uv = dst + static_cast<size_t>(hor_stride_) * static_cast<size_t>(ver_stride_);
+                        if (libyuv::NV21ToNV12(src_y, nhs, src_uv, nhs, dst, hor_stride_, dst_uv, hor_stride_, width_,
+                                               height_) != 0) {
+                            return WEBRTC_VIDEO_CODEC_ENCODER_FAILURE;
+                        }
+                    }
+                } else {
+                    RTC_LOG(LS_WARNING) << "[RkMppH264] native dec frame mismatch expect " << width_ << "x" << height_
+                                        << " stride " << hor_stride_ << "x" << ver_stride_ << " fmt " << fmt << " got "
+                                        << native->width() << "x" << native->height() << " stride " << nhs << "x" << nvs;
+                    return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
+                }
             }
         } else {
-            webrtc::scoped_refptr<webrtc::I420BufferInterface> i420 = vfb->ToI420();
-            if (!i420) {
-                return WEBRTC_VIDEO_CODEC_ENCODER_FAILURE;
+            const int32_t rc = copy_i420_to_encoder_buffer(vfb);
+            if (rc != WEBRTC_VIDEO_CODEC_OK) {
+                return rc;
             }
-            if (i420->width() != width_ || i420->height() != height_) {
-                RTC_LOG(LS_WARNING) << "[RkMppH264] frame size mismatch expect " << width_ << "x" << height_
-                                    << " got " << i420->width() << "x" << i420->height();
-                return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
-            }
-            uint8_t* dst_uv = dst + static_cast<size_t>(hor_stride_) * static_cast<size_t>(ver_stride_);
-            libyuv::I420ToNV12(i420->DataY(), i420->StrideY(), i420->DataU(), i420->StrideU(), i420->DataV(),
-                               i420->StrideV(), dst, hor_stride_, dst_uv, hor_stride_, width_, height_);
+        }
+        if (native_zero_copy_strict_ && !used_native_zero_copy) {
+            RTC_LOG(LS_ERROR) << "[RkMppH264] strict native zero-copy required but frame fell back to copy path";
+            return WEBRTC_VIDEO_CODEC_ERROR;
         }
     } else if (vfb->type() == webrtc::VideoFrameBuffer::Type::kNV12) {
         const webrtc::NV12BufferInterface* nv12 = vfb->GetNV12();
@@ -1003,7 +1141,8 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             }
         }
     }
-    if (want_key) {
+    const bool enable_idr_ctrl = ReadEnvIntInRange("WEBRTC_MPP_ENC_ENABLE_IDR_CTRL", 0, 0, 1) == 1;
+    if (want_key && enable_idr_ctrl) {
         bool allow_force_idr = true;
         const int64_t now_us = webrtc::TimeMicros();
         const int64_t min_interval_us = static_cast<int64_t>(std::max(0, idr_min_interval_ms_)) * 1000;
@@ -1040,15 +1179,29 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     mpp_frame_set_ver_stride(mframe, static_cast<RK_U32>(ver_stride_));
     mpp_frame_set_fmt(mframe, MPP_FMT_YUV420SP);
     mpp_frame_set_buffer(mframe, input_mpp_buf);
-    mpp_frame_set_pts(mframe, static_cast<RK_S64>(frame.timestamp_us()));
+    // Some BSP builds are unstable with very large microsecond PTS values.
+    // Use RTP timestamp scale for encoder input PTS to keep values bounded.
+    mpp_frame_set_pts(mframe, static_cast<RK_S64>(frame.rtp_timestamp()));
+    MppBuffer held_input_buf = nullptr;
+    auto release_held_input = [&]() {
+        if (held_input_buf) {
+            mpp_buffer_put(held_input_buf);
+            held_input_buf = nullptr;
+        }
+    };
+    if (used_native_zero_copy && input_mpp_buf && input_mpp_buf != reinterpret_cast<MppBuffer>(frm_buf_)) {
+        if (mpp_buffer_inc_ref(input_mpp_buf) == MPP_OK) {
+            held_input_buf = input_mpp_buf;
+        } else {
+            RTC_LOG(LS_ERROR) << "[RkMppH264] mpp_buffer_inc_ref failed for native zero-copy input";
+            mpp_frame_deinit(&mframe);
+            return WEBRTC_VIDEO_CODEC_ERROR;
+        }
+    }
 
     MppMeta meta = mpp_frame_get_meta(mframe);
     MppPacket prebound_pkt = nullptr;
-    if (meta) {
-        if (md_buf_) {
-            mpp_meta_set_buffer(meta, KEY_MOTION_INFO, reinterpret_cast<MppBuffer>(md_buf_));
-        }
-    }
+    (void)meta;
 
     const int64_t encode_before_us = webrtc::TimeMicros();
     const bool use_sync_encode = use_sync_encode_;
@@ -1065,6 +1218,8 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     MPP_RET ret = MPP_NOK;
     MppPacket first_out_pkt = nullptr;
     MppTask output_task = nullptr;
+    static std::atomic<unsigned> encode_probe_n{0};
+    const unsigned encode_probe_idx = ++encode_probe_n;
     auto recover_or_error = [&](const char* stage, int err_code) -> int32_t {
         split_assembly_buf_.clear();
         if (prebound_pkt) {
@@ -1074,6 +1229,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             mpi->enqueue(ctx, MPP_PORT_OUTPUT, output_task);
             output_task = nullptr;
         }
+        release_held_input();
         return HandleOutputFailureAndMaybeRecover(stage, err_code) ? WEBRTC_VIDEO_CODEC_OK
                                                                     : WEBRTC_VIDEO_CODEC_ERROR;
     };
@@ -1086,6 +1242,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         if (ret != MPP_OK) {
             mpp_frame_deinit(&mframe);
             std::cerr << "[RkMppH264Err] poll input ret=" << ret << std::endl;
+            release_held_input();
             return WEBRTC_VIDEO_CODEC_ERROR;
         }
         ret = mpi->dequeue(ctx, MPP_PORT_INPUT, &input_task);
@@ -1095,6 +1252,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         if (ret != MPP_OK || !input_task) {
             mpp_frame_deinit(&mframe);
             std::cerr << "[RkMppH264Err] dequeue input ret=" << ret << std::endl;
+            release_held_input();
             return WEBRTC_VIDEO_CODEC_ERROR;
         }
         mpp_task_meta_set_frame(input_task, KEY_INPUT_FRAME, mframe);
@@ -1108,6 +1266,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         }
         if (ret != MPP_OK) {
             std::cerr << "[RkMppH264Err] enqueue input ret=" << ret << std::endl;
+            release_held_input();
             return WEBRTC_VIDEO_CODEC_ERROR;
         }
         ret = mpi->poll(ctx, MPP_PORT_OUTPUT, MPP_POLL_BLOCK);
@@ -1127,7 +1286,8 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             std::cerr << "[RkMppH264Err] dequeue output(task) ret=" << ret << std::endl;
             return recover_or_error("task_dequeue_output", ret);
         }
-        // task ??????????? KEY_OUTPUT_PACKET?????????????????????????????????        const bool task_read_packet = task_read_packet_;
+        // In task mode, read KEY_OUTPUT_PACKET by default.
+        const bool task_read_packet = task_read_packet_;
         if (task_read_packet) {
             ret = mpp_task_meta_get_packet(output_task, KEY_OUTPUT_PACKET, &first_out_pkt);
             if (debug_enabled_) {
@@ -1152,18 +1312,39 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         if (ret != MPP_OK) {
             RTC_LOG(LS_ERROR) << "[RkMppH264] encode ret=" << ret;
             std::cerr << "[RkMppH264Err] encode ret=" << ret << std::endl;
+            release_held_input();
             return WEBRTC_VIDEO_CODEC_ERROR;
         }
+        if (debug_enabled_ && encode_probe_idx <= 3) {
+            MppPacket probe_extra = nullptr;
+            MPP_RET probe_ret = mpi->control(ctx, MPP_ENC_GET_EXTRA_INFO, &probe_extra);
+            size_t probe_len = (probe_extra ? mpp_packet_get_length(probe_extra) : 0u);
+            std::cout << "[RkMppH264Dbg] probe extra_info after encode #" << encode_probe_idx
+                      << " ret=" << probe_ret << " len=" << probe_len << std::endl;
+            if (probe_extra) {
+                mpp_packet_deinit(&probe_extra);
+            }
+        }
     } else {
-        if (meta && pkt_buf_) {
+        // Keep sync path minimal: do not prebind KEY_OUTPUT_PACKET.
+        // Some BSP combinations crash in mpp_packet_append when packet is prebound.
+        // Non-sync path keeps previous behavior for compatibility.
+        if (meta && pkt_buf_ && !use_sync_encode) {
             if (mpp_packet_init_with_buffer(&prebound_pkt, reinterpret_cast<MppBuffer>(pkt_buf_)) == MPP_OK &&
                 prebound_pkt) {
-                // ???????mpi_enc_test ?????????????????????????????????????                mpp_packet_set_length(prebound_pkt, 0);
+                // Same as mpi_enc_test: reset output packet length before binding.
+                mpp_packet_set_length(prebound_pkt, 0);
                 mpp_meta_set_packet(meta, KEY_OUTPUT_PACKET, prebound_pkt);
             }
         }
         ret = mpi->encode_put_frame(ctx, mframe);
         if (ret != MPP_OK && input_mpp_buf != reinterpret_cast<MppBuffer>(frm_buf_)) {
+            if (native_zero_copy_strict_) {
+                RTC_LOG(LS_ERROR) << "[RkMppH264] strict native zero-copy: encode_put_frame failed ret=" << ret;
+                mpp_frame_deinit(&mframe);
+                release_held_input();
+                return WEBRTC_VIDEO_CODEC_ERROR;
+            }
             MppNativeDecFrameBuffer* native_fb = MppNativeDecFrameBuffer::TryGet(vfb);
             if (native_fb) {
                 MppBuffer ext = reinterpret_cast<MppBuffer>(native_fb->mpp_buffer_handle());
@@ -1184,25 +1365,75 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                     }
                     mpp_frame_set_buffer(mframe, reinterpret_cast<MppBuffer>(frm_buf_));
                     ret = mpi->encode_put_frame(ctx, mframe);
+                } else {
+                    const int32_t rc = copy_i420_to_encoder_buffer(vfb);
+                    if (rc == WEBRTC_VIDEO_CODEC_OK) {
+                        ++native_copy_fallback_frames_;
+                        mpp_frame_set_buffer(mframe, reinterpret_cast<MppBuffer>(frm_buf_));
+                        ret = mpi->encode_put_frame(ctx, mframe);
+                    }
+                }
+                if (ret != MPP_OK) {
+                    ++native_zero_copy_failures_;
+                    if (native_zero_copy_enabled_ &&
+                        native_zero_copy_failures_ >= native_zero_copy_fail_disable_threshold_) {
+                        native_zero_copy_enabled_ = false;
+                        RTC_LOG(LS_WARNING) << "[RkMppH264] disable native zero-copy after "
+                                            << native_zero_copy_failures_ << " put_frame failures";
+                        std::cerr << "[RkMppH264Warn] disable native zero-copy after "
+                                  << native_zero_copy_failures_ << " failures" << std::endl;
+                    }
+                } else {
+                    native_zero_copy_failures_ = 0;
                 }
             }
         }
+        if (ret == MPP_OK && used_native_zero_copy) {
+            ++native_zero_copy_frames_;
+        }
         mpp_frame_deinit(&mframe);
         if (debug_enabled_) {
-            std::cout << "[RkMppH264Dbg] after encode_put_frame ret=" << ret << std::endl;
+            std::cout << "[RkMppH264Dbg] after encode_put_frame ret=" << ret
+                      << " sync_mode=" << (use_sync_encode ? 1 : 0) << std::endl;
         }
         if (ret != MPP_OK) {
             RTC_LOG(LS_ERROR) << "[RkMppH264] encode_put_frame ret=" << ret;
             std::cerr << "[RkMppH264Err] encode_put_frame ret=" << ret << std::endl;
+            release_held_input();
             return WEBRTC_VIDEO_CODEC_ERROR;
+        }
+        if (debug_enabled_ && encode_probe_idx <= 3) {
+            MppPacket probe_extra = nullptr;
+            MPP_RET probe_ret = mpi->control(ctx, MPP_ENC_GET_EXTRA_INFO, &probe_extra);
+            size_t probe_len = (probe_extra ? mpp_packet_get_length(probe_extra) : 0u);
+            std::cout << "[RkMppH264Dbg] probe extra_info after put_frame #" << encode_probe_idx
+                      << " ret=" << probe_ret << " len=" << probe_len << std::endl;
+            if (probe_extra) {
+                mpp_packet_deinit(&probe_extra);
+            }
         }
     }
 
-    // mpi_enc_test??????????????????????????is_part==0 ??EOI?????????????????????????????OnEncodedImage???    split_assembly_buf_.clear();
+    // Same as mpi_enc_test: in non-split mode one packet usually ends frame (is_part==0 as EOI).
+    // In split mode, assemble all parts before OnEncodedImage.
+    split_assembly_buf_.clear();
+    if (use_sync_encode && !first_out_pkt) {
+        // Sync encode API may return no packet for this input; do not block current frame.
+        // Allow next frames to drive encoder forward.
+        release_held_input();
+        return WEBRTC_VIDEO_CODEC_OK;
+    }
     const int max_pkt_iterations = split_by_byte_enabled_ ? 2048 : 64;
+    const int packet_retry_limit =
+        ((use_sync_encode || use_task_encode) ? ReadEnvIntInRange("WEBRTC_MPP_ENC_PACKET_RETRY", 6, 0, 100) : 0);
+    const int packet_retry_sleep_us =
+        ReadEnvIntInRange("WEBRTC_MPP_ENC_PACKET_RETRY_SLEEP_US", 500, 50, 10000);
+    const bool packet_poll_block =
+        ReadEnvIntInRange("WEBRTC_MPP_ENC_PACKET_POLL_BLOCK", 1, 0, 1) == 1;
     bool frame_output_done = false;
     bool mpp_intra_hint = false;
     int safety = 0;
+    int empty_pkt_retry = 0;
     do {
         if (debug_enabled_) {
             static std::atomic<unsigned> get_pkt_n{0};
@@ -1211,10 +1442,14 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                 std::cout << "[RkMppH264Dbg] encode_get_packet try #" << n << std::endl;
             }
         }
-        if ((use_sync_encode || use_task_encode) && !first_out_pkt) {
-            MPP_RET poll_ret = mpi->poll(ctx, MPP_PORT_OUTPUT, MPP_POLL_NON_BLOCK);
+        if (use_task_encode && !first_out_pkt) {
+            MPP_RET poll_ret = MPP_OK;
+            poll_ret = mpi->poll(ctx, MPP_PORT_OUTPUT, packet_poll_block ? MPP_POLL_BLOCK : MPP_POLL_NON_BLOCK);
             if (debug_enabled_) {
                 std::cout << "[RkMppH264Dbg] poll output ret=" << poll_ret << std::endl;
+            }
+            if (poll_ret != MPP_OK && poll_ret != MPP_ERR_TIMEOUT) {
+                return recover_or_error("encode_poll_output", poll_ret);
             }
         }
         MppPacket out_pkt = nullptr;
@@ -1240,8 +1475,18 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             return recover_or_error("encode_get_packet_ret", ret);
         }
         if (!out_pkt) {
+            if ((use_sync_encode || use_task_encode) && empty_pkt_retry < packet_retry_limit) {
+                ++empty_pkt_retry;
+                if (debug_enabled_ && (empty_pkt_retry <= 3 || (empty_pkt_retry % 10) == 0)) {
+                    std::cout << "[RkMppH264Dbg] empty packet retry " << empty_pkt_retry << "/"
+                              << packet_retry_limit << " sleep_us=" << packet_retry_sleep_us << std::endl;
+                }
+                usleep(static_cast<unsigned>(packet_retry_sleep_us));
+                continue;
+            }
             break;
         }
+        empty_pkt_retry = 0;
         const RK_U32 is_part = mpp_packet_is_partition(out_pkt);
         const bool pkt_eoi = (is_part == 0) || (mpp_packet_is_eoi(out_pkt) != 0);
         {
@@ -1291,6 +1536,9 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         }
         mpi->enqueue(ctx, MPP_PORT_OUTPUT, output_task);
     }
+    release_held_input();
+    MaybeShrinkScratchBuffer(&split_assembly_buf_, 1024 * 1024, 0, next_video_frame_tracking_id_);
+    MaybeShrinkScratchBuffer(&annex_scratch_, 1024 * 1024, 64 * 1024, next_video_frame_tracking_id_);
     consecutive_output_failures_ = 0;
     return WEBRTC_VIDEO_CODEC_OK;
 }

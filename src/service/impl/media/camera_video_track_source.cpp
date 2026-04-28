@@ -14,7 +14,7 @@
 #include "libyuv/convert.h"
 
 #if defined(WEBRTC_LINUX) && defined(__linux__)
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
 #include "core/rtc/hw/rockchip_mpp/native_dec_frame_buffer.h"
 #include "core/rtc/hw/rockchip_mpp/mjpeg_decoder.h"
 #endif
@@ -22,8 +22,10 @@
 #include <fcntl.h>
 #include <linux/videodev2.h>
 #include <poll.h>
+#include <sched.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #include <pthread.h>
 
@@ -48,6 +50,68 @@ bool LatencyTraceEnabled() {
     return cached != 0;
 }
 
+int ReadEnvIntInRange(const char* name, int def, int lo, int hi) {
+    const char* v = std::getenv(name);
+    if (!v || !v[0]) {
+        return def;
+    }
+    const int n = std::atoi(v);
+    if (n < lo || n > hi) {
+        return def;
+    }
+    return n;
+}
+
+void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
+    const char* mode = std::getenv("RFLOW_MEDIA_THREAD_SCHED");
+    const bool mode_off = mode && (mode[0] == '0' || mode[0] == 'n' || mode[0] == 'N' || mode[0] == 'f' || mode[0] == 'F');
+    const bool mode_set = mode && mode[0];
+
+    if (cpu_env_name) {
+        const int cpu = ReadEnvIntInRange(cpu_env_name, -1, -1, 4096);
+        if (cpu >= 0) {
+            cpu_set_t cpuset;
+            CPU_ZERO(&cpuset);
+            CPU_SET(cpu, &cpuset);
+            const int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
+            if (rc != 0) {
+                std::cerr << "[ThreadTune] " << role << " setaffinity cpu=" << cpu << " failed rc=" << rc << std::endl;
+            }
+        }
+    }
+    if (mode_off) {
+        return;
+    }
+    if (!mode_set) {
+        return;
+    }
+
+    const bool use_rr = mode && (mode[0] == 'r' || mode[0] == 'R');
+    if (use_rr) {
+        const int rr_prio = ReadEnvIntInRange("RFLOW_MEDIA_THREAD_RR_PRIO", 20, 1, 90);
+        sched_param sp{};
+        sp.sched_priority = rr_prio;
+        const int rc = pthread_setschedparam(pthread_self(), SCHED_RR, &sp);
+        if (rc != 0) {
+            std::cerr << "[ThreadTune] " << role << " setschedparam rr prio=" << rr_prio << " failed rc=" << rc
+                      << std::endl;
+        }
+        return;
+    }
+
+    const int nice_val = ReadEnvIntInRange("RFLOW_MEDIA_THREAD_NICE", -8, -20, 19);
+    if (setpriority(PRIO_PROCESS, 0, nice_val) != 0) {
+        std::cerr << "[ThreadTune] " << role << " setpriority nice=" << nice_val << " failed errno=" << errno
+                  << std::endl;
+    }
+}
+
+int64_t DecodeQueueStaleDropBudgetUs() {
+    static const int64_t budget_us =
+        static_cast<int64_t>(ReadEnvIntInRange("WEBRTC_MJPEG_DECODE_QUEUE_MAX_WAIT_MS", 25, 0, 5000)) * 1000;
+    return budget_us;
+}
+
 void LogMjpegDecodeTiming(const char* tag, int64_t before_us, int64_t after_us) {
     static std::atomic<unsigned> g_n{0};
     const unsigned n = ++g_n;
@@ -61,7 +125,7 @@ void LogMjpegDecodeTiming(const char* tag, int64_t before_us, int64_t after_us) 
 
 }  // namespace
 
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
 static bool PreferMjpegNativeZeroCopyToEnc() {
     const char* e = std::getenv("WEBRTC_MJPEG_ZERO_COPY_TO_ENC");
     if (!e || e[0] == '\0') {
@@ -70,7 +134,7 @@ static bool PreferMjpegNativeZeroCopyToEnc() {
     return e[0] != '0';
 }
 
-#endif  // WEBRTC_DEMO_HAVE_ROCKCHIP_MPP
+#endif  // RFLOW_HAVE_ROCKCHIP_MPP
 #endif  // WEBRTC_LINUX && __linux__
 
 CameraVideoTrackSource::CameraVideoTrackSource() : webrtc::AdaptedVideoTrackSource() {}
@@ -130,7 +194,7 @@ void CameraVideoTrackSource::StopDirectV4l2() {
     nv12_pool_.clear();
     nv12_pool_w_ = nv12_pool_h_ = 0;
     nv12_ring_next_ = 0;
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     mjpeg_mpp_.reset();
 #endif
     if (direct_fd_ >= 0) {
@@ -198,7 +262,7 @@ void CameraVideoTrackSource::ApplyMjpegPipelineOptions(const V4l2MjpegPipelineOp
     v4l2_poll_timeout_ms_ = pto;
 
     mjpeg_decode_inline_ = o.mjpeg_decode_inline;
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     v4l2_ext_dma_config_ = o.mjpeg_v4l2_ext_dma;
     mjpeg_rga_config_ = o.mjpeg_rga_to_mpp;
 #endif
@@ -408,13 +472,18 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
 
     // 同分辨率：默认优先 YUYV，避免 MJPEG 软解；开启 MPP MJPEG 硬解时优先 MJPEG（多数 UVC 在 720p 等档位上
     // MJPEG 帧率远高于 YUYV，原先先 YUYV 会锁在 10fps 且永远测不到硬解路径）。
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
-    const bool prefer_mjpeg_pixfmt = prefer_mpp_mjpeg_decode_;
-#else
-    // 常见 UVC：720p 及以上 YUYV 带宽不足（多为 ~10fps），MJPEG 才有 60fps；低分辨率仍优先 YUYV。
-    const int64_t px = static_cast<int64_t>(width) * static_cast<int>(height);
-    const bool prefer_mjpeg_pixfmt = px >= static_cast<int64_t>(1280) * 720;
+    bool prefer_mjpeg_pixfmt = false;
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    prefer_mjpeg_pixfmt = prefer_mpp_mjpeg_decode_;
 #endif
+    // Manual override for camera capability testing (e.g. forcing 720p60 MJPEG on UVC devices).
+    if (const char* e = std::getenv("WEBRTC_PREFER_MJPEG_PIXFMT")) {
+        if (e[0] == '1' || e[0] == 'y' || e[0] == 'Y' || e[0] == 't' || e[0] == 'T') {
+            prefer_mjpeg_pixfmt = true;
+        } else if (e[0] == '0' || e[0] == 'n' || e[0] == 'N' || e[0] == 'f' || e[0] == 'F') {
+            prefer_mjpeg_pixfmt = false;
+        }
+    }
     bool fmt_ok = prefer_mjpeg_pixfmt
                       ? (try_sfmt_exact(mjpeg, width, height) || try_sfmt_exact(yuyv, width, height))
                       : (try_sfmt_exact(yuyv, width, height) || try_sfmt_exact(mjpeg, width, height));
@@ -517,7 +586,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
         }
     }
 
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     if (WantV4l2ExtDmabufToMpp() || WantMjpegRgaToMpp()) {
         unsigned exp_ok = 0;
         for (unsigned int i = 0; i < nbuf; ++i) {
@@ -582,7 +651,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
 
     direct_run_ = true;
     decode_worker_exit_ = false;
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     if (prefer_mpp_mjpeg_decode_ && direct_pixfmt_ == V4L2_PIX_FMT_MJPEG) {
         auto dec = std::make_unique<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder>();
         if (dec->Init()) {
@@ -616,6 +685,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
 void CameraVideoTrackSource::DecodeWorkerThreadMain() {
 #if defined(__linux__)
     pthread_setname_np(pthread_self(), "wrtc_mjpg_dec");
+    ApplyThreadTuneIfRequested("mjpeg_decode", "RFLOW_MJPEG_DECODE_CPU");
 #endif
     while (true) {
         MjpegPendingBuf job{};
@@ -670,7 +740,7 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
         dma_cap = direct_mmap_len_[buf_index];
     }
     bool ok = false;
-#if defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     const bool mpp_jpeg_dma =
         (dma_fd >= 0 && dma_cap >= bytesused && (WantV4l2ExtDmabufToMpp() || WantMjpegRgaToMpp()));
     const int dma_arg_fd = mpp_jpeg_dma ? dma_fd : -1;
@@ -778,6 +848,7 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
 void CameraVideoTrackSource::DirectCaptureThreadMain() {
 #if defined(__linux__)
     pthread_setname_np(pthread_self(), "wrtc_v4l2_cap");
+    ApplyThreadTuneIfRequested("v4l2_capture", "RFLOW_V4L2_CAPTURE_CPU");
 #endif
     std::atomic<unsigned> poll_log_counter{0};
     while (direct_run_.load(std::memory_order_relaxed)) {
@@ -840,6 +911,18 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                 std::deque<MjpegPendingBuf> dropped;
                 {
                     std::unique_lock<std::mutex> lk(jpeg_queue_mu_);
+                    const int64_t stale_budget_us = DecodeQueueStaleDropBudgetUs();
+                    if (stale_budget_us > 0) {
+                        const int64_t now_us = webrtc::TimeMicros();
+                        while (!jpeg_queue_.empty()) {
+                            const int64_t age_us = now_us - jpeg_queue_.front().enqueue_time_us;
+                            if (age_us <= stale_budget_us) {
+                                break;
+                            }
+                            dropped.push_back(jpeg_queue_.front());
+                            jpeg_queue_.pop_front();
+                        }
+                    }
                     if (mjpeg_queue_latest_only_) {
                         dropped.swap(jpeg_queue_);
                     } else {
@@ -938,7 +1021,7 @@ bool CameraVideoTrackSource::Start(const char* device_unique_id, int width, int 
 }
 
 void CameraVideoTrackSource::OnFrame(const webrtc::VideoFrame& frame) {
-#if defined(WEBRTC_LINUX) && defined(__linux__) && defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(WEBRTC_LINUX) && defined(__linux__) && defined(RFLOW_HAVE_ROCKCHIP_MPP)
     if (rflow::rtc::hw::rockchip_mpp::MppNativeDecFrameBuffer* native =
             rflow::rtc::hw::rockchip_mpp::MppNativeDecFrameBuffer::TryGet(frame.video_frame_buffer())) {
         native->SetOnFrameEnterUs(webrtc::TimeMicros());
@@ -948,7 +1031,7 @@ void CameraVideoTrackSource::OnFrame(const webrtc::VideoFrame& frame) {
     AdaptedVideoTrackSource::OnFrame(frame);
 }
 
-#if defined(WEBRTC_LINUX) && defined(__linux__) && defined(WEBRTC_DEMO_HAVE_ROCKCHIP_MPP)
+#if defined(WEBRTC_LINUX) && defined(__linux__) && defined(RFLOW_HAVE_ROCKCHIP_MPP)
 bool CameraVideoTrackSource::WantV4l2ExtDmabufToMpp() const {
     if (const char* e = std::getenv("WEBRTC_MJPEG_V4L2_DMABUF")) {
         return e[0] != '0';
@@ -957,7 +1040,7 @@ bool CameraVideoTrackSource::WantV4l2ExtDmabufToMpp() const {
 }
 
 bool CameraVideoTrackSource::WantMjpegRgaToMpp() const {
-#if defined(WEBRTC_DEMO_HAVE_LIBRGA)
+#if defined(RFLOW_HAVE_LIBRGA)
     if (const char* e = std::getenv("WEBRTC_MJPEG_RGA_TO_MPP")) {
         return e[0] != '0';
     }
