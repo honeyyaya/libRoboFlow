@@ -23,7 +23,6 @@
 #include "api/make_ref_counted.h"
 #include "api/media_types.h"
 #include "api/rtc_error.h"
-#include "api/rtp_capabilities.h"
 #include "api/rtp_parameters.h"
 #include "api/rtp_receiver_interface.h"
 #include "api/rtp_transceiver_interface.h"
