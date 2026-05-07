@@ -8,19 +8,28 @@
 #include "rflow/librflow_common.h"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
+
+#include "api/stats/rtcstats_objects.h"
 
 #include "api/jsep.h"
 #include "api/make_ref_counted.h"
 #include "api/media_types.h"
 #include "api/rtc_error.h"
+#include "api/rtp_capabilities.h"
+#include "api/rtp_parameters.h"
 #include "api/rtp_receiver_interface.h"
 #include "api/rtp_transceiver_interface.h"
 #include "api/set_remote_description_observer_interface.h"
 #include "api/stats/rtc_stats_collector_callback.h"
+#include "api/video_codecs/h264_profile_level_id.h"
 #include "rtc_base/thread.h"
 
 namespace rflow::client::impl {
@@ -96,6 +105,90 @@ class StatsCollectorCallback : public webrtc::RTCStatsCollectorCallback {
     std::function<void(const webrtc::scoped_refptr<const webrtc::RTCStatsReport>&)> cb_;
  };
 
+// 接收侧 jitter buffer 最低延迟（s）。设 20ms 让单包 NACK 有时间补救；env 可覆盖。
+constexpr double kDefaultReceiverVideoJitterBufferMinDelaySeconds = 0.02;
+
+double ReadReceiverJitterMinDelaySeconds() {
+    if (const char* v = std::getenv("RFLOW_RECEIVER_JITTER_MIN_DELAY_MS")) {
+        if (v[0] != '\0') {
+            const int ms = std::atoi(v);
+            if (ms >= 0 && ms <= 1000) {
+                return static_cast<double>(ms) / 1000.0;
+            }
+        }
+    }
+    return kDefaultReceiverVideoJitterBufferMinDelaySeconds;
+}
+
+bool IsLowLatencyH264Capability(const webrtc::RtpCodecCapability& codec) {
+    if (codec.kind != webrtc::MediaType::VIDEO || codec.name != "H264") {
+        return false;
+    }
+    const std::optional<webrtc::H264ProfileLevelId> profile =
+        webrtc::ParseSdpForH264ProfileLevelId(codec.parameters);
+    if (!profile.has_value()) return false;
+    return profile->profile == webrtc::H264Profile::kProfileConstrainedBaseline ||
+           profile->profile == webrtc::H264Profile::kProfileBaseline;
+}
+
+// 排序：constrained-baseline H264 > 其它 H264 > 其它 media codec；rtx 仅保留 apt 命中的。
+// 与 LibwebRtcDemo BuildLowLatencyVideoCodecPreferences 等价；用于在 SetCodecPreferences
+// 中把低延迟可硬解的 H264 配置推到 SDP 前列。
+std::vector<webrtc::RtpCodecCapability> BuildLowLatencyVideoCodecPreferences(
+    const webrtc::RtpCapabilities& capabilities) {
+    std::vector<webrtc::RtpCodecCapability> preferred_h264;
+    std::vector<webrtc::RtpCodecCapability> other_h264;
+    std::vector<webrtc::RtpCodecCapability> other_media;
+    std::vector<webrtc::RtpCodecCapability> auxiliary;
+    std::vector<int>                        allowed_pts;
+
+    for (const auto& codec : capabilities.codecs) {
+        if (codec.kind != webrtc::MediaType::VIDEO) continue;
+        if (codec.IsMediaCodec()) {
+            if (IsLowLatencyH264Capability(codec)) {
+                preferred_h264.push_back(codec);
+            } else if (codec.name == "H264") {
+                other_h264.push_back(codec);
+            } else {
+                other_media.push_back(codec);
+            }
+            continue;
+        }
+        auxiliary.push_back(codec);
+    }
+
+    if (preferred_h264.empty() && other_h264.empty()) {
+        return {};
+    }
+
+    auto collect_pt = [&allowed_pts](const std::vector<webrtc::RtpCodecCapability>& list) {
+        for (const auto& c : list) {
+            if (c.preferred_payload_type.has_value()) {
+                allowed_pts.push_back(*c.preferred_payload_type);
+            }
+        }
+    };
+    collect_pt(preferred_h264);
+    collect_pt(other_h264);
+    collect_pt(other_media);
+
+    std::vector<webrtc::RtpCodecCapability> result = preferred_h264;
+    result.insert(result.end(), other_h264.begin(),  other_h264.end());
+    result.insert(result.end(), other_media.begin(), other_media.end());
+    for (const auto& codec : auxiliary) {
+        if (codec.name == "rtx") {
+            const auto apt_it = codec.parameters.find("apt");
+            if (apt_it == codec.parameters.end()) continue;
+            const int apt = std::atoi(apt_it->second.c_str());
+            if (std::find(allowed_pts.begin(), allowed_pts.end(), apt) == allowed_pts.end()) {
+                continue;
+            }
+        }
+        result.push_back(codec);
+    }
+    return result;
+}
+
 }  // namespace
 
 class RtcStreamSession::FrameAdapter final
@@ -166,7 +259,11 @@ class RtcStreamSession::PeerConnectionObserverImpl : public webrtc::PeerConnecti
 
         auto receiver = transceiver->receiver();
         if (!receiver) return;
-        receiver->SetJitterBufferMinimumDelay(std::optional<double>(0.0));
+        const double floor_s = ReadReceiverJitterMinDelaySeconds();
+        receiver->SetJitterBufferMinimumDelay(std::optional<double>(floor_s));
+        stream_->jitter_min_delay_seconds_ = floor_s;
+        RFLOW_LOGI("[pull idx=%d] video jitter min delay floor = %.1f ms",
+                   stream_->index_, floor_s * 1000.0);
 
         auto track = receiver->track();
         if (!track ||
@@ -191,6 +288,32 @@ class RtcStreamSession::PeerConnectionObserverImpl : public webrtc::PeerConnecti
     RtcStreamSession* stream_;
 };
 
+namespace {
+
+bool ReadEnvBoolDefault(const char* name, bool def) {
+    const char* v = std::getenv(name);
+    if (!v || !v[0]) return def;
+    if (v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F') return false;
+    if (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T') return true;
+    return def;
+}
+
+int64_t ReadEnvIntInRange(const char* name, int64_t def, int64_t lo, int64_t hi) {
+    const char* v = std::getenv(name);
+    if (!v || !v[0]) return def;
+    const int64_t n = std::atoll(v);
+    if (n < lo || n > hi) return def;
+    return n;
+}
+
+int64_t MonoTimeMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+}  // namespace
+
 RtcStreamSession::RtcStreamSession(
     int32_t index,
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
@@ -202,6 +325,11 @@ RtcStreamSession::RtcStreamSession(
       factory_(std::move(factory)) {
     observer_ = std::make_unique<PeerConnectionObserverImpl>(this);
     frame_adapter_ = std::make_unique<FrameAdapter>(this);
+    watchdog_enabled_ = ReadEnvBoolDefault("RFLOW_RECEIVER_KEYFRAME_WATCHDOG", true);
+    watchdog_stuck_threshold_ms_ =
+        ReadEnvIntInRange("RFLOW_RECEIVER_WATCHDOG_STUCK_MS", 300, 50, 5000);
+    watchdog_cooldown_ms_ =
+        ReadEnvIntInRange("RFLOW_RECEIVER_WATCHDOG_COOLDOWN_MS", 600, 100, 10000);
 }
 
 RtcStreamSession::~RtcStreamSession() {
@@ -256,11 +384,17 @@ bool RtcStreamSession::Start() {
         RFLOW_LOGI("[pull idx=%d] signaling room=%s (须与推流 stream_id 一致), waiting for offer...",
                    index_, room.c_str());
     }
+
+    if (watchdog_enabled_) {
+        StartWatchdogThread();
+    }
     return true;
 }
 
 void RtcStreamSession::Close() {
     if (closed_.exchange(true, std::memory_order_acq_rel)) return;
+
+    StopWatchdogThread();
 
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -323,7 +457,11 @@ void RtcStreamSession::CreatePeerConnectionLocked() {
 
     webrtc::PeerConnectionInterface::RTCConfiguration config;
     config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
-    config.audio_jitter_buffer_min_delay_ms = 0;
+    // 接收端为纯视频拉流；把 audio NetEQ 的最大缓冲包数压到 1，开 fast_accelerate，
+    // 避免极小 audio 播放也有不必要的 jitter buffer 开销，与视频策略对齐。
+    config.audio_jitter_buffer_max_packets        = 1;
+    config.audio_jitter_buffer_min_delay_ms       = 0;
+    config.audio_jitter_buffer_fast_accelerate    = true;
 
     webrtc::PeerConnectionInterface::IceServer ice_server;
     ice_server.urls.push_back("stun:stun.l.google.com:19302");
@@ -477,6 +615,32 @@ void RtcStreamSession::HandleOffer(const std::string& sdp) {
 
 void RtcStreamSession::DoCreateAnswerAfterSetRemote() {
     if (!peer_connection_) return;
+
+    // 把 H264 constrained-baseline 推到首选，便于 Android MediaCodec / RK MPP 等硬解走低延迟路径。
+    if (factory_) {
+        const webrtc::RtpCapabilities caps =
+            factory_->GetRtpReceiverCapabilities(webrtc::MediaType::VIDEO);
+        std::vector<webrtc::RtpCodecCapability> preferred =
+            BuildLowLatencyVideoCodecPreferences(caps);
+        if (!preferred.empty()) {
+            for (const auto& transceiver : peer_connection_->GetTransceivers()) {
+                if (!transceiver || transceiver->media_type() != webrtc::MediaType::VIDEO) {
+                    continue;
+                }
+                const webrtc::RTCError err = transceiver->SetCodecPreferences(preferred);
+                if (!err.ok()) {
+                    RFLOW_LOGW("[pull idx=%d] SetCodecPreferences failed: %s",
+                               index_, err.message());
+                } else {
+                    RFLOW_LOGI("[pull idx=%d] SetCodecPreferences ok, codecs=%zu",
+                               index_, preferred.size());
+                }
+            }
+        } else {
+            RFLOW_LOGD("[pull idx=%d] no preferred low-latency video codec list, skip "
+                       "SetCodecPreferences", index_);
+        }
+    }
 
     auto self = shared_from_this();
     pending_create_answer_observer_ = webrtc::make_ref_counted<CreateAnswerObserver>(
@@ -698,6 +862,123 @@ bool RtcStreamSession::CollectStats(librflow_stream_stats_s* out_stats) {
     out_stats->rtt_ms = snapshot.rtt_ms;
     out_stats->bitrate_kbps = snapshot.bitrate_kbps;
     return true;
+}
+
+// =====================================================================
+// Keyframe-recovery watchdog
+// =====================================================================
+void RtcStreamSession::StartWatchdogThread() {
+    bool expected = false;
+    if (!stats_running_.compare_exchange_strong(expected, true,
+                                                 std::memory_order_acq_rel)) {
+        return;
+    }
+    prev_frames_decoded_           = 0;
+    prev_packets_received_         = 0;
+    last_decode_progress_mono_ms_  = MonoTimeMs();
+    last_keyframe_kick_mono_ms_    = 0;
+    last_keyframe_kick_packets_    = 0;
+    stats_thread_ = std::thread([this] { RunWatchdogLoop(); });
+}
+
+void RtcStreamSession::StopWatchdogThread() {
+    if (!stats_running_.exchange(false, std::memory_order_acq_rel)) return;
+    stats_cv_.notify_all();
+    if (stats_thread_.joinable() &&
+        stats_thread_.get_id() != std::this_thread::get_id()) {
+        stats_thread_.join();
+    }
+}
+
+void RtcStreamSession::RunWatchdogLoop() {
+    while (stats_running_.load(std::memory_order_acquire)) {
+        TickWatchdog();
+        std::unique_lock<std::mutex> lk(stats_cv_mu_);
+        stats_cv_.wait_for(lk, std::chrono::seconds(1), [this] {
+            return !stats_running_.load(std::memory_order_acquire);
+        });
+    }
+}
+
+void RtcStreamSession::TickWatchdog() {
+    if (!peer_connection_) return;
+    auto self = shared_from_this();
+    auto cb = webrtc::make_ref_counted<StatsCollectorCallback>(
+        [self](const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
+            self->OnWatchdogStats(report);
+        });
+    peer_connection_->GetStats(cb.get());
+}
+
+void RtcStreamSession::OnWatchdogStats(
+    const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
+    if (!report || !peer_connection_ || closed_.load(std::memory_order_acquire)) return;
+
+    uint64_t frames_decoded   = 0;
+    uint64_t packets_received = 0;
+    bool     have_video       = false;
+    for (const auto* inb : report->GetStatsOfType<webrtc::RTCInboundRtpStreamStats>()) {
+        if (!inb || !inb->kind || *inb->kind != "video") continue;
+        if (inb->frames_decoded.has_value()) {
+            frames_decoded += static_cast<uint64_t>(*inb->frames_decoded);
+        }
+        if (inb->packets_received.has_value()) {
+            packets_received += static_cast<uint64_t>(*inb->packets_received);
+        }
+        have_video = true;
+    }
+    if (!have_video) return;
+
+    const int64_t now_ms = MonoTimeMs();
+    const uint64_t delta_frames = (frames_decoded >= prev_frames_decoded_)
+                                       ? (frames_decoded - prev_frames_decoded_)
+                                       : 0;
+
+    if (delta_frames > 0) {
+        last_decode_progress_mono_ms_ = now_ms;
+        last_keyframe_kick_packets_   = packets_received;
+    } else if (last_decode_progress_mono_ms_ == 0) {
+        last_decode_progress_mono_ms_ = now_ms;
+    }
+
+    const int64_t stuck_ms          = now_ms - last_decode_progress_mono_ms_;
+    const bool packets_still_flowing = packets_received > last_keyframe_kick_packets_;
+    const bool cooldown_elapsed = last_keyframe_kick_mono_ms_ == 0 ||
+                                   (now_ms - last_keyframe_kick_mono_ms_) >= watchdog_cooldown_ms_;
+
+    if (delta_frames == 0 && packets_still_flowing &&
+        stuck_ms >= watchdog_stuck_threshold_ms_ && cooldown_elapsed) {
+        RFLOW_LOGW("[pull idx=%d] keyframe watchdog: decoder stalled %lld ms, packets=%llu; "
+                   "kicking jitter buffer to force PLI",
+                   index_, static_cast<long long>(stuck_ms),
+                   static_cast<unsigned long long>(packets_received));
+        KickJitterBufferForKeyframe();
+        last_keyframe_kick_mono_ms_   = now_ms;
+        last_keyframe_kick_packets_   = packets_received;
+    }
+
+    prev_frames_decoded_   = frames_decoded;
+    prev_packets_received_ = packets_received;
+}
+
+void RtcStreamSession::KickJitterBufferForKeyframe() {
+    if (!peer_connection_) return;
+    const double floor_s = jitter_min_delay_seconds_.load(std::memory_order_acquire);
+    // 临时 bump 到 300ms 再回落到 floor，触发 RtpVideoStreamReceiver 重新评估帧状态、
+    // 必要时直接发 PLI/FIR；这一抖动对感知延迟的扰动 < 1 个 stats 间隔。
+    auto kick = [this, floor_s]() {
+        if (!peer_connection_) return;
+        for (const auto& transceiver : peer_connection_->GetTransceivers()) {
+            if (!transceiver || transceiver->media_type() != webrtc::MediaType::VIDEO) {
+                continue;
+            }
+            auto receiver = transceiver->receiver();
+            if (!receiver) continue;
+            receiver->SetJitterBufferMinimumDelay(std::optional<double>(0.3));
+            receiver->SetJitterBufferMinimumDelay(std::optional<double>(floor_s));
+        }
+    };
+    RunOnPeerConnectionSignalingThread(kick);
 }
 
 }  // namespace rflow::client::impl

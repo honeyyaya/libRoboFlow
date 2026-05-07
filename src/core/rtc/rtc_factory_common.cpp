@@ -34,9 +34,11 @@ int ReadEnvIntInRange(const char* name, int def, int lo, int hi) {
     return n;
 }
 
+// Demo 默认：min_pacing=2ms（~半个 60fps 帧间隔，避免高帧率 spin-loop）、
+// max_decode_queue_size=3（jb 容许 2 包乱序 + 1 解码 in-flight 的最小环）。
 std::string ZeroPlayoutDelayTrialString() {
-    int pacing_ms = ReadEnvIntInRange("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", 1, 0, 20);
-    int queue_max = ReadEnvIntInRange("RFLOW_MAX_DECODE_QUEUE_SIZE", 6, 4, 16);
+    int pacing_ms = ReadEnvIntInRange("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", 2, 0, 20);
+    int queue_max = ReadEnvIntInRange("RFLOW_MAX_DECODE_QUEUE_SIZE", 3, 2, 16);
 
     // Optional guard for low-pacing mode to avoid decode queue buildup.
     if (EnvTruthy("RFLOW_ENABLE_DECODE_QUEUE_GUARD")) {
@@ -50,13 +52,24 @@ std::string ZeroPlayoutDelayTrialString() {
            "ms,max_decode_queue_size:" + std::to_string(queue_max) + "/";
 }
 
+// Demo 默认：playout 延迟夹在 [0, 60] ms。max>0 给 NACK 单包重传留余量；
+// min=0 使干净帧瞬时通过；env RFLOW_FORCE_PLAYOUT_MIN_MS / _MAX_MS 可覆盖。
+std::string ForcePlayoutDelayTrialString() {
+    const int min_ms = static_cast<int>(
+        ReadEnvIntInRange("RFLOW_FORCE_PLAYOUT_MIN_MS", 0, 0, 1000));
+    const int max_ms = static_cast<int>(
+        ReadEnvIntInRange("RFLOW_FORCE_PLAYOUT_MAX_MS", 60, 0, 2000));
+    const int eff_min = (min_ms <= max_ms) ? min_ms : max_ms;
+    return "WebRTC-ForcePlayoutDelay/min_ms:" + std::to_string(eff_min) +
+           ",max_ms:" + std::to_string(max_ms) + "/";
+}
+
 }  // namespace
 
 void EnsureWebrtcFieldTrialsInitialized() {
     std::call_once(g_field_trials_once, []() {
-        g_field_trials_storage =
-            "WebRTC-VideoFrameTrackingIdAdvertised/Enabled/"
-            "WebRTC-ForcePlayoutDelay/min_ms:0,max_ms:0/";
+        g_field_trials_storage = "WebRTC-VideoFrameTrackingIdAdvertised/Enabled/";
+        g_field_trials_storage += ForcePlayoutDelayTrialString();
         g_field_trials_storage += ZeroPlayoutDelayTrialString();
         g_field_trials_storage +=
             "WebRTC-Pacer-KeyframeFlushing/Enabled/"

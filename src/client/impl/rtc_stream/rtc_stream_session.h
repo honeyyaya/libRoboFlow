@@ -7,11 +7,13 @@
 #define __RFLOW_CLIENT_IMPL_RTC_STREAM_SESSION_H__
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "rflow/librflow_common.h"
@@ -74,6 +76,13 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
     void FlushPendingRemoteIceCandidates();
     void EmitState(rflow_stream_state_t state, rflow_err_t reason);
 
+    void StartWatchdogThread();
+    void StopWatchdogThread();
+    void RunWatchdogLoop();
+    void TickWatchdog();
+    void OnWatchdogStats(const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report);
+    void KickJitterBufferForKeyframe();
+
     const int32_t index_;
     const std::string signaling_url_;
     const std::string device_id_;
@@ -100,6 +109,27 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
 
     std::atomic<int32_t> stream_state_{RFLOW_STREAM_IDLE};
     std::atomic<bool> closed_{false};
+
+    // 当前生效的视频 RtpReceiver jitter buffer min-delay 下限（秒）。OnTrack 写一次，
+    // watchdog 触发后用于把临时 bump 上去的延迟回归到该 floor。
+    std::atomic<double> jitter_min_delay_seconds_{0.02};
+
+    // 关键帧 watchdog：1Hz 拉 GetStats，packetsReceived 仍在涨但 framesDecoded 停滞达
+    // 阈值（默认 300ms）则触发一次 bump—back-to-floor 的 jitter min-delay 抖动，迫使
+    // RtpVideoStreamReceiver 重置 PLI/NACK 定时器。env RFLOW_RECEIVER_KEYFRAME_WATCHDOG=0 关。
+    std::thread             stats_thread_;
+    std::atomic<bool>       stats_running_{false};
+    std::condition_variable stats_cv_;
+    std::mutex              stats_cv_mu_;
+    bool                    watchdog_enabled_           = true;
+    int64_t                 watchdog_stuck_threshold_ms_ = 300;
+    int64_t                 watchdog_cooldown_ms_        = 600;
+
+    uint64_t prev_frames_decoded_         = 0;
+    uint64_t prev_packets_received_       = 0;
+    int64_t  last_decode_progress_mono_ms_ = 0;
+    int64_t  last_keyframe_kick_mono_ms_   = 0;
+    uint64_t last_keyframe_kick_packets_   = 0;
 
     std::mutex mu_;
     FrameSink frame_sink_;
