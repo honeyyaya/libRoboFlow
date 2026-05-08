@@ -17,6 +17,7 @@
 #include "core/rtc/hw/android/native_dec_frame_buffer.h"
 
 #include "common/internal/logger.h"
+#include "common/internal/timing_log.h"
 
 #include <android/api-level.h>
 #include <android/hardware_buffer.h>
@@ -31,7 +32,9 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <functional>
 #include <future>
@@ -88,6 +91,26 @@ int64_t McMonotonicUs() {
     return std::chrono::duration_cast<std::chrono::microseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+// 以 system_clock 抓当前墙钟时间，写入 "YYYY-MM-DD HH:MM:SS.mmm" 串。
+// 仅在打 [Timing/Decode] 等采样日志时调用，热路径上不会触发。
+void FormatWallClockNow(char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    const auto now_sys = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now_sys);
+    const auto ms_part = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             now_sys.time_since_epoch()) % 1000;
+    std::tm tm_local{};
+#if defined(_WIN32)
+    localtime_s(&tm_local, &t);
+#else
+    localtime_r(&t, &tm_local);
+#endif
+    std::snprintf(out, out_sz, "%04d-%02d-%02d %02d:%02d:%02d.%03lld",
+                  tm_local.tm_year + 1900, tm_local.tm_mon + 1, tm_local.tm_mday,
+                  tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec,
+                  static_cast<long long>(ms_part.count()));
 }
 
 int GetDeviceApiLevel() {
@@ -783,18 +806,52 @@ struct AndroidMediaCodecVideoDecoder::Impl {
         const std::optional<uint16_t>& tracking_id) {
         if (!codec_ || !data || data_size == 0 || !data->data()) return;
 
+        // 采样判定：仅当 tracking_id 存在且命中采样周期，并且 RFLOW_LOG_TIMING 开启
+        // 时才进行细粒度计时。未命中时所有 timer 取值都不计算，热路径零开销。
+        const bool log_timing =
+            tracking_id.has_value() &&
+            rflow::timing_log::ShouldSampleByTrackingId(
+                static_cast<uint32_t>(*tracking_id));
+        const uint32_t tid_for_log =
+            tracking_id.has_value() ? static_cast<uint32_t>(*tracking_id) : 0u;
+
+        // worker_queue：从 Decode() 入口（decode_wall_t0_us）到 worker 真正 picked 的延迟。
+        const int64_t t_worker_in_us = log_timing ? McMonotonicUs() : int64_t{0};
+        const double  worker_queue_ms =
+            log_timing ? (t_worker_in_us - decode_wall_t0_us) / 1000.0 : 0.0;
+
+        const bool input_is_annexb = LooksLikeAnnexB(data->data(), data_size);
+        const int64_t t_prep0 = log_timing ? McMonotonicUs() : int64_t{0};
         const uint8_t* feed_ptr = data->data();
         size_t         feed_sz  = data_size;
-        if (!LooksLikeAnnexB(data->data(), data_size)) {
+        if (!input_is_annexb) {
             AnnexBToAvcc(data->data(), data_size, &avcc_scratch_);
             if (avcc_scratch_.empty()) return;
             feed_ptr = avcc_scratch_.data();
             feed_sz  = avcc_scratch_.size();
         }
+        const double prepare_ms =
+            log_timing ? (McMonotonicUs() - t_prep0) / 1000.0 : 0.0;
 
+        const int64_t t_deqin0 = log_timing ? McMonotonicUs() : int64_t{0};
         ssize_t in_idx = AMediaCodec_dequeueInputBuffer(codec_, kDequeueInputTimeoutUs);
+        const double deq_in_ms =
+            log_timing ? (McMonotonicUs() - t_deqin0) / 1000.0 : 0.0;
         if (in_idx < 0) {
             MaybeLogInputBackpressure(in_idx);
+            if (log_timing) {
+                char wall[40] = {0};
+                FormatWallClockNow(wall, sizeof(wall));
+                const double total_ms =
+                    (McMonotonicUs() - decode_wall_t0_us) / 1000.0;
+                RFLOW_LOGI(
+                    "[Timing/DecodeDrop] tracking_id=%u rtp_ts=%u key=%d bytes=%zu "
+                    "annexb=%d wall=%s | worker_queue=%.3f ms | prepare=%.3f ms | "
+                    "deq_in=%.3f ms | total=%.3f ms",
+                    tid_for_log, rtp_timestamp, is_keyframe ? 1 : 0, feed_sz,
+                    input_is_annexb ? 1 : 0, wall,
+                    worker_queue_ms, prepare_ms, deq_in_ms, total_ms);
+            }
             return;
         }
         ResetInputBackpressureBurst();
@@ -807,7 +864,10 @@ struct AndroidMediaCodecVideoDecoder::Impl {
             AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(in_idx), 0, 0, 0, 0);
             return;
         }
+        const int64_t t_copy0 = log_timing ? McMonotonicUs() : int64_t{0};
         memcpy(in_buf, feed_ptr, feed_sz);
+        const double copy_ms =
+            log_timing ? (McMonotonicUs() - t_copy0) / 1000.0 : 0.0;
 
         uint32_t flags = 0;
         if (is_keyframe) flags |= AMEDIACODEC_BUFFER_FLAG_KEY_FRAME;
@@ -816,9 +876,12 @@ struct AndroidMediaCodecVideoDecoder::Impl {
         RecordOutputMetadata(pts_us, render_time_ms, rtp_timestamp, decode_wall_t0_us,
                              tracking_id);
 
+        const int64_t t_qin0 = log_timing ? McMonotonicUs() : int64_t{0};
         media_status_t st = AMediaCodec_queueInputBuffer(codec_,
                                                          static_cast<size_t>(in_idx),
                                                          0, feed_sz, pts_us, flags);
+        const double q_in_ms =
+            log_timing ? (McMonotonicUs() - t_qin0) / 1000.0 : 0.0;
         if (st != AMEDIA_OK) {
             RFLOW_LOGW("[mc_dec] queueInputBuffer failed: %d", static_cast<int>(st));
             RemoveOutputMetadata(pts_us);
@@ -827,6 +890,23 @@ struct AndroidMediaCodecVideoDecoder::Impl {
             return;
         }
         // 输出由独立 drain 线程拉取，这里不直接 drain，避免 worker 串行阻塞。
+
+        if (log_timing) {
+            char wall[40] = {0};
+            FormatWallClockNow(wall, sizeof(wall));
+            const double total_ms =
+                (McMonotonicUs() - decode_wall_t0_us) / 1000.0;
+            // 单行采样耗时分析；合并了原参考实现中的 [耗时分析]EncodedFrame 与
+            // [Timing/Decode] 两条日志（McE2E native 见 1Hz [Pipeline/Latency]
+            // 中的 decode_avg / processing_avg；端到端总耗时由渲染层负责打印）。
+            RFLOW_LOGI(
+                "[Timing/Decode] tracking_id=%u rtp_ts=%u key=%d bytes=%zu annexb=%d "
+                "wall=%s | worker_queue=%.3f ms | prepare=%.3f ms | deq_in=%.3f ms | "
+                "copy=%.3f ms | q_in=%.3f ms | total=%.3f ms",
+                tid_for_log, rtp_timestamp, is_keyframe ? 1 : 0, feed_sz,
+                input_is_annexb ? 1 : 0, wall,
+                worker_queue_ms, prepare_ms, deq_in_ms, copy_ms, q_in_ms, total_ms);
+        }
     }
 };
 

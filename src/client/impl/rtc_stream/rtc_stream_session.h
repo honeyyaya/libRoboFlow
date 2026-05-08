@@ -131,12 +131,18 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
     int64_t  last_keyframe_kick_mono_ms_   = 0;
     uint64_t last_keyframe_kick_packets_   = 0;
 
-    // 周期性 stats 日志（[DecodeStats] / [NetStats] / [Pipeline/Net]），1Hz，
-    // 复用 watchdog 线程；env RFLOW_CLIENT_STATS_LOG=0 关闭。
-    bool     stats_log_enabled_           = true;
-    bool     stats_log_baseline_done_     = false;
-    uint64_t prev_frames_dropped_         = 0;
-    double   prev_total_decode_time_s_    = 0.0;
+    // 周期性 stats 日志（[Pipeline/Video] / [Pipeline/Latency] /
+    // [Pipeline/Codec] / [Pipeline/Net]），1Hz，复用 watchdog 线程。
+    // 默认关闭，env RFLOW_LOG_TIMING=1 显式开启（rflow::timing_log::IsEnabled）。
+    bool        stats_log_baseline_done_     = false;
+    uint64_t    prev_frames_dropped_         = 0;
+    double      prev_total_decode_time_s_    = 0.0;
+    double      prev_total_processing_delay_s_ = 0.0;
+    double      prev_total_assembly_time_s_  = 0.0;
+    // [Pipeline/Codec] 只在 fmtp 首次出现或变化时打印；缓存最近一次。
+    std::string last_codec_fmtp_;
+    std::string last_codec_mime_;
+    uint32_t    last_codec_payload_type_     = 0;
 
     std::mutex mu_;
     FrameSink frame_sink_;

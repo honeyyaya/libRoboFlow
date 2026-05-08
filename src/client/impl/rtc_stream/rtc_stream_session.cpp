@@ -5,6 +5,7 @@
 
 #include "common/internal/frame_impl.h"
 #include "common/internal/logger.h"
+#include "common/internal/timing_log.h"
 #include "rflow/librflow_common.h"
 
 #include <algorithm>
@@ -329,7 +330,6 @@ RtcStreamSession::RtcStreamSession(
         ReadEnvIntInRange("RFLOW_RECEIVER_WATCHDOG_STUCK_MS", 300, 50, 5000);
     watchdog_cooldown_ms_ =
         ReadEnvIntInRange("RFLOW_RECEIVER_WATCHDOG_COOLDOWN_MS", 600, 100, 10000);
-    stats_log_enabled_ = ReadEnvBoolDefault("RFLOW_CLIENT_STATS_LOG", true);
 }
 
 RtcStreamSession::~RtcStreamSession() {
@@ -385,7 +385,9 @@ bool RtcStreamSession::Start() {
                    index_, room.c_str());
     }
 
-    if (watchdog_enabled_ || stats_log_enabled_) {
+    // 周期 stats 线程负责 watchdog + 1 Hz pipeline 日志：watchdog 默认开（保活），
+    // pipeline 日志由 RFLOW_LOG_TIMING 控制；只要任一启用就拉起线程。
+    if (watchdog_enabled_ || rflow::timing_log::IsEnabled()) {
         StartWatchdogThread();
     }
     return true;
@@ -928,10 +930,13 @@ void RtcStreamSession::OnWatchdogStats(
     uint32_t frame_h            = 0;
     double   fps                = 0.0;
     double   total_decode_time_s = 0.0;
+    double   total_processing_delay_s = 0.0;
+    double   total_assembly_time_s    = 0.0;
     double   jitter_s           = 0.0;
     double   jb_delay_s         = 0.0;
     uint64_t jb_emitted         = 0;
     std::string decoder_impl;
+    std::string codec_id;
     bool     have_video         = false;
 
     for (const auto* inb : report->GetStatsOfType<webrtc::RTCInboundRtpStreamStats>()) {
@@ -949,11 +954,16 @@ void RtcStreamSession::OnWatchdogStats(
         if (inb->frame_height)          frame_h             = std::max(frame_h,    *inb->frame_height);
         if (inb->frames_per_second)     fps                 = std::max(fps,        *inb->frames_per_second);
         if (inb->total_decode_time)     total_decode_time_s += *inb->total_decode_time;
+        if (inb->total_processing_delay) total_processing_delay_s += *inb->total_processing_delay;
+        if (inb->total_assembly_time)    total_assembly_time_s    += *inb->total_assembly_time;
         if (inb->jitter)                jitter_s            = std::max(jitter_s,   *inb->jitter);
         if (inb->jitter_buffer_delay)         jb_delay_s   += *inb->jitter_buffer_delay;
         if (inb->jitter_buffer_emitted_count) jb_emitted   += *inb->jitter_buffer_emitted_count;
         if (inb->decoder_implementation && decoder_impl.empty()) {
             decoder_impl = *inb->decoder_implementation;
+        }
+        if (inb->codec_id && codec_id.empty()) {
+            codec_id = *inb->codec_id;
         }
         have_video = true;
     }
@@ -990,8 +1000,9 @@ void RtcStreamSession::OnWatchdogStats(
         }
     }
 
-    // ---- 周期日志 ----
-    if (stats_log_enabled_) {
+    // ---- 1 Hz 流水线日志 ----
+    // 受 RFLOW_LOG_TIMING 总开关控制（默认关），与 [Timing/Decode] 共用一个 env。
+    if (rflow::timing_log::IsEnabled()) {
         // RTT（取活跃的 candidate pair；若多对则取 nominated 优先，其它取最大）
         double cur_rtt_s   = 0.0;
         double total_rtt_s = 0.0;
@@ -1021,8 +1032,18 @@ void RtcStreamSession::OnWatchdogStats(
         const double d_decode_time_s =
             stats_log_baseline_done_ && total_decode_time_s >= prev_total_decode_time_s_
                 ? total_decode_time_s - prev_total_decode_time_s_ : 0.0;
+        const double d_processing_s =
+            stats_log_baseline_done_ && total_processing_delay_s >= prev_total_processing_delay_s_
+                ? total_processing_delay_s - prev_total_processing_delay_s_ : 0.0;
+        const double d_assembly_s =
+            stats_log_baseline_done_ && total_assembly_time_s >= prev_total_assembly_time_s_
+                ? total_assembly_time_s - prev_total_assembly_time_s_ : 0.0;
         const double avg_decode_ms =
             (d_decoded > 0) ? (d_decode_time_s * 1000.0 / static_cast<double>(d_decoded)) : 0.0;
+        const double avg_processing_ms =
+            (d_decoded > 0) ? (d_processing_s * 1000.0 / static_cast<double>(d_decoded)) : 0.0;
+        const double avg_assembly_ms =
+            (d_decoded > 0) ? (d_assembly_s * 1000.0 / static_cast<double>(d_decoded)) : 0.0;
 
         const double jb_delay_ms =
             (jb_emitted > 0) ? (jb_delay_s * 1000.0 / static_cast<double>(jb_emitted)) : 0.0;
@@ -1038,27 +1059,61 @@ void RtcStreamSession::OnWatchdogStats(
 
         const char* decoder_cstr = decoder_impl.empty() ? "unknown" : decoder_impl.c_str();
 
+        // 解析 codec 引用（从 inbound stat 拿到 codec_id 后查 RTCCodecStats）
+        std::string codec_mime;
+        std::string codec_fmtp;
+        uint32_t    codec_pt = 0;
+        bool        has_codec_pt = false;
+        if (!codec_id.empty()) {
+            if (const auto* codec = report->GetAs<webrtc::RTCCodecStats>(codec_id)) {
+                if (codec->mime_type)     codec_mime = *codec->mime_type;
+                if (codec->sdp_fmtp_line) codec_fmtp = *codec->sdp_fmtp_line;
+                if (codec->payload_type) {
+                    codec_pt     = *codec->payload_type;
+                    has_codec_pt = true;
+                }
+            }
+        }
+
+        const std::string codec_label =
+            codec_mime.empty()
+                ? std::string("unknown")
+                : (has_codec_pt ? codec_mime + " pt=" + std::to_string(codec_pt) : codec_mime);
+
+        // [Pipeline/Video]：每秒视频/解码总账（合并旧 [DecodeStats] 中文重复的字段）。
         RFLOW_LOGD(
-            "[DecodeStats] %ux%u | 解码器: %s | fps: %.1f | 解码帧: +%llu (总%llu) | "
-            "平均解码: %.2f ms/帧 | 丢帧: +%llu (总%llu) | 抖动缓冲: %.1f ms | 接收: %llu KB",
-            frame_w, frame_h, decoder_cstr, fps,
+            "[Pipeline/Video] %ux%u | decoder=%s | codec=%s | fps=%.1f | "
+            "decoded=+%llu total=%llu | dropped=+%llu total=%llu | recv=%llu KB",
+            frame_w, frame_h, decoder_cstr, codec_label.c_str(), fps,
             static_cast<unsigned long long>(d_decoded),
             static_cast<unsigned long long>(frames_decoded),
-            avg_decode_ms,
             static_cast<unsigned long long>(d_dropped),
             static_cast<unsigned long long>(frames_dropped),
-            jb_delay_ms,
             static_cast<unsigned long long>(bytes_kb));
 
+        // [Pipeline/Latency]：每秒延迟分项（合并旧 jb / decode_avg；新增 processing/assembly）。
+        const double jitter_min_ms =
+            jitter_min_delay_seconds_.load(std::memory_order_relaxed) * 1000.0;
         RFLOW_LOGD(
-            "[NetStats] RTT: %.1f ms (平均 %.1f ms) | 抖动: %.1f ms | "
-            "丢包率: %.2f%% (%lld/%llu) | NACK: %u | PLI: %u | FIR: %u | FEC: %llu",
-            cur_rtt_ms, avg_rtt_ms, jitter_ms, loss_pct,
-            static_cast<long long>(lost),
-            static_cast<unsigned long long>(total_for_loss),
-            nack_count, pli_count, fir_count,
-            static_cast<unsigned long long>(fec_packets));
+            "[Pipeline/Latency] jb_avg=%.1f ms | decode_avg=%.2f ms | "
+            "processing_avg=%.2f ms | assembly_avg=%.2f ms | jitter_min=%.1f ms",
+            jb_delay_ms, avg_decode_ms, avg_processing_ms, avg_assembly_ms, jitter_min_ms);
 
+        // [Pipeline/Codec]：仅在 fmtp/mime/pt 首次出现或变化时打印一次（不再每秒重复）。
+        if (codec_mime != last_codec_mime_ || codec_fmtp != last_codec_fmtp_ ||
+            codec_pt != last_codec_payload_type_) {
+            if (!codec_mime.empty() || !codec_fmtp.empty()) {
+                RFLOW_LOGD("[Pipeline/Codec] mime=%s pt=%u fmtp=%s",
+                           codec_mime.empty() ? "unknown" : codec_mime.c_str(),
+                           codec_pt,
+                           codec_fmtp.empty() ? "" : codec_fmtp.c_str());
+            }
+            last_codec_mime_         = codec_mime;
+            last_codec_fmtp_         = codec_fmtp;
+            last_codec_payload_type_ = codec_pt;
+        }
+
+        // [Pipeline/Net]：每秒网络分项（与之前一致；删除中文重复的 [NetStats]）。
         RFLOW_LOGD(
             "[Pipeline/Net] rtt=%.1f ms | rtt_avg=%.1f ms | jitter=%.1f ms | "
             "loss=%.2f%% (%lld/%llu) | nack=%u | pli=%u | fir=%u | fec=%llu",
@@ -1068,9 +1123,11 @@ void RtcStreamSession::OnWatchdogStats(
             nack_count, pli_count, fir_count,
             static_cast<unsigned long long>(fec_packets));
 
-        prev_frames_dropped_       = frames_dropped;
-        prev_total_decode_time_s_  = total_decode_time_s;
-        stats_log_baseline_done_   = true;
+        prev_frames_dropped_           = frames_dropped;
+        prev_total_decode_time_s_      = total_decode_time_s;
+        prev_total_processing_delay_s_ = total_processing_delay_s;
+        prev_total_assembly_time_s_    = total_assembly_time_s;
+        stats_log_baseline_done_       = true;
     }
 
     prev_frames_decoded_   = frames_decoded;
