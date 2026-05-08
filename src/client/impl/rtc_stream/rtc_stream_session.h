@@ -131,6 +131,13 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
     int64_t  last_keyframe_kick_mono_ms_   = 0;
     uint64_t last_keyframe_kick_packets_   = 0;
 
+    // 周期性 stats 日志（[DecodeStats] / [NetStats] / [Pipeline/Net]），1Hz，
+    // 复用 watchdog 线程；env RFLOW_CLIENT_STATS_LOG=0 关闭。
+    bool     stats_log_enabled_           = true;
+    bool     stats_log_baseline_done_     = false;
+    uint64_t prev_frames_dropped_         = 0;
+    double   prev_total_decode_time_s_    = 0.0;
+
     std::mutex mu_;
     FrameSink frame_sink_;
     StateSink state_sink_;

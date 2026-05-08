@@ -329,6 +329,7 @@ RtcStreamSession::RtcStreamSession(
         ReadEnvIntInRange("RFLOW_RECEIVER_WATCHDOG_STUCK_MS", 300, 50, 5000);
     watchdog_cooldown_ms_ =
         ReadEnvIntInRange("RFLOW_RECEIVER_WATCHDOG_COOLDOWN_MS", 600, 100, 10000);
+    stats_log_enabled_ = ReadEnvBoolDefault("RFLOW_CLIENT_STATS_LOG", true);
 }
 
 RtcStreamSession::~RtcStreamSession() {
@@ -384,7 +385,7 @@ bool RtcStreamSession::Start() {
                    index_, room.c_str());
     }
 
-    if (watchdog_enabled_) {
+    if (watchdog_enabled_ || stats_log_enabled_) {
         StartWatchdogThread();
     }
     return true;
@@ -913,47 +914,163 @@ void RtcStreamSession::OnWatchdogStats(
     const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
     if (!report || !peer_connection_ || closed_.load(std::memory_order_acquire)) return;
 
-    uint64_t frames_decoded   = 0;
-    uint64_t packets_received = 0;
-    bool     have_video       = false;
+    // ---- 单次扫描：watchdog 与周期日志共用同一组 inbound video 累加 ----
+    uint64_t frames_decoded     = 0;
+    uint64_t packets_received   = 0;
+    int64_t  packets_lost_signed = 0;  // RFC 3550 signed
+    uint64_t frames_dropped     = 0;
+    uint64_t bytes_received     = 0;
+    uint64_t fec_packets        = 0;
+    uint32_t nack_count         = 0;
+    uint32_t pli_count          = 0;
+    uint32_t fir_count          = 0;
+    uint32_t frame_w            = 0;
+    uint32_t frame_h            = 0;
+    double   fps                = 0.0;
+    double   total_decode_time_s = 0.0;
+    double   jitter_s           = 0.0;
+    double   jb_delay_s         = 0.0;
+    uint64_t jb_emitted         = 0;
+    std::string decoder_impl;
+    bool     have_video         = false;
+
     for (const auto* inb : report->GetStatsOfType<webrtc::RTCInboundRtpStreamStats>()) {
         if (!inb || !inb->kind || *inb->kind != "video") continue;
-        if (inb->frames_decoded.has_value()) {
-            frames_decoded += static_cast<uint64_t>(*inb->frames_decoded);
-        }
-        if (inb->packets_received.has_value()) {
-            packets_received += static_cast<uint64_t>(*inb->packets_received);
+        if (inb->frames_decoded)        frames_decoded     += static_cast<uint64_t>(*inb->frames_decoded);
+        if (inb->packets_received)      packets_received   += static_cast<uint64_t>(*inb->packets_received);
+        if (inb->packets_lost)          packets_lost_signed += static_cast<int64_t>(*inb->packets_lost);
+        if (inb->frames_dropped)        frames_dropped     += static_cast<uint64_t>(*inb->frames_dropped);
+        if (inb->bytes_received)        bytes_received     += *inb->bytes_received;
+        if (inb->fec_packets_received)  fec_packets        += *inb->fec_packets_received;
+        if (inb->nack_count)            nack_count          = std::max(nack_count, *inb->nack_count);
+        if (inb->pli_count)             pli_count           = std::max(pli_count,  *inb->pli_count);
+        if (inb->fir_count)             fir_count           = std::max(fir_count,  *inb->fir_count);
+        if (inb->frame_width)           frame_w             = std::max(frame_w,    *inb->frame_width);
+        if (inb->frame_height)          frame_h             = std::max(frame_h,    *inb->frame_height);
+        if (inb->frames_per_second)     fps                 = std::max(fps,        *inb->frames_per_second);
+        if (inb->total_decode_time)     total_decode_time_s += *inb->total_decode_time;
+        if (inb->jitter)                jitter_s            = std::max(jitter_s,   *inb->jitter);
+        if (inb->jitter_buffer_delay)         jb_delay_s   += *inb->jitter_buffer_delay;
+        if (inb->jitter_buffer_emitted_count) jb_emitted   += *inb->jitter_buffer_emitted_count;
+        if (inb->decoder_implementation && decoder_impl.empty()) {
+            decoder_impl = *inb->decoder_implementation;
         }
         have_video = true;
     }
     if (!have_video) return;
 
+    // ---- watchdog ----
     const int64_t now_ms = MonoTimeMs();
     const uint64_t delta_frames = (frames_decoded >= prev_frames_decoded_)
                                        ? (frames_decoded - prev_frames_decoded_)
                                        : 0;
 
-    if (delta_frames > 0) {
-        last_decode_progress_mono_ms_ = now_ms;
-        last_keyframe_kick_packets_   = packets_received;
-    } else if (last_decode_progress_mono_ms_ == 0) {
-        last_decode_progress_mono_ms_ = now_ms;
+    if (watchdog_enabled_) {
+        if (delta_frames > 0) {
+            last_decode_progress_mono_ms_ = now_ms;
+            last_keyframe_kick_packets_   = packets_received;
+        } else if (last_decode_progress_mono_ms_ == 0) {
+            last_decode_progress_mono_ms_ = now_ms;
+        }
+
+        const int64_t stuck_ms          = now_ms - last_decode_progress_mono_ms_;
+        const bool packets_still_flowing = packets_received > last_keyframe_kick_packets_;
+        const bool cooldown_elapsed = last_keyframe_kick_mono_ms_ == 0 ||
+                                       (now_ms - last_keyframe_kick_mono_ms_) >= watchdog_cooldown_ms_;
+
+        if (delta_frames == 0 && packets_still_flowing &&
+            stuck_ms >= watchdog_stuck_threshold_ms_ && cooldown_elapsed) {
+            RFLOW_LOGW("[pull idx=%d] keyframe watchdog: decoder stalled %lld ms, packets=%llu; "
+                       "kicking jitter buffer to force PLI",
+                       index_, static_cast<long long>(stuck_ms),
+                       static_cast<unsigned long long>(packets_received));
+            KickJitterBufferForKeyframe();
+            last_keyframe_kick_mono_ms_   = now_ms;
+            last_keyframe_kick_packets_   = packets_received;
+        }
     }
 
-    const int64_t stuck_ms          = now_ms - last_decode_progress_mono_ms_;
-    const bool packets_still_flowing = packets_received > last_keyframe_kick_packets_;
-    const bool cooldown_elapsed = last_keyframe_kick_mono_ms_ == 0 ||
-                                   (now_ms - last_keyframe_kick_mono_ms_) >= watchdog_cooldown_ms_;
+    // ---- 周期日志 ----
+    if (stats_log_enabled_) {
+        // RTT（取活跃的 candidate pair；若多对则取 nominated 优先，其它取最大）
+        double cur_rtt_s   = 0.0;
+        double total_rtt_s = 0.0;
+        uint64_t rtt_resp  = 0;
+        bool     have_pair = false;
+        for (const auto* pair : report->GetStatsOfType<webrtc::RTCIceCandidatePairStats>()) {
+            if (!pair) continue;
+            const bool nominated = pair->nominated && *pair->nominated;
+            if (have_pair && !nominated) continue;
+            if (pair->current_round_trip_time) cur_rtt_s   = *pair->current_round_trip_time;
+            if (pair->total_round_trip_time)   total_rtt_s = *pair->total_round_trip_time;
+            if (pair->responses_received)      rtt_resp    = *pair->responses_received;
+            if (nominated) { have_pair = true; }
+            else if (!have_pair) { have_pair = true; }
+        }
+        const double cur_rtt_ms = cur_rtt_s * 1000.0;
+        const double avg_rtt_ms = (rtt_resp > 0) ? (total_rtt_s / static_cast<double>(rtt_resp)) * 1000.0
+                                                  : cur_rtt_ms;
 
-    if (delta_frames == 0 && packets_still_flowing &&
-        stuck_ms >= watchdog_stuck_threshold_ms_ && cooldown_elapsed) {
-        RFLOW_LOGW("[pull idx=%d] keyframe watchdog: decoder stalled %lld ms, packets=%llu; "
-                   "kicking jitter buffer to force PLI",
-                   index_, static_cast<long long>(stuck_ms),
-                   static_cast<unsigned long long>(packets_received));
-        KickJitterBufferForKeyframe();
-        last_keyframe_kick_mono_ms_   = now_ms;
-        last_keyframe_kick_packets_   = packets_received;
+        // 解码与丢帧的增量；首次 tick 仅记录基线，避免“+全部累计”这种误导值。
+        const uint64_t d_decoded =
+            stats_log_baseline_done_ && frames_decoded >= prev_frames_decoded_
+                ? frames_decoded - prev_frames_decoded_ : 0;
+        const uint64_t d_dropped =
+            stats_log_baseline_done_ && frames_dropped >= prev_frames_dropped_
+                ? frames_dropped - prev_frames_dropped_ : 0;
+        const double d_decode_time_s =
+            stats_log_baseline_done_ && total_decode_time_s >= prev_total_decode_time_s_
+                ? total_decode_time_s - prev_total_decode_time_s_ : 0.0;
+        const double avg_decode_ms =
+            (d_decoded > 0) ? (d_decode_time_s * 1000.0 / static_cast<double>(d_decoded)) : 0.0;
+
+        const double jb_delay_ms =
+            (jb_emitted > 0) ? (jb_delay_s * 1000.0 / static_cast<double>(jb_emitted)) : 0.0;
+        const uint64_t bytes_kb = bytes_received / 1024ULL;
+
+        const int64_t lost = packets_lost_signed;
+        const uint64_t pos_lost = (lost > 0) ? static_cast<uint64_t>(lost) : 0;
+        const uint64_t total_for_loss = packets_received + pos_lost;
+        const double loss_pct = (total_for_loss > 0)
+            ? (static_cast<double>(pos_lost) * 100.0 / static_cast<double>(total_for_loss))
+            : 0.0;
+        const double jitter_ms = jitter_s * 1000.0;
+
+        const char* decoder_cstr = decoder_impl.empty() ? "unknown" : decoder_impl.c_str();
+
+        RFLOW_LOGD(
+            "[DecodeStats] %ux%u | 解码器: %s | fps: %.1f | 解码帧: +%llu (总%llu) | "
+            "平均解码: %.2f ms/帧 | 丢帧: +%llu (总%llu) | 抖动缓冲: %.1f ms | 接收: %llu KB",
+            frame_w, frame_h, decoder_cstr, fps,
+            static_cast<unsigned long long>(d_decoded),
+            static_cast<unsigned long long>(frames_decoded),
+            avg_decode_ms,
+            static_cast<unsigned long long>(d_dropped),
+            static_cast<unsigned long long>(frames_dropped),
+            jb_delay_ms,
+            static_cast<unsigned long long>(bytes_kb));
+
+        RFLOW_LOGD(
+            "[NetStats] RTT: %.1f ms (平均 %.1f ms) | 抖动: %.1f ms | "
+            "丢包率: %.2f%% (%lld/%llu) | NACK: %u | PLI: %u | FIR: %u | FEC: %llu",
+            cur_rtt_ms, avg_rtt_ms, jitter_ms, loss_pct,
+            static_cast<long long>(lost),
+            static_cast<unsigned long long>(total_for_loss),
+            nack_count, pli_count, fir_count,
+            static_cast<unsigned long long>(fec_packets));
+
+        RFLOW_LOGD(
+            "[Pipeline/Net] rtt=%.1f ms | rtt_avg=%.1f ms | jitter=%.1f ms | "
+            "loss=%.2f%% (%lld/%llu) | nack=%u | pli=%u | fir=%u | fec=%llu",
+            cur_rtt_ms, avg_rtt_ms, jitter_ms, loss_pct,
+            static_cast<long long>(lost),
+            static_cast<unsigned long long>(total_for_loss),
+            nack_count, pli_count, fir_count,
+            static_cast<unsigned long long>(fec_packets));
+
+        prev_frames_dropped_       = frames_dropped;
+        prev_total_decode_time_s_  = total_decode_time_s;
+        stats_log_baseline_done_   = true;
     }
 
     prev_frames_decoded_   = frames_decoded;
