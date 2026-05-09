@@ -1,26 +1,25 @@
 # src/common — Client / Service 共享实现
 # 生成对象库，由 client / service 目标各自链接
 add_library(rflow_common OBJECT
-    error/last_error.cpp
+    base/last_error.cpp
+    base/logger.cpp
+    base/memory.cpp
+    base/version.cpp
 
-    log/log_config.cpp
-    log/logger.cpp
+    abi/log_config.cpp
+    abi/signal_config.cpp
+    abi/license_config.cpp
+    abi/global_config.cpp
 
-    config/signal_config.cpp
-    config/license_config.cpp
-    config/global_config.cpp
-
-    frame/video_frame.cpp
-    frame/stream_stats.cpp
-
-    util/memory.cpp
-    util/version.cpp
+    media/video_frame.cpp
+    media/stream_stats.cpp
 )
 
 target_include_directories(rflow_common
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
     PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -33,3 +32,9 @@ if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL OR RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
 endif()
 
 target_link_libraries(rflow_common PRIVATE rflow_warnings)
+
+# 把 git/build 时间戳注入 version.cpp 编译单元（不污染 public header librflow_version.h；
+# 如未提供则该 .cpp 通过 librflow_version.h 内的 #ifndef fallback 用 "unknown"）。
+set_source_files_properties(base/version.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "COMMIT_VERSION=\"${RFLOW_GIT_COMMIT}\";COMMIT_TIME=\"${RFLOW_GIT_COMMIT_TIME}\";BUILD_TIME=\"${RFLOW_BUILD_TIME}\"")

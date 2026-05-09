@@ -16,9 +16,10 @@
 
 #include "rflow/Client/librflow_client_api.h"
 
+#include "common/demo_helpers.h"
+
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -27,17 +28,14 @@
 
 namespace {
 
-std::atomic<bool> g_stop{false};
 std::atomic<uint64_t> g_frames{0};
 
-void OnSig(int) { g_stop.store(true); }
-
 void OnConnectState(rflow_connect_state_t state, rflow_err_t reason, void* /*ud*/) {
-    std::cout << "[demo] connect state=" << state << " reason=" << reason << std::endl;
+    rflow::apps::common::LogConnectState(state, reason);
 }
 void OnStreamState(librflow_stream_handle_t /*h*/, rflow_stream_state_t state,
                     rflow_err_t reason, void* /*ud*/) {
-    std::cout << "[demo] stream state=" << state << " reason=" << reason << std::endl;
+    rflow::apps::common::LogStreamState(state, reason);
 }
 void OnVideoFrame(librflow_stream_handle_t /*h*/, librflow_video_frame_t frame, void* /*ud*/) {
     const uint64_t n = g_frames.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -61,8 +59,7 @@ int main(int argc, char** argv) {
     if (argc >= 3) device_id     = argv[2];
     if (argc >= 4) stream_index  = std::atoi(argv[3]);
 
-    std::signal(SIGINT, OnSig);
-    std::signal(SIGTERM, OnSig);
+    rflow::apps::common::InstallStopSignals();
 
     auto sig_cfg = librflow_signal_config_create();
     librflow_signal_config_set_url(sig_cfg, signaling_url.c_str());
@@ -114,7 +111,7 @@ int main(int argc, char** argv) {
     std::cout << "[demo] pulling stream idx=" << stream_index
               << " from device=" << device_id << ". Ctrl+C to stop." << std::endl;
 
-    while (!g_stop.load()) {
+    while (!rflow::apps::common::StopRequested()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 

@@ -169,6 +169,9 @@ bool ParseMessage(std::string_view line, Message* out) {
 
     msg.from = ExtractJsonString(line, "from");
     msg.to = ExtractJsonString(line, "to");
+    // "v" 字段在协议 v2 起才出现；旧端没有，按 1 处理。这样 ParseMessage 永远拿到一个
+    // 显式版本号，上层只需要比对即可，不必再分别考虑"字段缺失"。
+    msg.protocol_version = ExtractJsonInt(line, "v", 1);
 
     switch (msg.type) {
         case MessageType::kRegister:
@@ -216,6 +219,7 @@ std::string BuildRegisterLine(const RegisterRequest& req) {
     bool first_field = true;
     oss << '{';
     AppendJsonStringField(oss, "type", "register", first_field);
+    AppendJsonIntField(oss, "v", kSignalingProtocolVersion, first_field);
     if (r.role != PeerRole::kUnknown) {
         AppendJsonStringField(oss, "role", ToString(r.role), first_field);
     }
@@ -237,6 +241,7 @@ std::string BuildMessageLine(const Message& msg) {
     bool first_field = true;
     oss << '{';
     AppendJsonStringField(oss, "type", ToString(msg.type), first_field);
+    AppendJsonIntField(oss, "v", kSignalingProtocolVersion, first_field);
 
     if (!msg.from.empty()) {
         AppendJsonStringField(oss, "from", msg.from, first_field);

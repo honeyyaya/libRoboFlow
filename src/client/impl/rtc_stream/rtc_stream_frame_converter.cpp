@@ -1,7 +1,7 @@
 #include "rtc_stream_frame_converter.h"
 
-#include "common/internal/frame_impl.h"
-#include "common/internal/logger.h"
+#include "common/media/frame_types.h"
+#include "common/public/logger_api.h"
 
 #include <chrono>
 #include <new>
@@ -12,7 +12,7 @@
 #include "api/video/video_frame_buffer.h"
 
 #if defined(WEBRTC_ANDROID)
-#include "core/rtc/hw/android/native_dec_frame_buffer.h"
+#include "core/platform/android/native_dec_frame_buffer.h"
 #endif
 
 namespace rflow::client::impl {
@@ -25,12 +25,14 @@ uint64_t NowUtcMs() {
             std::chrono::system_clock::now().time_since_epoch()).count());
 }
 
+#if defined(WEBRTC_ANDROID)
 rflow_err_t AcquireHardwareBufferForSampling(void* /*userdata*/) {
     return RFLOW_OK;
 }
 
 void ReleaseHardwareBufferAfterSampling(void* /*userdata*/) {
 }
+#endif
 
 }  // namespace
 

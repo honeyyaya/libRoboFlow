@@ -17,6 +17,7 @@
 
 #include "api/scoped_refptr.h"
 #include "api/video/video_sink_interface.h"
+#include "common/media/video_frame_source.h"
 #include "media/base/adapted_video_track_source.h"
 #include "modules/video_capture/video_capture.h"
 
@@ -48,7 +49,8 @@ struct V4l2MjpegPipelineOptions {
 };
 /// Connects VideoCaptureModule output to AdaptedVideoTrackSource for CreateVideoTrack().
 class CameraVideoTrackSource : public webrtc::AdaptedVideoTrackSource,
-                               public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
+                               public webrtc::VideoSinkInterface<webrtc::VideoFrame>,
+                               public rflow::common::media::IVideoCaptureSource {
 public:
     CameraVideoTrackSource();
     ~CameraVideoTrackSource() override;
@@ -64,10 +66,10 @@ public:
                const V4l2MjpegPipelineOptions* mjpeg_pipeline = nullptr);
 
     /// Linux 直采路径在 Start 成功后可用；与 config WIDTH/HEIGHT 对比可判断是否要改配置以减少缩放。
-    bool GetNegotiatedCaptureSize(int* width, int* height) const;
+    bool GetNegotiatedCaptureSize(int* width, int* height) const override;
 
     /// 直采：VIDIOC_G_PARM 读回的帧率；VCM：GetBestMatchedCapability 的 maxFPS。用于编码/WebRTC 与相机实际一致。
-    bool GetNegotiatedCaptureFramerate(int* out_fps) const;
+    bool GetNegotiatedCaptureFramerate(int* out_fps) const override;
 
     void Stop();
 
@@ -75,6 +77,11 @@ public:
 
     /// 每帧进入 AdaptedVideoTrackSource::OnFrame 的次数（直采与 VCM 共用；用于采集门限，不依赖 VideoSink）。
     uint32_t CapturedFrameCount() const {
+        return captured_frames_.load(std::memory_order_relaxed);
+    }
+
+    // IVideoFrameSource
+    std::uint32_t dispatched_frame_count() const noexcept override {
         return captured_frames_.load(std::memory_order_relaxed);
     }
 

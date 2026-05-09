@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+struct librflow_stream_stats_s;
+
 namespace rflow::service::impl {
 
 struct PushStreamerCommonConfig {
@@ -144,6 +146,12 @@ public:
 
     /// 是否正在推流
     bool IsStreaming() const { return is_streaming_.load(std::memory_order_acquire); }
+
+    /// 同步采集真实 outbound RTC stats，填到 librflow_stream_stats_s。
+    /// 内部挑选一个有效 PeerConnection（subscriber 优先）调用 GetStats() 阻塞最多 1.5s；
+    /// 调用方应保证 stats 对象由 AllocStreamStats() 分配。返回 false 表示
+    /// 没有可用 PC 或 GetStats 超时（此时 out_stats 中 base 字段未被改写）。
+    bool CollectStats(librflow_stream_stats_s* out_stats);
 
 private:
     class Impl;

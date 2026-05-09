@@ -1,6 +1,7 @@
 #include "core/rtc/rtc_factory_common.h"
 
-#include <cstdlib>
+#include "core/runtime/runtime_knobs.h"
+
 #include <memory>
 #include <mutex>
 #include <string>
@@ -11,36 +12,18 @@
 namespace rflow::rtc {
 namespace {
 
+namespace knob = rflow::core::runtime;
+
 std::once_flag g_field_trials_once;
 std::string    g_field_trials_storage;
 
-bool EnvTruthy(const char* name) {
-    const char* v = std::getenv(name);
-    if (!v || !v[0]) {
-        return false;
-    }
-    return v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T';
-}
-
-int ReadEnvIntInRange(const char* name, int def, int lo, int hi) {
-    const char* v = std::getenv(name);
-    if (!v || !v[0]) {
-        return def;
-    }
-    int n = std::atoi(v);
-    if (n < lo || n > hi) {
-        return def;
-    }
-    return n;
-}
-
 std::string ZeroPlayoutDelayTrialString() {
-    int pacing_ms = ReadEnvIntInRange("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", 1, 0, 20);
-    int queue_max = ReadEnvIntInRange("RFLOW_MAX_DECODE_QUEUE_SIZE", 6, 4, 16);
+    int pacing_ms = knob::ReadInt("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS");
+    int queue_max = knob::ReadInt("RFLOW_MAX_DECODE_QUEUE_SIZE");
 
     // Optional guard for low-pacing mode to avoid decode queue buildup.
-    if (EnvTruthy("RFLOW_ENABLE_DECODE_QUEUE_GUARD")) {
-        const int guard_cap = ReadEnvIntInRange("RFLOW_DECODE_QUEUE_GUARD_CAP", 6, 4, 12);
+    if (knob::ReadBool("RFLOW_ENABLE_DECODE_QUEUE_GUARD")) {
+        const int guard_cap = knob::ReadInt("RFLOW_DECODE_QUEUE_GUARD_CAP");
         if (pacing_ms <= 2 && queue_max > guard_cap) {
             queue_max = guard_cap;
         }
@@ -62,15 +45,14 @@ void EnsureWebrtcFieldTrialsInitialized() {
             "WebRTC-Pacer-KeyframeFlushing/Enabled/"
             "WebRTC-Pacer-FastRetransmissions/Enabled/";
 
-        if (EnvTruthy("RFLOW_ENABLE_FLEXFEC")) {
+        if (knob::ReadBool("RFLOW_ENABLE_FLEXFEC")) {
             g_field_trials_storage +=
                 "WebRTC-FlexFEC-03-Advertised/Enabled/"
                 "WebRTC-FlexFEC-03/Enabled/";
         }
-        if (const char* extra = std::getenv("RFLOW_FIELD_TRIALS_APPEND")) {
-            if (extra[0] != '\0') {
-                g_field_trials_storage += extra;
-            }
+        const std::string extra = knob::ReadString("RFLOW_FIELD_TRIALS_APPEND");
+        if (!extra.empty()) {
+            g_field_trials_storage += extra;
         }
 
         webrtc::field_trial::InitFieldTrialsFromString(g_field_trials_storage.c_str());

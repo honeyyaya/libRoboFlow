@@ -21,10 +21,16 @@ set(_SVC_IMPL_SRCS
     media/camera_video_track_source.cpp
     media/external_push_video_track_source.cpp
     media/pull_subscriber.cpp
+    media/pull_subscriber_internals.cpp
+    media/pull_subscriber_video_sink.cpp
+    media/zero_copy_pipeline_policy.cpp
+    media/push_h264_profile.cpp
     media/push_streamer.cpp
-    signaling/signaling_io_manager.cpp
+    media/push_streamer_internals.cpp
+    media/push_streamer_observers.cpp
     signaling/signaling_client.cpp
     publisher.cpp
+    subscriber_offer_pump.cpp
 )
 
 add_library(rflow_svc_impl OBJECT ${_SVC_IMPL_SRCS})

@@ -73,6 +73,12 @@ temp/
 .cache/
 .ccache/
 
+# ---- Python caches ----
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
 # ---- Editors / IDE ----
 .vscode/
 .idea/

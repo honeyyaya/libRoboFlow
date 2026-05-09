@@ -1,8 +1,9 @@
 #include "rtc.h"
 
 #include "core/rtc/rtc_factory_common.h"
+#include "core/rtc/hw/backend_registry.h"
 
-#include "common/internal/logger.h"
+#include "core/base/logging.h"
 
 #include <memory>
 #include <utility>
@@ -11,12 +12,7 @@
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/create_peerconnection_factory.h"
 #include "api/peer_connection_interface.h"
-#include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "rtc_base/thread.h"
-
-#if defined(WEBRTC_ANDROID)
-#  include "core/rtc/hw/android/video_decoder_factory.h"
-#endif
 
 namespace rflow::rtc {
 namespace {
@@ -66,23 +62,24 @@ bool initialize() {
         return true;
     }
     if (!StartThreads(s)) {
-        RFLOW_LOGE("[rtc] start internal webrtc threads failed");
+        RFLOW_CORE_LOGE("[rtc] start internal webrtc threads failed");
         return false;
     }
 
     auto adm = CreateDummyAudioDeviceModule();
     if (!adm) {
-        RFLOW_LOGE("[rtc] create dummy ADM failed");
+        RFLOW_CORE_LOGE("[rtc] create dummy ADM failed");
         StopThreads(s);
         return false;
     }
 
-    std::unique_ptr<webrtc::VideoDecoderFactory> video_decoder_factory;
+    rflow::rtc::hw::VideoBackendPreferences decoder_prefs;
 #if defined(WEBRTC_ANDROID)
-    video_decoder_factory = CreateAndroidHwOrBuiltinVideoDecoderFactory();
+    decoder_prefs.decoder_backend = rflow::rtc::hw::VideoCodecBackend::kAndroidMediaCodec;
 #else
-    video_decoder_factory = webrtc::CreateBuiltinVideoDecoderFactory();
+    decoder_prefs.decoder_backend = rflow::rtc::hw::VideoCodecBackend::kBuiltin;
 #endif
+    auto video_decoder_factory = rflow::rtc::hw::CreatePreferredVideoDecoderFactory(decoder_prefs);
 
     s.factory = webrtc::CreatePeerConnectionFactory(
         s.network.get(), s.worker.get(), s.signaling.get(),
@@ -94,11 +91,11 @@ bool initialize() {
         /*audio_mixer=*/nullptr,
         /*audio_processing=*/nullptr);
     if (!s.factory) {
-        RFLOW_LOGE("[rtc] CreatePeerConnectionFactory failed");
+        RFLOW_CORE_LOGE("[rtc] CreatePeerConnectionFactory failed");
         StopThreads(s);
         return false;
     }
-    RFLOW_LOGI("[rtc] peer_connection_factory ready");
+    RFLOW_CORE_LOGI("[rtc] peer_connection_factory ready");
     return true;
 }
 
@@ -106,7 +103,7 @@ void shutdown() {
     auto& s = State();
     s.factory = nullptr;
     StopThreads(s);
-    RFLOW_LOGI("[rtc] peer_connection_factory shutdown");
+    RFLOW_CORE_LOGI("[rtc] peer_connection_factory shutdown");
 }
 
 webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_connection_factory() {

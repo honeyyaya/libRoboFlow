@@ -1,36 +1,20 @@
 #include "signaling/signaling_client.h"
 
-#include "signaling/signaling_io_manager.h"
-
+#include "common/base/trace_switches.h"
+#include "common/public/logger_api.h"
 #include "core/signal/protocol.h"
+#include "core/signal/tcp_session.h"
 
-#include <arpa/inet.h>
-#include <cerrno>
 #include <chrono>
-#include <cstring>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#include <iostream>
-#include <cstdlib>
+#include <utility>
 
 namespace rflow::service::impl {
+
 namespace {
 
-void CloseFd(int fd) {
-    if (fd < 0) {
-        return;
-    }
-    ::shutdown(fd, SHUT_RDWR);
-    ::close(fd);
-}
-
 bool SignalingTimingTraceEnabled() {
-    static const bool enabled = []() {
-        const char* v = std::getenv("RFLOW_SIGNALING_TIMING_TRACE");
-        return v && v[0] == '1';
-    }();
+    static const bool enabled =
+        rflow::common::base::TraceFlagEnabled("RFLOW_SIGNALING_TIMING_TRACE");
     return enabled;
 }
 
@@ -44,225 +28,128 @@ void TraceSig(const std::string& msg) {
     if (!SignalingTimingTraceEnabled()) {
         return;
     }
-    std::cout << "[SIG_TIMING] t_us=" << NowUs() << " " << msg << std::endl;
+    RFLOW_LOGI("[SIG_TIMING] t_us=%lld %s",
+               static_cast<long long>(NowUs()), msg.c_str());
 }
 
-std::string ExtractTypeForTrace(const std::string& line) {
-    return rflow::signal::ExtractJsonString(line, "type");
+rflow::signal::SessionConfig MakeSessionConfig(const std::string& server_addr,
+                                               const std::string& role,
+                                               const std::string& stream_id) {
+    rflow::signal::SessionConfig cfg;
+    cfg.server_addr = server_addr;
+    cfg.registration.role        = rflow::signal::PeerRoleFromString(role);
+    cfg.registration.stream_id   = stream_id.empty() ? std::string("livestream") : stream_id;
+    cfg.remember_last_remote_peer = true;
+    return cfg;
 }
 
 }  // namespace
 
 SignalingClient::SignalingClient(const std::string& server_addr, const std::string& role,
-                                const std::string& stream_id)
-    : server_addr_(server_addr), role_(role) {
-    rflow::signal::Endpoint endpoint;
-    if (rflow::signal::ParseEndpoint(server_addr, &endpoint)) {
-        host_ = std::move(endpoint.host);
-        port_ = endpoint.port;
-    }
-    stream_id_ = stream_id.empty() ? "livestream" : stream_id;
+                                 const std::string& stream_id)
+    : role_(role), stream_id_(stream_id.empty() ? "livestream" : stream_id) {
+    session_ = std::make_unique<rflow::signal::TcpClientSession>(
+        MakeSessionConfig(server_addr, role_, stream_id_));
+    session_->SetDelegate(this);
 }
 
 SignalingClient::~SignalingClient() {
     Stop();
 }
 
-bool SignalingClient::Connect() {
-    if (host_.empty() || port_ == 0) {
-        ReportError("invalid signaling server address");
-        return false;
-    }
-
-    std::cout << "[Signaling] Connecting to " << host_ << ":" << port_ << " (role=" << role_ << ")..."
-              << std::endl;
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        ReportError(std::string("socket: ") + std::strerror(errno));
-        return false;
-    }
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port_);
-    if (::inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) <= 0) {
-        ReportError("invalid host: " + host_);
-        ::close(fd);
-        return false;
-    }
-
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        ReportError(std::string("connect: ") + std::strerror(errno));
-        ::close(fd);
-        return false;
-    }
-    std::cout << "[Signaling] TCP connected" << std::endl;
-
-    sock_fd_.store(fd, std::memory_order_release);
-
-    rflow::signal::RegisterRequest req;
-    req.role = rflow::signal::PeerRoleFromString(role_);
-    req.stream_id = stream_id_;
-    if (!SendLine(rflow::signal::BuildRegisterLine(req))) {
-        ReportError("send register failed");
-        CloseFd(sock_fd_.exchange(-1, std::memory_order_acq_rel));
-        return false;
-    }
-    std::cout << "[Signaling] Registered (role=" << role_ << ")" << std::endl;
-    return true;
-}
-
 bool SignalingClient::Start() {
-    bool expected = false;
-    if (!running_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return true;
-    if (!Connect()) {
-        running_.store(false, std::memory_order_release);
-        return false;
-    }
-
-    auto slot = std::make_shared<SignalingClientSessionSlot>();
-    slot->owner.store(this, std::memory_order_release);
-    slot->fd.store(sock_fd_.load(std::memory_order_acquire), std::memory_order_release);
-    if (!SignalingIoManager::Instance().RegisterSession(slot)) {
-        ReportError("register signaling session to shared io manager failed");
-        CloseFd(sock_fd_.exchange(-1, std::memory_order_acq_rel));
-        running_.store(false, std::memory_order_release);
-        return false;
-    }
-    session_slot_ = std::move(slot);
-    return true;
+    return session_ ? session_->Start() : false;
 }
 
 void SignalingClient::Stop() {
-    running_.store(false, std::memory_order_release);
-    auto slot = std::move(session_slot_);
-    if (slot) {
-        SignalingIoManager::Instance().UnregisterSession(slot);
-        return;
+    if (session_) {
+        session_->SetDelegate(nullptr);
+        session_->Stop();
     }
-
-    CloseFd(sock_fd_.exchange(-1, std::memory_order_acq_rel));
 }
 
-bool SignalingClient::SendLine(std::string_view line) {
-    std::lock_guard<std::mutex> lock(send_mutex_);
-
-    const int fd = sock_fd_.load(std::memory_order_acquire);
-    if (fd < 0) {
-        return false;
-    }
-
-    const std::string payload(line);
-    const std::string msg = payload + "\n";
-    const std::string type = ExtractTypeForTrace(payload);
-    TraceSig("send begin type=" + type + " bytes=" + std::to_string(msg.size()));
-    size_t off = 0;
-    while (off < msg.size()) {
-        const ssize_t sent = ::send(fd, msg.data() + off, msg.size() - off, MSG_NOSIGNAL);
-        if (sent > 0) {
-            off += static_cast<size_t>(sent);
-            continue;
-        }
-        if (sent < 0 && errno == EINTR) {
-            continue;
-        }
-        ReportError(std::string("send signaling failed: ") + std::strerror(errno));
-        return false;
-    }
-    TraceSig("send done type=" + type + " sent=" + std::to_string(off));
-    return true;
-}
-
-std::string SignalingClient::ResolveTargetPeer(std::string_view to_peer_id) const {
-    if (!to_peer_id.empty()) {
-        return std::string(to_peer_id);
-    }
-    std::lock_guard<std::mutex> lock(peer_mutex_);
-    return last_remote_peer_id_;
+bool SignalingClient::RoleIsPublisher() const noexcept {
+    return role_ == "publisher";
 }
 
 void SignalingClient::SendOffer(const std::string& sdp, const std::string& to_peer_id) {
-    std::string target = ResolveTargetPeer(to_peer_id);
-    if (role_ == "publisher" && target.empty()) {
-        std::cerr << "[Signaling] Ignoring offer without subscriber target" << std::endl;
-        return;
-    }
+    if (!session_) return;
 
     rflow::signal::Message msg;
     msg.type = rflow::signal::MessageType::kOffer;
-    msg.to = std::move(target);
-    msg.sdp = sdp;
-    SendLine(rflow::signal::BuildMessageLine(msg));
+    msg.to   = to_peer_id;
+    msg.sdp  = sdp;
+
+    if (RoleIsPublisher() && msg.to.empty()) {
+        // publisher 必须明确目标 subscriber；TcpClientSession::Send 会回退到
+        // last_remote_peer_id_，但发布端通常不应让缺省路径决定路由。
+        RFLOW_LOGW("[Signaling] ignoring offer without subscriber target");
+        return;
+    }
+    TraceSig("send begin type=offer sdp_len=" + std::to_string(sdp.size()));
+    session_->Send(msg);
+    TraceSig("send done type=offer sdp_len=" + std::to_string(sdp.size()));
 }
 
 void SignalingClient::SendAnswer(const std::string& sdp, const std::string& to_peer_id) {
-    std::string target = ResolveTargetPeer(to_peer_id);
-
+    if (!session_) return;
     rflow::signal::Message msg;
     msg.type = rflow::signal::MessageType::kAnswer;
-    msg.to = std::move(target);
-    msg.sdp = sdp;
-    SendLine(rflow::signal::BuildMessageLine(msg));
+    msg.to   = to_peer_id;
+    msg.sdp  = sdp;
+    TraceSig("send begin type=answer sdp_len=" + std::to_string(sdp.size()));
+    session_->Send(msg);
+    TraceSig("send done type=answer sdp_len=" + std::to_string(sdp.size()));
 }
 
 void SignalingClient::SendIceCandidate(const std::string& mid, int mline_index,
                                        const std::string& candidate,
                                        const std::string& to_peer_id) {
-    std::string target = ResolveTargetPeer(to_peer_id);
-
+    if (!session_) return;
     rflow::signal::Message msg;
-    msg.type = rflow::signal::MessageType::kIce;
-    msg.to = std::move(target);
-    msg.mid = mid;
+    msg.type        = rflow::signal::MessageType::kIce;
+    msg.to          = to_peer_id;
+    msg.mid         = mid;
     msg.mline_index = mline_index;
-    msg.candidate = candidate;
-    SendLine(rflow::signal::BuildMessageLine(msg));
+    msg.candidate   = candidate;
+    TraceSig("send begin type=ice mid=" + mid + " cand_len=" + std::to_string(candidate.size()));
+    session_->Send(msg);
+    TraceSig("send done type=ice mid=" + mid);
 }
 
-void SignalingClient::ParseAndDispatch(const rflow::signal::Message& msg) {
+void SignalingClient::OnSignalMessage(const rflow::signal::Message& msg) {
     TraceSig("dispatch type=" + std::string(rflow::signal::ToString(msg.type)) +
              " from=" + (msg.from.empty() ? std::string("-") : msg.from));
-    if (!msg.from.empty()) {
-        std::lock_guard<std::mutex> lock(peer_mutex_);
-        last_remote_peer_id_ = msg.from;
-    }
 
-    if (msg.type == rflow::signal::MessageType::kWelcome) {
-        std::lock_guard<std::mutex> lock(peer_mutex_);
-        self_peer_id_ = msg.peer_id;
-        return;
-    }
-
-    if (msg.type == rflow::signal::MessageType::kSubscriberJoin) {
-        TraceSig("callback subscriber_join");
-        if (on_subscriber_join_) on_subscriber_join_(msg.from);
-        return;
-    }
-    if (msg.type == rflow::signal::MessageType::kSubscriberLeave) {
-        TraceSig("callback subscriber_leave");
-        if (on_subscriber_leave_) on_subscriber_leave_(msg.from);
-        return;
-    }
-
-    if (msg.type == rflow::signal::MessageType::kAnswer) {
-        TraceSig("callback answer sdp_len=" + std::to_string(msg.sdp.size()));
-        if (on_answer_) on_answer_(msg.from, "answer", msg.sdp);
-        return;
-    }
-    if (msg.type == rflow::signal::MessageType::kOffer) {
-        TraceSig("callback offer sdp_len=" + std::to_string(msg.sdp.size()));
-        if (on_offer_) on_offer_(msg.from, "offer", msg.sdp);
-        return;
-    }
-    if (msg.type == rflow::signal::MessageType::kIce) {
-        TraceSig("callback ice mid=" + msg.mid + " cand_len=" + std::to_string(msg.candidate.size()));
-        if (on_ice_ && !msg.candidate.empty()) {
-            on_ice_(msg.from, msg.mid, msg.mline_index, msg.candidate);
-        }
+    switch (msg.type) {
+        case rflow::signal::MessageType::kSubscriberJoin:
+            TraceSig("callback subscriber_join");
+            if (on_subscriber_join_) on_subscriber_join_(msg.from);
+            return;
+        case rflow::signal::MessageType::kSubscriberLeave:
+            TraceSig("callback subscriber_leave");
+            if (on_subscriber_leave_) on_subscriber_leave_(msg.from);
+            return;
+        case rflow::signal::MessageType::kAnswer:
+            TraceSig("callback answer sdp_len=" + std::to_string(msg.sdp.size()));
+            if (on_answer_) on_answer_(msg.from, "answer", msg.sdp);
+            return;
+        case rflow::signal::MessageType::kOffer:
+            TraceSig("callback offer sdp_len=" + std::to_string(msg.sdp.size()));
+            if (on_offer_) on_offer_(msg.from, "offer", msg.sdp);
+            return;
+        case rflow::signal::MessageType::kIce:
+            TraceSig("callback ice mid=" + msg.mid + " cand_len=" + std::to_string(msg.candidate.size()));
+            if (on_ice_ && !msg.candidate.empty()) {
+                on_ice_(msg.from, msg.mid, msg.mline_index, msg.candidate);
+            }
+            return;
+        default:
+            return;
     }
 }
 
-void SignalingClient::ReportError(std::string_view error) {
+void SignalingClient::OnSignalError(std::string_view error) {
     if (on_error_) on_error_(std::string(error));
 }
 

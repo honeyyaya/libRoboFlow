@@ -2,12 +2,13 @@
 #define __RFLOW_SERVICE_HANDLES_H__
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "rflow/Service/librflow_service_api.h"
-#include "common/internal/handle.h"
+#include "common/abi/handle.h"
 
 namespace rflow::service {
 
@@ -90,6 +91,11 @@ struct librflow_svc_stream_s {
     librflow_svc_stream_param_s  param;
     librflow_svc_stream_cb_s     cb;
     bool                         started;
+
+    /* started_at: start_stream 成功的 steady_clock 时间。
+     * 用于 stream_get_stats 计算 duration_ms 与 fps fallback。
+     * 默认值（time_point{}）表示尚未 start。 */
+    std::chrono::steady_clock::time_point started_at{};
 
     /* 底层实现对象（WebRTC 构建时为 shared_ptr<rflow::service::impl::Publisher>）。
      * 用 void 擦除以避免公共 handles.h 依赖 impl 头；生命周期：

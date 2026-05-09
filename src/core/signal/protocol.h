@@ -7,6 +7,13 @@
 
 namespace rflow::signal {
 
+/// 信令线协议版本。
+///   1 = 历史不带 "v" 字段的旧线协议（兼容窗口）。
+///   2 = 引入 "v" 字段；旧端收到不识别会忽略，新端收到无 "v" 视作 1。
+/// 升级语义：仅在协议字段集合发生不可向后兼容的扩展时增加。本次只是把版本
+/// 号挂上线，没有破坏性改动；server / client 任意一端均可逐步升级。
+constexpr int kSignalingProtocolVersion = 2;
+
 enum class PeerRole {
     kUnknown = 0,
     kPublisher,
@@ -48,6 +55,10 @@ struct Message {
     std::string candidate;
 
     RegisterRequest registration;
+
+    /// 对端声明的协议版本；ParseMessage 不存在 "v" 字段时填 1（旧端兼容）。
+    /// BuildMessageLine / BuildRegisterLine 输出时自动写入 kSignalingProtocolVersion。
+    int protocol_version{1};
 };
 
 const char* ToString(PeerRole role);

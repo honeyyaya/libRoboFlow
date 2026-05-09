@@ -15,10 +15,15 @@
 
 #include "internal/handles.h"
 #include "internal/state.h"
+#include "internal/state_ops.h"
+#include "internal/stream_startup_policy.h"
 
-#include "common/internal/last_error.h"
-#include "common/internal/logger.h"
+#include "common/base/stream_handle_ops.h"
+#include "common/media/stream_stats.h"
+#include "common/public/last_error_api.h"
+#include "common/public/logger_api.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -28,24 +33,19 @@
 
 namespace {
 
+constexpr const char* kErrorOrigin = "service/stream";
+
 rflow_err_t require_connected_locked(rflow::service::State& s) {
     if (s.lifecycle != rflow::service::LifecycleState::kConnected) {
-        rflow::set_last_error("service must be connected first");
+        rflow::set_last_error(RFLOW_ERR_STATE,
+                              "service must be connected first",
+                              kErrorOrigin);
         return RFLOW_ERR_STATE;
     }
     return RFLOW_OK;
 }
 
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
-
-std::string CodecToString(rflow_codec_t c) {
-    switch (c) {
-        case RFLOW_CODEC_H264:  return "h264";
-        case RFLOW_CODEC_H265:  return "h265";
-        case RFLOW_CODEC_MJPEG: return "mjpeg";
-        default:                return "h264";
-    }
-}
 
 std::shared_ptr<rflow::service::impl::Publisher>
 AsPublisher(const std::shared_ptr<void>& impl) {
@@ -85,52 +85,7 @@ rflow_err_t librflow_svc_create_stream(rflow_stream_index_t          stream_idx,
     sh->started = false;
 
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
-    {
-        // 构造 Publisher：output 分辨率与 fps 优先，fallback 到 src_* / 默认。
-        uint32_t w = sh->param.has_out_size ? sh->param.out_w :
-                     (sh->param.has_src_size ? sh->param.src_w : 0);
-        uint32_t h = sh->param.has_out_size ? sh->param.out_h :
-                     (sh->param.has_src_size ? sh->param.src_h : 0);
-        uint32_t fps = sh->param.has_fps ? sh->param.fps : 30;
-        uint32_t kbps_t = sh->param.has_bitrate ? sh->param.bitrate_kbps : 0;
-        uint32_t kbps_max = sh->param.has_bitrate ? sh->param.max_bitrate_kbps : 0;
-        if (kbps_max == 0) kbps_max = kbps_t;
-        uint32_t kbps_min = sh->param.has_dynamic_bitrate ? sh->param.lowest_kbps : 0;
-        const std::string video_codec = CodecToString(
-            sh->param.has_out_codec ? sh->param.out_codec : RFLOW_CODEC_H264);
-        const bool use_internal_video_source =
-            sh->param.has_video_device_path || sh->param.has_video_device_index;
-        const std::string video_device_path =
-            sh->param.has_video_device_path ? sh->param.video_device_path : std::string();
-        const int video_device_index =
-            sh->param.has_video_device_index ? static_cast<int>(sh->param.video_device_index) : 0;
-
-        const std::string signal_url = s.global_config.has_signal
-                                           ? s.global_config.signal.url
-                                           : std::string();
-        std::string device_id = s.connect_info.device_id;
-        if (device_id.empty()) {
-            device_id = RFLOW_DEFAULT_DEVICE_ID;
-        }
-        // stream_id 字符串：使用 device_id + ":" + stream_idx 作为唯一房间标识。
-        const std::string stream_id_str = device_id + ":" + std::to_string(stream_idx);
-
-        rflow::service::impl::PublisherPullCallbacks cbs{};
-        if (s.has_connect_cb) {
-            cbs.on_pull_request = s.connect_cb.on_pull_request;
-            cbs.on_pull_release = s.connect_cb.on_pull_release;
-            cbs.userdata        = s.connect_cb.userdata;
-        }
-
-        auto pub = std::make_shared<rflow::service::impl::Publisher>(
-            stream_idx,
-            sh->param.has_in_codec ? sh->param.in_codec : RFLOW_CODEC_I420,
-            stream_id_str, signal_url, device_id,
-            static_cast<int>(w), static_cast<int>(h), static_cast<int>(fps),
-            static_cast<int>(kbps_t), static_cast<int>(kbps_min), static_cast<int>(kbps_max),
-            video_codec, use_internal_video_source, video_device_path, video_device_index, cbs);
-        sh->impl = pub;  // shared_ptr<void>
-    }
+    sh->impl = rflow::service::internal::CreatePublisherImplForStream(*sh, s, stream_idx);
 #endif
 
     auto* raw = sh.get();
@@ -143,41 +98,29 @@ rflow_err_t librflow_svc_create_stream(rflow_stream_index_t          stream_idx,
 rflow_err_t librflow_svc_start_stream(librflow_svc_stream_handle_t handle) {
     if (!handle || handle->magic != rflow::service::kMagicStream) return RFLOW_ERR_PARAM;
     auto& s = rflow::service::state();
-    std::shared_ptr<librflow_svc_stream_s> sh;
-    {
-        std::lock_guard<std::mutex> lk(s.mu);
-        auto it = s.streams.find(handle);
-        if (it == s.streams.end()) return RFLOW_ERR_NOT_FOUND;
-        sh = it->second;
-    }
+    auto sh = rflow::common::base::LookupStreamUnlocked(s, handle);
+    if (!sh) return RFLOW_ERR_NOT_FOUND;
 
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
     if (auto pub = AsPublisher(sh->impl)) {
         if (!pub->Start()) {
-            rflow::set_last_error("publisher start failed (signaling unreachable?)");
+            rflow::set_last_error(RFLOW_ERR_CONN_NETWORK,
+                                  "publisher start failed (signaling unreachable?)",
+                                  kErrorOrigin);
             return RFLOW_ERR_CONN_NETWORK;
         }
     }
 #endif
 
-    sh->started = true;
-    sh->state.store(RFLOW_STREAM_OPENED);
-    if (sh->cb.on_state) {
-        sh->cb.on_state(handle, RFLOW_STREAM_OPENED, RFLOW_OK, sh->cb.userdata);
-    }
+    rflow::service::internal::MarkStreamStarted(sh, handle);
     return RFLOW_OK;
 }
 
 rflow_err_t librflow_svc_stop_stream(librflow_svc_stream_handle_t handle) {
     if (!handle || handle->magic != rflow::service::kMagicStream) return RFLOW_ERR_PARAM;
     auto& s = rflow::service::state();
-    std::shared_ptr<librflow_svc_stream_s> sh;
-    {
-        std::lock_guard<std::mutex> lk(s.mu);
-        auto it = s.streams.find(handle);
-        if (it == s.streams.end()) return RFLOW_ERR_NOT_FOUND;
-        sh = it->second;
-    }
+    auto sh = rflow::common::base::LookupStreamUnlocked(s, handle);
+    if (!sh) return RFLOW_ERR_NOT_FOUND;
 
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
     if (auto pub = AsPublisher(sh->impl)) {
@@ -185,25 +128,15 @@ rflow_err_t librflow_svc_stop_stream(librflow_svc_stream_handle_t handle) {
     }
 #endif
 
-    sh->started = false;
-    sh->state.store(RFLOW_STREAM_IDLE);
-    if (sh->cb.on_state) {
-        sh->cb.on_state(handle, RFLOW_STREAM_IDLE, RFLOW_OK, sh->cb.userdata);
-    }
+    rflow::service::internal::MarkStreamStopped(sh, handle);
     return RFLOW_OK;
 }
 
 rflow_err_t librflow_svc_destroy_stream(librflow_svc_stream_handle_t handle) {
     if (!handle) return RFLOW_OK;
     auto& s = rflow::service::state();
-    std::shared_ptr<librflow_svc_stream_s> sh;
-    {
-        std::lock_guard<std::mutex> lk(s.mu);
-        auto it = s.streams.find(handle);
-        if (it == s.streams.end()) return RFLOW_OK;
-        sh = it->second;
-        s.streams.erase(it);
-    }
+    auto sh = rflow::common::base::RemoveStreamUnlocked(s, handle);
+    if (!sh) return RFLOW_OK;
 
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
     if (auto pub = AsPublisher(sh->impl)) {
@@ -212,11 +145,7 @@ rflow_err_t librflow_svc_destroy_stream(librflow_svc_stream_handle_t handle) {
     sh->impl.reset();
 #endif
 
-    sh->state.store(RFLOW_STREAM_CLOSED);
-    if (sh->cb.on_state) {
-        sh->cb.on_state(handle, RFLOW_STREAM_CLOSED, RFLOW_OK, sh->cb.userdata);
-    }
-    sh->magic = 0;
+    rflow::service::internal::MarkStreamDestroyed(sh, handle);
     return RFLOW_OK;
 }
 
@@ -226,20 +155,17 @@ rflow_err_t librflow_svc_push_video_frame(librflow_svc_stream_handle_t handle,
     if (!frame  || frame->magic  != rflow::service::kMagicPushFrame) return RFLOW_ERR_PARAM;
 
     auto& s = rflow::service::state();
-    std::shared_ptr<librflow_svc_stream_s> sh;
-    {
-        std::lock_guard<std::mutex> lk(s.mu);
-        auto it = s.streams.find(handle);
-        if (it == s.streams.end()) return RFLOW_ERR_NOT_FOUND;
-        sh = it->second;
-    }
+    auto sh = rflow::common::base::LookupStreamUnlocked(s, handle);
+    if (!sh) return RFLOW_ERR_NOT_FOUND;
     if (!sh->started) return RFLOW_ERR_STATE;
 
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
     auto pub = AsPublisher(sh->impl);
     if (!pub) return RFLOW_ERR_STATE;
     if (!pub->uses_external_video_source()) {
-        rflow::set_last_error("stream uses SDK internal video capture; push_video_frame is disabled");
+        rflow::set_last_error(RFLOW_ERR_STATE,
+                              "stream uses SDK internal video capture; push_video_frame is disabled",
+                              kErrorOrigin);
         return RFLOW_ERR_STATE;
     }
     if (frame->data.empty()) return RFLOW_ERR_PARAM;
@@ -264,7 +190,9 @@ rflow_err_t librflow_svc_push_video_frame(librflow_svc_stream_handle_t handle,
             return pub->PushNv12(data, size, width, height, ts_us)
                        ? RFLOW_OK : RFLOW_ERR_FAIL;
         default:
-            rflow::set_last_error("input codec not supported by external source (I420/NV12 only)");
+            rflow::set_last_error(RFLOW_ERR_STREAM_CODEC_UNSUPP,
+                                  "input codec not supported by external source (I420/NV12 only)",
+                                  kErrorOrigin);
             return RFLOW_ERR_STREAM_CODEC_UNSUPP;
     }
 #else
@@ -278,9 +206,9 @@ rflow_err_t librflow_svc_stream_set_bitrate(librflow_svc_stream_handle_t handle,
     if (!handle || handle->magic != rflow::service::kMagicStream) return RFLOW_ERR_PARAM;
     auto& s = rflow::service::state();
     std::lock_guard<std::mutex> lk(s.mu);
-    auto it = s.streams.find(handle);
-    if (it == s.streams.end()) return RFLOW_ERR_NOT_FOUND;
-    it->second->param.bitrate_kbps = bitrate_kbps;
+    auto sh = rflow::service::internal::FindStreamByHandleLocked(s, handle);
+    if (!sh) return RFLOW_ERR_NOT_FOUND;
+    sh->param.bitrate_kbps = bitrate_kbps;
     return RFLOW_OK;
 }
 
@@ -289,7 +217,35 @@ rflow_err_t librflow_svc_stream_get_stats(librflow_svc_stream_handle_t handle,
     if (!handle || handle->magic != rflow::service::kMagicStream) return RFLOW_ERR_PARAM;
     if (!out_stats) return RFLOW_ERR_PARAM;
     *out_stats = nullptr;
-    return RFLOW_ERR_NOT_SUPPORT;
+
+    auto& s = rflow::service::state();
+    auto sh = rflow::common::base::LookupStreamUnlocked(s, handle);
+    if (!sh) return RFLOW_ERR_NOT_FOUND;
+
+    auto stats = rflow::common::media::AllocStreamStats();
+    if (!stats) return RFLOW_ERR_FAIL;
+
+    auto* ms = const_cast<librflow_stream_stats_s*>(stats);
+
+#if defined(RFLOW_SVC_WEBRTC_IMPL)
+    auto pub = AsPublisher(sh->impl);
+    const uint64_t pushed = pub ? pub->video_frames_pushed() : 0;
+    rflow::common::media::FillStreamStatsBase(*ms, sh->started_at, pushed);
+
+    bool collected = false;
+    if (pub) {
+        collected = pub->CollectStats(ms);
+    }
+    if (!collected && ms->fps == 0) {
+        const uint32_t duration_ms = std::max<uint32_t>(1, ms->duration_ms);
+        ms->fps = static_cast<uint32_t>((pushed * 1000ULL) / duration_ms);
+    }
+#else
+    rflow::common::media::FillStreamStatsBase(*ms, sh->started_at, 0);
+#endif
+
+    *out_stats = stats;
+    return RFLOW_OK;
 }
 
 }  // extern "C"

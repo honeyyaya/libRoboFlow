@@ -1,7 +1,7 @@
 #ifndef __RFLOW_SERVICE_STATE_H__
 #define __RFLOW_SERVICE_STATE_H__
 
-#include "common/internal/global_config_impl.h"
+#include "common/abi/object_layouts.h"
 #include "handles.h"
 
 #include <memory>

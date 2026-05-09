@@ -9,16 +9,18 @@
 
 #include "internal/handles.h"
 #include "internal/state.h"
+#include "internal/state_ops.h"
 
-#include "common/internal/global_config_impl.h"
-#include "common/internal/last_error.h"
-#include "common/internal/logger.h"
-
-#include "core/rtc/rtc.h"
-#include "core/signal/signal.h"
-#include "core/thread/thread_pool.h"
+#include "common/abi/object_layouts.h"
+#include "common/base/global_config_ops.h"
+#include "common/public/last_error_api.h"
+#include "common/public/logger_api.h"
 
 #include <new>
+
+namespace {
+constexpr const char* kErrorOrigin = "service/lifecycle";
+}  // namespace
 
 namespace rflow::service {
 
@@ -36,19 +38,20 @@ rflow_err_t librflow_svc_set_global_config(librflow_global_config_t cfg) {
     std::lock_guard<std::mutex> lk(s.mu);
 
     if (s.lifecycle != rflow::service::LifecycleState::kUninit) {
-        rflow::set_last_error("svc_set_global_config must be called before init");
+        rflow::set_last_error(RFLOW_ERR_STATE,
+                              "svc_set_global_config must be called before init",
+                              kErrorOrigin);
         return RFLOW_ERR_STATE;
     }
-    if (!cfg || cfg->magic != rflow::kMagicGlobalConfig) return RFLOW_ERR_PARAM;
-
-    s.global_config = *cfg;
-    s.global_config.magic = rflow::kMagicGlobalConfig;
-
-    if (s.global_config.has_log) {
-        rflow::logger_apply(s.global_config.log.level,
-                            s.global_config.log.cb,
-                            s.global_config.log.userdata);
+    if (!rflow::common::base::IsValidGlobalConfigHandle(cfg)) {
+        rflow::set_last_error(RFLOW_ERR_PARAM,
+                              "svc_set_global_config: invalid global_config handle",
+                              kErrorOrigin);
+        return RFLOW_ERR_PARAM;
     }
+
+    rflow::common::base::CopyGlobalConfig(s.global_config, *cfg);
+    rflow::common::base::ApplyLogConfigIfPresent(s.global_config);
     return RFLOW_OK;
 }
 
@@ -58,9 +61,7 @@ rflow_err_t librflow_svc_init(void) {
 
     if (s.lifecycle != rflow::service::LifecycleState::kUninit) return RFLOW_OK;
 
-    if (!rflow::thread::initialize()) return RFLOW_ERR_FAIL;
-    if (!rflow::rtc::initialize())    { rflow::thread::shutdown(); return RFLOW_ERR_FAIL; }
-    if (!rflow::signal::initialize()) { rflow::rtc::shutdown(); rflow::thread::shutdown(); return RFLOW_ERR_FAIL; }
+    if (auto rc = rflow::service::internal::InitSubsystems(); rc != RFLOW_OK) return rc;
 
     s.lifecycle = rflow::service::LifecycleState::kInited;
     RFLOW_LOGI("librflow_svc_init OK");
@@ -75,9 +76,7 @@ rflow_err_t librflow_svc_uninit(void) {
     if (s.lifecycle == rflow::service::LifecycleState::kUninit) return RFLOW_OK;
 
     s.streams.clear();
-    rflow::signal::shutdown();
-    rflow::rtc::shutdown();
-    rflow::thread::shutdown();
+    rflow::service::internal::ShutdownSubsystems();
 
     s.lifecycle = rflow::service::LifecycleState::kUninit;
     RFLOW_LOGI("librflow_svc_uninit OK");
@@ -92,28 +91,8 @@ rflow_err_t librflow_svc_connect(librflow_svc_connect_info_t info,
     auto& s = rflow::service::state();
     std::lock_guard<std::mutex> lk(s.mu);
 
-    if (s.lifecycle == rflow::service::LifecycleState::kUninit) return RFLOW_ERR_STATE;
-    if (s.lifecycle == rflow::service::LifecycleState::kConnected ||
-        s.lifecycle == rflow::service::LifecycleState::kConnecting) {
-        return RFLOW_ERR_STATE;
-    }
-
-    s.connect_info   = *info;
-    if (s.connect_info.device_id.empty()) {
-        s.connect_info.device_id = RFLOW_DEFAULT_DEVICE_ID;
-    }
-    s.connect_cb     = *cb;
-    s.has_connect_cb = true;
-    s.lifecycle      = rflow::service::LifecycleState::kConnecting;
-
-    // TODO: 实际向云端注册 + 鉴权 + license 校验；此处直连成功
-    s.lifecycle = rflow::service::LifecycleState::kConnected;
-    if (s.connect_cb.on_state) {
-        s.connect_cb.on_state(RFLOW_CONN_CONNECTED, RFLOW_OK, s.connect_cb.userdata);
-    }
-    if (s.connect_cb.on_bind_state) {
-        s.connect_cb.on_bind_state(RFLOW_BIND_BOUND, nullptr, s.connect_cb.userdata);
-    }
+    const auto rc = rflow::service::internal::ConnectStateTransition(s, *info, *cb);
+    if (rc != RFLOW_OK) return rc;
     RFLOW_LOGI("librflow_svc_connect OK (stub)");
     return RFLOW_OK;
 }
@@ -122,23 +101,8 @@ rflow_err_t librflow_svc_disconnect(void) {
     auto& s = rflow::service::state();
     std::lock_guard<std::mutex> lk(s.mu);
 
-    if (s.lifecycle != rflow::service::LifecycleState::kConnected &&
-        s.lifecycle != rflow::service::LifecycleState::kConnecting) {
-        return RFLOW_OK;
-    }
-
-    for (auto& [h, sh] : s.streams) {
-        if (sh && sh->cb.on_state) {
-            sh->cb.on_state(h, RFLOW_STREAM_CLOSED, RFLOW_OK, sh->cb.userdata);
-        }
-    }
-    s.streams.clear();
-
-    if (s.has_connect_cb && s.connect_cb.on_state) {
-        s.connect_cb.on_state(RFLOW_CONN_DISCONNECTED, RFLOW_OK, s.connect_cb.userdata);
-    }
-    s.has_connect_cb = false;
-    s.lifecycle      = rflow::service::LifecycleState::kInited;
+    const auto rc = rflow::service::internal::DisconnectStateTransition(s);
+    if (rc != RFLOW_OK) return rc;
     RFLOW_LOGI("librflow_svc_disconnect OK");
     return RFLOW_OK;
 }
@@ -161,6 +125,38 @@ rflow_err_t librflow_svc_get_license_info(librflow_svc_license_info_t* out_info)
     info->vendor_id       = s.connect_info.vendor_id;
     info->product_key     = s.connect_info.product_key;
     *out_info = info;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_svc_send_notice(rflow_notice_index_t index, const void* payload, uint32_t len) {
+    auto& s = rflow::service::state();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (s.lifecycle != rflow::service::LifecycleState::kConnected) return RFLOW_ERR_STATE;
+    (void)index;
+    (void)payload;
+    (void)len;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_svc_post_topic(const char* topic, const void* payload, uint32_t len) {
+    if (!topic) return RFLOW_ERR_PARAM;
+    auto& s = rflow::service::state();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (s.lifecycle != rflow::service::LifecycleState::kConnected) return RFLOW_ERR_STATE;
+    (void)payload;
+    (void)len;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_svc_service_reply(uint64_t req_id, rflow_err_t status,
+                                       const void* payload, uint32_t len) {
+    auto& s = rflow::service::state();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (s.lifecycle != rflow::service::LifecycleState::kConnected) return RFLOW_ERR_STATE;
+    (void)req_id;
+    (void)status;
+    (void)payload;
+    (void)len;
     return RFLOW_OK;
 }
 

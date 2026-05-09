@@ -21,11 +21,13 @@
 #include <cstdint>
 #include <optional>
 
+#include "common/media/video_frame_source.h"
 #include "media/base/adapted_video_track_source.h"
 
 namespace rflow::service::impl {
 
-class ExternalPushVideoTrackSource : public webrtc::AdaptedVideoTrackSource {
+class ExternalPushVideoTrackSource : public webrtc::AdaptedVideoTrackSource,
+                                     public rflow::common::media::IVideoExternalSource {
 public:
     ExternalPushVideoTrackSource();
     ~ExternalPushVideoTrackSource() override;
@@ -61,6 +63,11 @@ public:
 
     /// Frames dispatched counter for debugging/tracing.
     uint32_t pushed_frame_count() const {
+        return pushed_.load(std::memory_order_relaxed);
+    }
+
+    // IVideoFrameSource
+    std::uint32_t dispatched_frame_count() const noexcept override {
         return pushed_.load(std::memory_order_relaxed);
     }
 

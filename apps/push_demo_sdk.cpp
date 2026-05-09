@@ -18,9 +18,9 @@
 
 #include "rflow/Service/librflow_service_api.h"
 
-#include <atomic>
+#include "common/demo_helpers.h"
+
 #include <chrono>
-#include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -28,12 +28,8 @@
 
 namespace {
 
-std::atomic<bool> g_stop{false};
-
-void OnSig(int) { g_stop.store(true); }
-
 void OnConnectState(rflow_connect_state_t state, rflow_err_t reason, void* /*ud*/) {
-    std::cout << "[demo] connect state=" << state << " reason=" << reason << std::endl;
+    rflow::apps::common::LogConnectState(state, reason);
 }
 
 void OnBindState(rflow_bind_state_t state, const char* /*detail*/, void* /*ud*/) {
@@ -50,7 +46,7 @@ void OnPullRelease(rflow_stream_index_t idx, void* /*ud*/) {
 
 void OnStreamState(librflow_svc_stream_handle_t /*h*/, rflow_stream_state_t state,
                    rflow_err_t reason, void* /*ud*/) {
-    std::cout << "[demo] stream state=" << state << " reason=" << reason << std::endl;
+    rflow::apps::common::LogStreamState(state, reason);
 }
 
 }  // namespace
@@ -72,15 +68,8 @@ int main(int argc, char** argv) {
     if (argc >= 7) stream_idx = static_cast<rflow_stream_index_t>(std::atoi(argv[6]));
     if (argc >= 8) camera = argv[7];
 
-    std::signal(SIGINT, OnSig);
-    std::signal(SIGTERM, OnSig);
-
-#if defined(__linux__)
-    if (camera.empty()) {
-        const char* env_camera = std::getenv("RFLOW_PUSH_DEMO_CAMERA");
-        camera = (env_camera && env_camera[0] != '\0') ? env_camera : "/dev/video0";
-    }
-#endif
+    rflow::apps::common::InstallStopSignals();
+    camera = rflow::apps::common::PickLinuxCameraPath(camera);
 
     auto sig_cfg = librflow_signal_config_create();
     librflow_signal_config_set_url(sig_cfg, signaling_url.c_str());
@@ -162,8 +151,26 @@ int main(int argc, char** argv) {
 #endif
     std::cout << ". Ctrl+C to stop." << std::endl;
 
-    while (!g_stop.load()) {
+    auto last_stats = std::chrono::steady_clock::now();
+    while (!rflow::apps::common::StopRequested()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_stats).count() >= 5) {
+            last_stats = now;
+            librflow_stream_stats_t stats = nullptr;
+            if (librflow_svc_stream_get_stats(stream, &stats) == RFLOW_OK && stats) {
+                std::cout << "[demo][stats]"
+                          << " duration_ms=" << librflow_stream_stats_get_duration_ms(stats)
+                          << " out_bytes=" << librflow_stream_stats_get_out_bound_bytes(stats)
+                          << " out_pkts=" << librflow_stream_stats_get_out_bound_pkts(stats)
+                          << " fps=" << librflow_stream_stats_get_fps(stats)
+                          << " kbps=" << librflow_stream_stats_get_bitrate_kbps(stats)
+                          << " rtt=" << librflow_stream_stats_get_rtt_ms(stats)
+                          << " lost=" << librflow_stream_stats_get_lost_pkts(stats)
+                          << std::endl;
+                librflow_stream_stats_release(stats);
+            }
+        }
     }
 
     std::cout << "[demo] stopping..." << std::endl;

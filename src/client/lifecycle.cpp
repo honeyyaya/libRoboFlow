@@ -7,17 +7,23 @@
 #include "rflow/librflow_common.h"
 
 #include "internal/handles.h"
+#include "internal/state_ops.h"
 #include "internal/state.h"
 
-#include "common/internal/global_config_impl.h"
-#include "common/internal/last_error.h"
-#include "common/internal/logger.h"
+#include "common/abi/object_layouts.h"
+#include "common/base/global_config_ops.h"
+#include "common/public/last_error_api.h"
+#include "common/public/logger_api.h"
 
 #include "internal/infrastructure.h"
 
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace {
+constexpr const char* kErrorOrigin = "client/lifecycle";
+}  // namespace
 
 namespace rflow::client {
 
@@ -35,23 +41,20 @@ rflow_err_t librflow_set_global_config(librflow_global_config_t cfg) {
     std::lock_guard<std::mutex> lk(s.mu);
 
     if (s.lifecycle != rflow::client::LifecycleState::kUninit) {
-        rflow::set_last_error("set_global_config must be called before init");
+        rflow::set_last_error(RFLOW_ERR_STATE,
+                              "set_global_config must be called before init",
+                              kErrorOrigin);
         return RFLOW_ERR_STATE;
     }
-    if (!cfg || cfg->magic != rflow::kMagicGlobalConfig) {
-        rflow::set_last_error("invalid global_config handle");
+    if (!rflow::common::base::IsValidGlobalConfigHandle(cfg)) {
+        rflow::set_last_error(RFLOW_ERR_PARAM,
+                              "invalid global_config handle",
+                              kErrorOrigin);
         return RFLOW_ERR_PARAM;
     }
 
-    s.global_config = *cfg;
-    s.global_config.magic = rflow::kMagicGlobalConfig;
-
-    // 立即应用 log 配置（init 之前日志也可能产生）
-    if (s.global_config.has_log) {
-        rflow::logger_apply(s.global_config.log.level,
-                            s.global_config.log.cb,
-                            s.global_config.log.userdata);
-    }
+    rflow::common::base::CopyGlobalConfig(s.global_config, *cfg);
+    rflow::common::base::ApplyLogConfigIfPresent(s.global_config);
     return RFLOW_OK;
 }
 
@@ -99,44 +102,33 @@ rflow_err_t librflow_connect(librflow_connect_info_t info,
 
     {
         std::lock_guard<std::mutex> lk(s.mu);
-
-        if (s.lifecycle == rflow::client::LifecycleState::kUninit) {
-            rflow::set_last_error("must call librflow_init before connect");
-            return RFLOW_ERR_STATE;
+        const auto rc = rflow::client::internal::ValidateConnectTransitionLocked(s);
+        if (rc == RFLOW_ERR_STATE && s.lifecycle == rflow::client::LifecycleState::kUninit) {
+            rflow::set_last_error(RFLOW_ERR_STATE,
+                                  "must call librflow_init before connect",
+                                  kErrorOrigin);
+            return rc;
         }
-        if (s.lifecycle == rflow::client::LifecycleState::kConnected ||
-            s.lifecycle == rflow::client::LifecycleState::kConnecting) {
-            return RFLOW_ERR_STATE;
-        }
-
-        s.connect_info   = *info;
-        s.connect_cb     = *cb;
-        s.has_connect_cb = true;
-        s.lifecycle      = rflow::client::LifecycleState::kConnecting;
-
-        if (s.connect_info.device_id.empty()) {
-            s.connect_info.device_id = RFLOW_DEFAULT_DEVICE_ID;
-        }
-        device_id = s.connect_info.device_id;
-
-        if (s.global_config.magic == rflow::kMagicGlobalConfig && s.global_config.has_signal) {
-            signal_url = s.global_config.signal.url;
-        }
-        cb_copy = s.connect_cb;
+        if (rc != RFLOW_OK) return rc;
+        rflow::client::internal::ApplyConnectTransitionLocked(s, *info, *cb, &signal_url, &device_id, &cb_copy);
     }
 
-    // TODO: 当前无独立的 device 级鉴权通道，连接=拉起拉流子系统；
-    //       后续若接入 core/signal 长连 + 设备鉴权，应在此先做握手再切 Connected。
+    // 设计说明：当前 client SDK 不维护 device 级长连鉴权通道。
+    //   - 设备 ↔ 平台的 control plane（业务通知 / 业务请求）由信令服务器之外的
+    //     业务后台单独承担；SDK 仅负责 RTC 信令子系统的拉起。
+    //   - 因此 librflow_connect 在校验配置后仅会启动 RtcStreamManager，每路
+    //     librflow_open_stream 才真正建立到信令服务器的 TCP 会话（每流一会话）。
+    //   - 若未来引入设备鉴权握手，应在此处先建立 control session、握手成功后再
+    //     切 kConnected；当前不需要，故不在此处启动新连接。
     rflow_err_t err = rflow::client::on_connect_succeeded(signal_url, device_id);
 
     {
         std::lock_guard<std::mutex> lk(s.mu);
         if (err != RFLOW_OK) {
-            s.lifecycle      = rflow::client::LifecycleState::kInited;
-            s.has_connect_cb = false;
+            rflow::client::internal::RollbackConnectFailedLocked(s);
             return err;
         }
-        s.lifecycle = rflow::client::LifecycleState::kConnected;
+        rflow::client::internal::CommitConnectedLocked(s);
     }
 
     // 用户回调在锁外触发，避免与 state.mu 重入
@@ -186,6 +178,70 @@ rflow_err_t librflow_disconnect(void) {
     }
     RFLOW_LOGI("librflow_disconnect OK");
     return RFLOW_OK;
+}
+
+/**
+ * librflow_send_notice / librflow_service_reply
+ *
+ * 设计说明：当前 SDK 的信令通道仅承载 RTC offer/answer/ICE，不承载
+ * 设备 ↔ 业务后台 的通用 notice/service-reply 控制面消息（这部分链路一般由
+ * 业务自有 MQ / HTTP / MQTT 通道承载）。在协议未扩展前，这两个 API 不会真正
+ * 发包，对调用方返回 RFLOW_ERR_NOT_SUPPORT 比静默 OK 更诚实，避免上层误以为
+ * 已成功送达。
+ *
+ * 如果未来 P4 协议升级新增 control-plane MessageType（见 docs/RUNTIME_KNOBS.md
+ * 与 protocol.h），实现可在 lifecycle.cpp 中改为：
+ *   - 复用 librflow_connect 时建立的 device control session
+ *   - Send(Message) 对应的新 MessageType
+ * 现阶段我们先把语义对外讲清楚，避免长期 TODO 污染 lifecycle 路径。
+ */
+rflow_err_t librflow_send_notice(int32_t index, const void* payload, uint32_t len) {
+    auto& s = rflow::client::state();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (s.lifecycle != rflow::client::LifecycleState::kConnected) {
+        rflow::set_last_error(RFLOW_ERR_STATE,
+                              "librflow_send_notice: client not connected",
+                              kErrorOrigin);
+        return RFLOW_ERR_STATE;
+    }
+    (void)index;
+    (void)payload;
+    (void)len;
+    rflow::set_last_error(
+        RFLOW_ERR_NOT_SUPPORT,
+        "librflow_send_notice: control-plane channel not implemented; "
+        "use your business MQ/HTTP path instead",
+        kErrorOrigin);
+    return RFLOW_ERR_NOT_SUPPORT;
+}
+
+/// 与 librflow_service_reply 行为完全一致；后者是 ABI 头公开的对称命名。
+/// 保留旧符号是为了与已经链接旧二进制的调用方保持兼容。
+rflow_err_t librflow_reply_to_service_req(uint64_t req_id, rflow_err_t status,
+                                          const void* payload, uint32_t len) {
+    auto& s = rflow::client::state();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (s.lifecycle != rflow::client::LifecycleState::kConnected) {
+        rflow::set_last_error(RFLOW_ERR_STATE,
+                              "librflow_service_reply: client not connected",
+                              kErrorOrigin);
+        return RFLOW_ERR_STATE;
+    }
+    (void)req_id;
+    (void)status;
+    (void)payload;
+    (void)len;
+    rflow::set_last_error(
+        RFLOW_ERR_NOT_SUPPORT,
+        "librflow_service_reply: control-plane channel not implemented; "
+        "use your business MQ/HTTP path instead",
+        kErrorOrigin);
+    return RFLOW_ERR_NOT_SUPPORT;
+}
+
+rflow_err_t librflow_service_reply(uint64_t req_id, rflow_err_t status,
+                                   const void* payload, uint32_t len) {
+    return librflow_reply_to_service_req(req_id, status, payload, len);
 }
 
 }  // extern "C"

@@ -14,15 +14,15 @@
 #define RFLOW_SERVICE_IMPL_PUBLISHER_H_
 
 #include <atomic>
-#include <condition_variable>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
-#include <vector>
 
 #include "rflow/Service/librflow_service_api.h"
+
+#include "subscriber_offer_pump.h"
+
+struct librflow_stream_stats_s;
 
 namespace rflow::service::impl {
 
@@ -62,13 +62,19 @@ public:
     bool PushI420(const uint8_t* buf, uint32_t size, int w, int h, int64_t ts_us);
     bool PushNv12(const uint8_t* buf, uint32_t size, int w, int h, int64_t ts_us);
 
+    /// 同步采集 outbound RTC stats，至多阻塞 1.5s（内部走 PushStreamer::CollectStats）。
+    /// 返回 false 表示尚未推流 / 没有 PeerConnection / GetStats 超时。
+    bool CollectStats(librflow_stream_stats_s* out_stats);
+
+    /// 累计向 PushStreamer 投递的视频帧数（外部 push_video_frame 调用计数）。
+    /// 用于在 RTC outbound stats 不可用 / fps=0 时做 fallback。
+    uint64_t video_frames_pushed() const { return video_frames_pushed_.load(std::memory_order_relaxed); }
+
     int32_t stream_idx() const { return stream_idx_; }
     rflow_codec_t in_codec() const { return in_codec_; }
     bool uses_external_video_source() const { return !use_internal_video_source_; }
 
 private:
-    void WorkerLoop();
-
     int32_t       stream_idx_;
     rflow_codec_t in_codec_;
     std::string   stream_id_str_;
@@ -89,11 +95,9 @@ private:
     std::unique_ptr<PushStreamer>    streamer_;
     std::unique_ptr<SignalingClient> signaling_;
 
-    std::thread             worker_;
-    std::atomic<bool>       worker_run_{false};
-    std::mutex              pending_mu_;
-    std::condition_variable pending_cv_;
-    std::vector<std::string> pending_subs_;
+    SubscriberOfferPump offer_pump_;
+
+    std::atomic<uint64_t> video_frames_pushed_{0};
 };
 
 }  // namespace rflow::service::impl

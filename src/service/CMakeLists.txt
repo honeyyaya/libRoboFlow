@@ -1,14 +1,11 @@
 set(SERVICE_SOURCES
-    connect_info.cpp
-    connect_cb.cpp
-    stream_param.cpp
-    stream_cb.cpp
-    push_frame.cpp
-    license_info.cpp
+    api_handles.cpp
+    api_stream_objects.cpp
     lifecycle.cpp
     stream.cpp
-    signaling.cpp
-    runtime_log.cpp
+    internal/stream_startup_policy.cpp
+    internal/state_ops.cpp
+    internal/runtime_knobs.cpp
 )
 
 # -------------------------------------------------------------------- impl 层
@@ -18,7 +15,13 @@ set(SERVICE_SOURCES
 add_subdirectory(impl)
 
 if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
-    set(_RRTC_OBJS $<TARGET_OBJECTS:rflow_rtc_webrtc>)
+    set(_RRTC_OBJS $<TARGET_OBJECTS:rflow_core_rtc_domain>)
+    if(ANDROID)
+        list(APPEND _RRTC_OBJS $<TARGET_OBJECTS:rflow_core_platform_android>)
+    endif()
+    if(RFLOW_ENABLE_ROCKCHIP_MPP)
+        list(APPEND _RRTC_OBJS $<TARGET_OBJECTS:rflow_core_platform_rockchip>)
+    endif()
     set(_SVC_IMPL_OBJS $<TARGET_OBJECTS:rflow_svc_impl>)
 else()
     set(_RRTC_OBJS $<TARGET_OBJECTS:rflow_rtc_stub>)
@@ -29,6 +32,7 @@ if(RFLOW_BUILD_SHARED)
     add_library(rflow_svc SHARED ${SERVICE_SOURCES}
         $<TARGET_OBJECTS:rflow_common>
         $<TARGET_OBJECTS:rflow_core>
+        $<TARGET_OBJECTS:rflow_core_runtime>
         ${_RRTC_OBJS}
         ${_SVC_IMPL_OBJS}
     )
@@ -36,6 +40,7 @@ else()
     add_library(rflow_svc STATIC ${SERVICE_SOURCES}
         $<TARGET_OBJECTS:rflow_common>
         $<TARGET_OBJECTS:rflow_core>
+        $<TARGET_OBJECTS:rflow_core_runtime>
         ${_RRTC_OBJS}
         ${_SVC_IMPL_OBJS}
     )
@@ -49,14 +54,15 @@ set_target_properties(rflow_svc PROPERTIES
 
 target_include_directories(rflow_svc
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/impl
 )
 
-target_link_libraries(rflow_svc PRIVATE rflow_warnings)
+target_link_libraries(rflow_svc PRIVATE rflow_sdk_internal_deps)
 
 if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
     target_include_directories(rflow_svc SYSTEM PRIVATE
@@ -72,11 +78,8 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
     )
     if(ANDROID)
         target_compile_definitions(rflow_svc PRIVATE WEBRTC_ANDROID=1)
-        target_link_libraries(rflow_svc PRIVATE mediandk android log OpenSLES EGL GLESv2)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_compile_definitions(rflow_svc PRIVATE WEBRTC_LINUX=1)
-        find_package(Threads REQUIRED)
-        target_link_libraries(rflow_svc PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
         find_package(PkgConfig QUIET)
         if(PkgConfig_FOUND)
             pkg_check_modules(RFLOW_LINUX_GIO IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)

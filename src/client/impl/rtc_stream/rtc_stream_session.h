@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "rflow/librflow_common.h"
+#include "core/rtc/pending_ice_buffer.h"
 #include "core/signal/session.h"
 
 #include "api/jsep.h"
@@ -90,13 +91,7 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
     webrtc::scoped_refptr<webrtc::CreateSessionDescriptionObserver> pending_create_answer_observer_;
     webrtc::scoped_refptr<webrtc::SetSessionDescriptionObserver> pending_set_local_observer_;
 
-    struct PendingRemoteIce {
-        std::string mid;
-        int mline_index = 0;
-        std::string candidate;
-    };
-    std::vector<PendingRemoteIce> pending_remote_ice_;
-    std::atomic<bool> remote_description_applied_{false};
+    rflow::core::rtc::PendingIceBuffer pending_ice_buffer_;
 
     std::atomic<int32_t> stream_state_{RFLOW_STREAM_IDLE};
     std::atomic<bool> closed_{false};

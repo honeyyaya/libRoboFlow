@@ -4,7 +4,7 @@
 #include "rtc_stream/rtc_stream_session.h"
 
 #include "client/internal/handles.h"  // librflow_stream_param_s
-#include "common/internal/logger.h"
+#include "common/public/logger_api.h"
 
 #include <utility>
 #include <vector>

@@ -1,11 +1,12 @@
 /**
- * WebRTC P2P 信令服务�?(C++ TCP + epoll)
- * 仅转�?SDP/ICE，不传输媒体。协议：每行一�?JSON�? *
- * - �?epoll 线程负责 accept、读缓冲与拆行；注册（首�?register）在同线程完成以保证表一致�? * - 固定大小线程池：�?fd % pool_size 分片，同连接信令始终进入同一工作线程，保序�? * - 默认少打日志；设置环境变�?SIGNALING_VERBOSE=1 输出连接/离线详情�? */
+ * WebRTC P2P ??????(C++ TCP + epoll)
+ * ????SDP/ICE???????????????JSON?? *
+ * - ??epoll ???? accept??????????????register??????????????? * - ??????????fd % pool_size ??????????????????????? * - ??????????????SIGNALING_VERBOSE=1 ????/?????? */
 #include "core/signal/server.h"
 
 #include "core/net/posix_io.h"
 #include "core/signal/protocol.h"
+#include "common/base/env_reader.h"
 #include <arpa/inet.h>
 #include <atomic>
 #include <condition_variable>
@@ -43,40 +44,21 @@ std::unordered_map<int, std::tuple<std::string, std::string, std::string>> g_fd_
 
 std::atomic<unsigned long> g_peer_seq{1};
 
-size_t ReadEnvSizeInRange(const char* name, size_t fallback, size_t min_v, size_t max_v) {
-    const char* e = std::getenv(name);
-    if (!e || !e[0]) {
-        return fallback;
-    }
-    char* end = nullptr;
-    const unsigned long long v = std::strtoull(e, &end, 10);
-    if (end == e || (end && *end != '\0')) {
-        return fallback;
-    }
-    if (v < min_v || v > max_v) {
-        return fallback;
-    }
-    return static_cast<size_t>(v);
-}
-
 size_t MaxClientReadBufBytes() {
-    static const size_t v = ReadEnvSizeInRange("SIGNALING_MAX_CLIENT_READ_BUF_BYTES",
-                                               1024 * 1024,
-                                               64 * 1024,
-                                               16 * 1024 * 1024);
+    static const size_t v = rflow::common::util::ReadEnvSizeInRange(
+        "SIGNALING_MAX_CLIENT_READ_BUF_BYTES", 1024 * 1024, 64 * 1024, 16 * 1024 * 1024);
     return v;
 }
 
 size_t MaxShardQueueLines() {
-    static const size_t v = ReadEnvSizeInRange("SIGNALING_MAX_QUEUE_LINES", 4096, 256, 200000);
+    static const size_t v =
+        rflow::common::util::ReadEnvSizeInRange("SIGNALING_MAX_QUEUE_LINES", 4096, 256, 200000);
     return v;
 }
 
 size_t MaxShardQueueBytes() {
-    static const size_t v = ReadEnvSizeInRange("SIGNALING_MAX_QUEUE_BYTES",
-                                               8 * 1024 * 1024,
-                                               256 * 1024,
-                                               64 * 1024 * 1024);
+    static const size_t v = rflow::common::util::ReadEnvSizeInRange(
+        "SIGNALING_MAX_QUEUE_BYTES", 8 * 1024 * 1024, 256 * 1024, 64 * 1024 * 1024);
     return v;
 }
 
@@ -170,10 +152,12 @@ void NotifyPublisherSubscriberEvent(const std::string& stream_id, const char* ty
     }
     if (pub >= 0) {
         std::string msg;
-        msg.reserve(48 + stream_id.size() + sub_id.size());
+        msg.reserve(64 + stream_id.size() + sub_id.size());
         msg = "{\"type\":\"";
         msg += type;
-        msg += "\",\"from\":\"";
+        msg += "\",\"v\":";
+        msg += std::to_string(rflow::signal::kSignalingProtocolVersion);
+        msg += ",\"from\":\"";
         msg += sub_id;
         msg += "\"}";
         SendJsonLine(pub, msg);
@@ -453,8 +437,20 @@ void ProcessClientRead(int fd) {
     }
 }
 
-/// msg 为单�?register JSON（不含换行）
+/// msg 是 register 的 JSON 字符串。
+/// 协议版本兼容：peer 不带 "v" 视为 v1；server 与之的差异目前仅为字段集合，无破坏性。
 bool HandleInitialRegister(int fd, const std::string& msg) {
+    const int peer_v = rflow::signal::ExtractJsonInt(msg, "v", 1);
+    if (peer_v != rflow::signal::kSignalingProtocolVersion) {
+        static std::atomic<bool> warned{false};
+        bool expected = false;
+        if (warned.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            LogVerbose(std::string("[Signaling] protocol version mismatch peer_v=") +
+                       std::to_string(peer_v) + " server_v=" +
+                       std::to_string(rflow::signal::kSignalingProtocolVersion) +
+                       " (still compatible, warn once)");
+        }
+    }
     std::string stream_id = rflow::signal::ExtractJsonString(msg, "stream_id");
     if (stream_id.empty()) {
         stream_id = "livestream";
@@ -497,13 +493,17 @@ bool HandleInitialRegister(int fd, const std::string& msg) {
         LogVerbose(std::string("[Signaling] publisher connected stream=") + client->stream_id +
                    " (fd=" + std::to_string(fd) + ", id=" + pub_id + ")");
 
-        SendJsonLine(fd, std::string("{\"type\":\"welcome\",\"id\":\"") + pub_id + "\"}");
         {
+            const std::string v_str = std::to_string(rflow::signal::kSignalingProtocolVersion);
+            SendJsonLine(fd, std::string("{\"type\":\"welcome\",\"v\":") + v_str +
+                                 ",\"id\":\"" + pub_id + "\"}");
             std::lock_guard<std::mutex> lock(g_mutex);
             auto it = g_subscribers.find(client->stream_id);
             if (it != g_subscribers.end()) {
                 for (const auto& kv : it->second) {
-                    std::string j = "{\"type\":\"subscriber_join\",\"from\":\"";
+                    std::string j = "{\"type\":\"subscriber_join\",\"v\":";
+                    j += v_str;
+                    j += ",\"from\":\"";
                     j += kv.first;
                     j += "\"}";
                     SendJsonLine(fd, j);
@@ -536,7 +536,11 @@ bool HandleInitialRegister(int fd, const std::string& msg) {
                    " (fd=" + std::to_string(fd) + ", id=" + sub_id + "), subscribers_on_stream=" +
                    std::to_string(sub_count));
 
-        SendJsonLine(fd, std::string("{\"type\":\"welcome\",\"id\":\"") + sub_id + "\"}");
+        {
+            const std::string v_str = std::to_string(rflow::signal::kSignalingProtocolVersion);
+            SendJsonLine(fd, std::string("{\"type\":\"welcome\",\"v\":") + v_str +
+                                 ",\"id\":\"" + sub_id + "\"}");
+        }
         NotifyPublisherSubscriberEvent(client->stream_id, "subscriber_join", sub_id);
         return true;
     }

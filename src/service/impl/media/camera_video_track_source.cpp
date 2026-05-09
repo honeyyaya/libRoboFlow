@@ -6,7 +6,11 @@
 #include "api/video/i420_buffer.h"
 #include "api/video/nv12_buffer.h"
 #include "api/video/video_frame.h"
+#include "common/base/env_reader.h"
+#include "common/base/trace_switches.h"
+#include "common/public/log_tagged.h"
 #include "common_video/libyuv/include/webrtc_libyuv.h"
+#include "media/zero_copy_pipeline_policy.h"
 #include "modules/video_capture/video_capture_factory.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/time_utils.h"
@@ -15,8 +19,8 @@
 
 #if defined(WEBRTC_LINUX) && defined(__linux__)
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-#include "core/rtc/hw/rockchip_mpp/native_dec_frame_buffer.h"
-#include "core/rtc/hw/rockchip_mpp/mjpeg_decoder.h"
+#include "core/platform/rockchip/native_dec_frame_buffer.h"
+#include "core/platform/rockchip/mjpeg_decoder.h"
 #endif
 #include <cerrno>
 #include <fcntl.h>
@@ -41,25 +45,8 @@ namespace rflow::service::impl {
 #if defined(WEBRTC_LINUX) && defined(__linux__)
 namespace {
 bool LatencyTraceEnabled() {
-    static int cached = -1;
-    if (cached >= 0) {
-        return cached != 0;
-    }
-    const char* e = std::getenv("WEBRTC_LATENCY_TRACE");
-    cached = (e && e[0] == '1') ? 1 : 0;
-    return cached != 0;
-}
-
-int ReadEnvIntInRange(const char* name, int def, int lo, int hi) {
-    const char* v = std::getenv(name);
-    if (!v || !v[0]) {
-        return def;
-    }
-    const int n = std::atoi(v);
-    if (n < lo || n > hi) {
-        return def;
-    }
-    return n;
+    static const bool enabled = rflow::common::util::TraceFlagEnabled("WEBRTC_LATENCY_TRACE");
+    return enabled;
 }
 
 void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
@@ -68,7 +55,7 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
     const bool mode_set = mode && mode[0];
 
     if (cpu_env_name) {
-        const int cpu = ReadEnvIntInRange(cpu_env_name, -1, -1, 4096);
+        const int cpu = rflow::common::util::ReadEnvIntInRange(cpu_env_name, -1, -1, 4096);
         if (cpu >= 0) {
             cpu_set_t cpuset;
             CPU_ZERO(&cpuset);
@@ -88,7 +75,7 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
 
     const bool use_rr = mode && (mode[0] == 'r' || mode[0] == 'R');
     if (use_rr) {
-        const int rr_prio = ReadEnvIntInRange("RFLOW_MEDIA_THREAD_RR_PRIO", 20, 1, 90);
+        const int rr_prio = rflow::common::util::ReadEnvIntInRange("RFLOW_MEDIA_THREAD_RR_PRIO", 20, 1, 90);
         sched_param sp{};
         sp.sched_priority = rr_prio;
         const int rc = pthread_setschedparam(pthread_self(), SCHED_RR, &sp);
@@ -99,7 +86,7 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
         return;
     }
 
-    const int nice_val = ReadEnvIntInRange("RFLOW_MEDIA_THREAD_NICE", -8, -20, 19);
+    const int nice_val = rflow::common::util::ReadEnvIntInRange("RFLOW_MEDIA_THREAD_NICE", -8, -20, 19);
     if (setpriority(PRIO_PROCESS, 0, nice_val) != 0) {
         std::cerr << "[ThreadTune] " << role << " setpriority nice=" << nice_val << " failed errno=" << errno
                   << std::endl;
@@ -108,7 +95,9 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
 
 int64_t DecodeQueueStaleDropBudgetUs() {
     static const int64_t budget_us =
-        static_cast<int64_t>(ReadEnvIntInRange("WEBRTC_MJPEG_DECODE_QUEUE_MAX_WAIT_MS", 25, 0, 5000)) * 1000;
+        static_cast<int64_t>(
+            rflow::common::util::ReadEnvIntInRange("WEBRTC_MJPEG_DECODE_QUEUE_MAX_WAIT_MS", 25, 0, 5000)) *
+        1000;
     return budget_us;
 }
 
@@ -125,16 +114,6 @@ void LogMjpegDecodeTiming(const char* tag, int64_t before_us, int64_t after_us) 
 
 }  // namespace
 
-#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-static bool PreferMjpegNativeZeroCopyToEnc() {
-    const char* e = std::getenv("WEBRTC_MJPEG_ZERO_COPY_TO_ENC");
-    if (!e || e[0] == '\0') {
-        return true;
-    }
-    return e[0] != '0';
-}
-
-#endif  // RFLOW_HAVE_ROCKCHIP_MPP
 #endif  // WEBRTC_LINUX && __linux__
 
 CameraVideoTrackSource::CameraVideoTrackSource() : webrtc::AdaptedVideoTrackSource() {}
@@ -367,25 +346,25 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
             break;
         }
         if (errno != EBUSY) {
-            std::cerr << "[CameraV4L2] open " << device_path << " failed errno=" << errno << std::endl;
+            RFLOW_LOG_TAG_E("CameraV4L2", "open %s failed errno=%d", device_path, errno);
             return false;
         }
         usleep(200 * 1000);
     }
     if (direct_fd_ < 0) {
-        std::cerr << "[CameraV4L2] open " << device_path << " failed errno=EBUSY after retries" << std::endl;
+        RFLOW_LOG_TAG_E("CameraV4L2", "open %s failed errno=EBUSY after retries", device_path);
         return false;
     }
 
     struct v4l2_capability cap {};
     if (ioctl(direct_fd_, VIDIOC_QUERYCAP, &cap) < 0) {
-        std::cerr << "[CameraV4L2] VIDIOC_QUERYCAP errno=" << errno << std::endl;
+        RFLOW_LOG_TAG_E("CameraV4L2", "VIDIOC_QUERYCAP errno=%d", errno);
         close(direct_fd_);
         direct_fd_ = -1;
         return false;
     }
     if (!(cap.device_caps & V4L2_CAP_VIDEO_CAPTURE)) {
-        std::cerr << "[CameraV4L2] not a VIDEO_CAPTURE node: " << device_path << std::endl;
+        RFLOW_LOG_TAG_E("CameraV4L2", "not a VIDEO_CAPTURE node: %s", device_path);
         close(direct_fd_);
         direct_fd_ = -1;
         return false;
@@ -554,7 +533,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
     rb.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     rb.memory = V4L2_MEMORY_MMAP;
     if (ioctl(direct_fd_, VIDIOC_REQBUFS, &rb) < 0 || rb.count < 2) {
-        std::cerr << "[CameraV4L2] VIDIOC_REQBUFS failed errno=" << errno << std::endl;
+        RFLOW_LOG_TAG_E("CameraV4L2", "VIDIOC_REQBUFS failed errno=%d", errno);
         close(direct_fd_);
         direct_fd_ = -1;
         return false;
@@ -587,7 +566,10 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
     }
 
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-    if (WantV4l2ExtDmabufToMpp() || WantMjpegRgaToMpp()) {
+    {
+        const auto zc_policy = rflow::service::impl::policy::EvaluateMjpegZeroCopyPolicy(
+            v4l2_ext_dma_config_, mjpeg_rga_config_);
+    if (zc_policy.use_v4l2_ext_dmabuf || zc_policy.use_rga_to_mpp) {
         unsigned exp_ok = 0;
         for (unsigned int i = 0; i < nbuf; ++i) {
             struct v4l2_exportbuffer exp {};
@@ -601,7 +583,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
             }
         }
         if (exp_ok == nbuf) {
-            if (WantV4l2ExtDmabufToMpp()) {
+            if (zc_policy.use_v4l2_ext_dmabuf) {
                 std::cout << "[CameraV4L2] VIDIOC_EXPBUF: " << nbuf
                           << " dma-buf fd(s) → MPP JPEG EXT_DMA import\n";
             } else {
@@ -615,11 +597,12 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
             std::cout << "[CameraV4L2] VIDIOC_EXPBUF unsupported; MPP JPEG uses memcpy from mmap\n";
         }
     }
+    }  // zc_policy scope
 #endif
 
     enum v4l2_buf_type typ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(direct_fd_, VIDIOC_STREAMON, &typ) < 0) {
-        std::cerr << "[CameraV4L2] VIDIOC_STREAMON errno=" << errno << std::endl;
+        RFLOW_LOG_TAG_E("CameraV4L2", "VIDIOC_STREAMON errno=%d", errno);
         StopDirectV4l2();
         return false;
     }
@@ -741,12 +724,15 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
     }
     bool ok = false;
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    const auto zc_policy = rflow::service::impl::policy::EvaluateMjpegZeroCopyPolicy(
+        v4l2_ext_dma_config_, mjpeg_rga_config_);
     const bool mpp_jpeg_dma =
-        (dma_fd >= 0 && dma_cap >= bytesused && (WantV4l2ExtDmabufToMpp() || WantMjpegRgaToMpp()));
+        (dma_fd >= 0 && dma_cap >= bytesused &&
+         (zc_policy.use_v4l2_ext_dmabuf || zc_policy.use_rga_to_mpp));
     const int dma_arg_fd = mpp_jpeg_dma ? dma_fd : -1;
     const size_t dma_arg_cap = mpp_jpeg_dma ? dma_cap : 0;
     if (mjpeg_mpp_ && direct_pixfmt_ == static_cast<uint32_t>(V4L2_PIX_FMT_MJPEG)) {
-        if (PreferMjpegNativeZeroCopyToEnc()) {
+        if (zc_policy.prefer_native_zero_copy_to_enc) {
             webrtc::scoped_refptr<rflow::rtc::hw::rockchip_mpp::MppNativeDecFrameBuffer> native;
             // 始终传 mmap 指针：RGA 失败时会 memcpy 回退；EXT_DMA 成功时解码器忽略指针。
             const bool dec_native =
@@ -979,7 +965,8 @@ bool CameraVideoTrackSource::Start(const char* device_unique_id, int width, int 
         if (StartDirectV4l2(device_unique_id, width, height, fps)) {
             return true;
         }
-        std::cerr << "[CameraVideoTrackSource] direct V4L2 open failed for " << device_unique_id << std::endl;
+        RFLOW_LOG_TAG_E("CameraVideoTrackSource", "direct V4L2 open failed for %s",
+                        device_unique_id);
         return false;
     }
 #endif
@@ -1033,22 +1020,15 @@ void CameraVideoTrackSource::OnFrame(const webrtc::VideoFrame& frame) {
 
 #if defined(WEBRTC_LINUX) && defined(__linux__) && defined(RFLOW_HAVE_ROCKCHIP_MPP)
 bool CameraVideoTrackSource::WantV4l2ExtDmabufToMpp() const {
-    if (const char* e = std::getenv("WEBRTC_MJPEG_V4L2_DMABUF")) {
-        return e[0] != '0';
-    }
-    return v4l2_ext_dma_config_;
+    return rflow::service::impl::policy::EvaluateMjpegZeroCopyPolicy(
+               v4l2_ext_dma_config_, mjpeg_rga_config_)
+        .use_v4l2_ext_dmabuf;
 }
 
 bool CameraVideoTrackSource::WantMjpegRgaToMpp() const {
-#if defined(RFLOW_HAVE_LIBRGA)
-    if (const char* e = std::getenv("WEBRTC_MJPEG_RGA_TO_MPP")) {
-        return e[0] != '0';
-    }
-    return mjpeg_rga_config_;
-#else
-    (void)mjpeg_rga_config_;
-    return false;
-#endif
+    return rflow::service::impl::policy::EvaluateMjpegZeroCopyPolicy(
+               v4l2_ext_dma_config_, mjpeg_rga_config_)
+        .use_rga_to_mpp;
 }
 #endif
 

@@ -1,15 +1,13 @@
 #include "publisher.h"
 
 #include <cctype>
-#include <cstdlib>
-#include <chrono>
-#include <iostream>
 #include <utility>
 
 #include "media/push_streamer.h"
 #include "signaling/signaling_client.h"
 
-#include "common/internal/logger.h"
+#include "common/public/logger_api.h"
+#include "core/runtime/runtime_knobs.h"
 
 namespace rflow::service::impl {
 
@@ -76,11 +74,10 @@ bool Publisher::Start() {
     if (min_kbps_ == max_kbps_) {
         cfg.common.bitrate_mode = "cbr";
     }
-    cfg.common.degradation_preference = "maintain_framerate";
-    if (const char* deg = std::getenv("RFLOW_SVC_DEGRADATION_PREFERENCE")) {
-        if (deg[0] != '\0') {
-            cfg.common.degradation_preference = deg;
-        }
+    {
+        const std::string deg =
+            rflow::core::runtime::ReadString("RFLOW_SVC_DEGRADATION_PREFERENCE");
+        cfg.common.degradation_preference = deg.empty() ? "maintain_framerate" : deg;
     }
 
     // Rockchip MPP 硬件编解码：根据编译宏默认打开；运行时再由 WEBRTC_MPP_* 等环境变量二次控制。
@@ -102,11 +99,7 @@ bool Publisher::Start() {
         if (streamer_) streamer_->AddRemoteIceCandidateForPeer(peer_id, mid, mline_index, candidate);
     });
     signaling_->SetOnSubscriberJoin([this](const std::string& peer_id) {
-        {
-            std::lock_guard<std::mutex> lk(pending_mu_);
-            pending_subs_.push_back(peer_id);
-        }
-        pending_cv_.notify_one();
+        offer_pump_.Enqueue(peer_id);
         if (cbs_.on_pull_request) {
             cbs_.on_pull_request(stream_idx_, cbs_.userdata);
         }
@@ -130,10 +123,8 @@ bool Publisher::Start() {
         if (signaling_) signaling_->SendIceCandidate(mid, mline_index, candidate, peer_id);
     });
     streamer_->SetOnConnectionStateCallback([this](ConnectionState state) {
-        using S = ConnectionState;
         const char* names[] = {"New", "Connecting", "Connected", "Disconnected", "Failed", "Closed"};
         RFLOW_LOGI("[publisher idx=%d] rtc state=%s", stream_idx_, names[static_cast<int>(state)]);
-        (void)state;
     });
 
     if (!signaling_->Start()) {
@@ -152,8 +143,11 @@ bool Publisher::Start() {
         return false;
     }
 
-    worker_run_.store(true, std::memory_order_release);
-    worker_ = std::thread([this] { WorkerLoop(); });
+    offer_pump_.Start([this](const std::string& peer_id) {
+        if (streamer_) {
+            streamer_->CreateOfferForPeer(peer_id);
+        }
+    });
     RFLOW_LOGI("[publisher idx=%d] started (signaling=%s, stream_id=%s, %dx%d@%d, codec=%s, source=%s)",
                stream_idx_, signaling_url_.c_str(), stream_id_str_.c_str(),
                width_, height_, fps_, video_codec_.c_str(),
@@ -169,10 +163,7 @@ bool Publisher::Start() {
 }
 
 void Publisher::Stop() {
-    if (worker_run_.exchange(false, std::memory_order_acq_rel)) {
-        pending_cv_.notify_all();
-        if (worker_.joinable()) worker_.join();
-    }
+    offer_pump_.Stop();
     if (streamer_) {
         streamer_->Stop();
         streamer_.reset();
@@ -181,36 +172,29 @@ void Publisher::Stop() {
         signaling_->Stop();
         signaling_.reset();
     }
-    std::lock_guard<std::mutex> lk(pending_mu_);
-    pending_subs_.clear();
-}
-
-void Publisher::WorkerLoop() {
-    while (worker_run_.load(std::memory_order_acquire)) {
-        std::vector<std::string> batch;
-        {
-            std::unique_lock<std::mutex> lk(pending_mu_);
-            pending_cv_.wait_for(lk, std::chrono::seconds(1), [this] {
-                return !worker_run_.load(std::memory_order_acquire) || !pending_subs_.empty();
-            });
-            if (!worker_run_.load(std::memory_order_acquire)) return;
-            batch.swap(pending_subs_);
-        }
-        if (!streamer_) continue;
-        for (const auto& peer_id : batch) {
-            streamer_->CreateOfferForPeer(peer_id);
-        }
-    }
 }
 
 bool Publisher::PushI420(const uint8_t* buf, uint32_t size, int w, int h, int64_t ts_us) {
     if (!streamer_) return false;
-    return streamer_->PushExternalI420Contiguous(buf, size, w, h, ts_us);
+    if (streamer_->PushExternalI420Contiguous(buf, size, w, h, ts_us)) {
+        video_frames_pushed_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
 }
 
 bool Publisher::PushNv12(const uint8_t* buf, uint32_t size, int w, int h, int64_t ts_us) {
     if (!streamer_) return false;
-    return streamer_->PushExternalNv12Contiguous(buf, size, w, h, ts_us);
+    if (streamer_->PushExternalNv12Contiguous(buf, size, w, h, ts_us)) {
+        video_frames_pushed_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
+bool Publisher::CollectStats(librflow_stream_stats_s* out_stats) {
+    if (!streamer_ || !out_stats) return false;
+    return streamer_->CollectStats(out_stats);
 }
 
 }  // namespace rflow::service::impl

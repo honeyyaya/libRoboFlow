@@ -1,27 +1,37 @@
 #ifndef RFLOW_SIGNALING_CLIENT_H_
 #define RFLOW_SIGNALING_CLIENT_H_
 
-#include "core/signal/protocol.h"
-#include "signaling/signaling_io_manager.h"
+// service::impl::SignalingClient 是 core::signal::TcpClientSession 的高层适配器：
+// - 用 SignalingClient 暴露 publisher 端语义化的 SetOnAnswer / SetOnIce / SetOnSubscriberJoin 等
+//   callback API（保留与原有调用方兼容）
+// - 内部把 SessionDelegate::OnSignalMessage(Message) 分发到上述高层 callback。
+//
+// 真正的 TCP / IO 复用 / 注册握手等，由 core::signal::TcpClientSession 实现，
+// 同一份 transport 也被 client::impl::RtcStreamSession 直接使用，避免两边各维护一套。
 
-#include <atomic>
+#include "core/signal/protocol.h"
+#include "core/signal/session.h"
+
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <string_view>
+
+namespace rflow::signal {
+class TcpClientSession;
+}  // namespace rflow::signal
 
 namespace rflow::service::impl {
 
-/// P2P signaling client backed by a shared IO thread for multiple service sessions.
-/// Address format: "127.0.0.1:8765" or "ws://127.0.0.1:8765" (ws:// is ignored)
-class SignalingClient {
+class SignalingClient final : public rflow::signal::SessionDelegate {
 public:
     /// role: "publisher" or "subscriber"
     /// stream_id: stream id, default is livestream
-    explicit SignalingClient(const std::string& server_addr, const std::string& role,
-                             const std::string& stream_id = "livestream");
-    ~SignalingClient();
+    SignalingClient(const std::string& server_addr, const std::string& role,
+                    const std::string& stream_id = "livestream");
+    ~SignalingClient() override;
+
+    SignalingClient(const SignalingClient&)            = delete;
+    SignalingClient& operator=(const SignalingClient&) = delete;
 
     bool Start();
     void Stop();
@@ -51,34 +61,23 @@ public:
     void SetOnError(OnErrorCallback cb) { on_error_ = std::move(cb); }
 
 private:
-    friend class SignalingIoManager;
+    // SessionDelegate
+    void OnSignalMessage(const rflow::signal::Message& msg) override;
+    void OnSignalError(std::string_view error) override;
 
-    bool Connect();
-    void ParseAndDispatch(const rflow::signal::Message& msg);
-    bool SendLine(std::string_view line);
-    void ReportError(std::string_view error);
-    std::string ResolveTargetPeer(std::string_view to_peer_id) const;
+    bool RoleIsPublisher() const noexcept;
 
-    std::string server_addr_;
-    std::string host_;
-    uint16_t    port_{0};
     std::string role_;
     std::string stream_id_;
-    std::string self_peer_id_;
-    std::string last_remote_peer_id_;
 
-    OnAnswerCallback on_answer_;
-    OnOfferCallback on_offer_;
-    OnIceCallback on_ice_;
+    OnAnswerCallback    on_answer_;
+    OnOfferCallback     on_offer_;
+    OnIceCallback       on_ice_;
     OnPeerEventCallback on_subscriber_join_;
     OnPeerEventCallback on_subscriber_leave_;
-    OnErrorCallback on_error_;
+    OnErrorCallback     on_error_;
 
-    std::atomic<int>   sock_fd_{-1};
-    std::atomic<bool>  running_{false};
-    std::shared_ptr<SignalingClientSessionSlot> session_slot_;
-    mutable std::mutex peer_mutex_;
-    mutable std::mutex send_mutex_;
+    std::unique_ptr<rflow::signal::TcpClientSession> session_;
 };
 
 }  // namespace rflow::service::impl
