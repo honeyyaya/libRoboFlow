@@ -788,7 +788,12 @@ bool RtcStreamSession::CollectStats(librflow_stream_stats_s* out_stats) {
         uint32_t freeze_count = 0;
         uint32_t decode_fail_count = 0;
         uint32_t rtt_ms = 0;
-        uint32_t bitrate_kbps = 0;
+        // ICE pair 的 available_incoming_bitrate（kbps），仅作 fallback；
+        // 真实接收码率优先用 inbound bytes_received 差分计算。
+        uint32_t available_incoming_kbps = 0;
+        // 抖动缓存累计延迟与帧数：用于算 jb_avg = delay_s / emitted * 1000
+        double   jb_delay_s = 0.0;
+        uint64_t jb_emitted = 0;
     };
 
     std::mutex mu;
@@ -822,6 +827,12 @@ bool RtcStreamSession::CollectStats(librflow_stream_stats_s* out_stats) {
                         local.decode_fail_count =
                             std::max(local.decode_fail_count, *inbound->frames_dropped);
                     }
+                    if (inbound->jitter_buffer_delay) {
+                        local.jb_delay_s += *inbound->jitter_buffer_delay;
+                    }
+                    if (inbound->jitter_buffer_emitted_count) {
+                        local.jb_emitted += *inbound->jitter_buffer_emitted_count;
+                    }
                 }
 
                 for (const auto* pair : report->GetStatsOfType<webrtc::RTCIceCandidatePairStats>()) {
@@ -832,8 +843,8 @@ bool RtcStreamSession::CollectStats(librflow_stream_stats_s* out_stats) {
                             static_cast<uint32_t>(*pair->current_round_trip_time * 1000.0 + 0.5));
                     }
                     if (pair->available_incoming_bitrate) {
-                        local.bitrate_kbps = std::max(
-                            local.bitrate_kbps,
+                        local.available_incoming_kbps = std::max(
+                            local.available_incoming_kbps,
                             static_cast<uint32_t>(*pair->available_incoming_bitrate / 1000.0 + 0.5));
                     }
                 }
@@ -862,7 +873,40 @@ bool RtcStreamSession::CollectStats(librflow_stream_stats_s* out_stats) {
     out_stats->freeze_count = snapshot.freeze_count;
     out_stats->decode_fail_count = snapshot.decode_fail_count;
     out_stats->rtt_ms = snapshot.rtt_ms;
-    out_stats->bitrate_kbps = snapshot.bitrate_kbps;
+
+    // 抖动缓存平均延迟：等业务把日志中 [Pipeline/Latency] jb_avg 那个值能直接拿到。
+    out_stats->jitter_buffer_delay_ms =
+        (snapshot.jb_emitted > 0)
+            ? static_cast<uint32_t>(snapshot.jb_delay_s * 1000.0 /
+                                    static_cast<double>(snapshot.jb_emitted) + 0.5)
+            : 0;
+    // min playout delay（receiver 上 SetMinimumPlayoutDelay 的当前下限）。
+    out_stats->jitter_min_delay_ms = static_cast<uint32_t>(
+        jitter_min_delay_seconds_.load(std::memory_order_relaxed) * 1000.0 + 0.5);
+
+    // 实时接收码率：bytes_received 与上次 CollectStats 快照差分（多调用方共用同一窗口）。
+    // 首次调用没有差分基线时，回退到 ICE pair 的 available_incoming_bitrate；仍为 0
+    // 则保持 0，业务可自行用 in_bound_bytes 累计差分。
+    {
+        const int64_t now_mono_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::lock_guard<std::mutex> blk(stats_bitrate_mu_);
+        const uint64_t prev_bytes = prev_stats_bytes_received_;
+        const int64_t  prev_ms    = prev_stats_collect_mono_ms_;
+        uint32_t kbps = 0;
+        if (prev_ms > 0 && now_mono_ms > prev_ms && snapshot.in_bytes >= prev_bytes) {
+            const uint64_t d_bytes = snapshot.in_bytes - prev_bytes;
+            const int64_t  d_ms    = now_mono_ms - prev_ms;
+            // bits / ms == kbps
+            kbps = static_cast<uint32_t>((d_bytes * 8ULL) / static_cast<uint64_t>(d_ms));
+        } else if (snapshot.available_incoming_kbps > 0) {
+            kbps = snapshot.available_incoming_kbps;
+        }
+        prev_stats_bytes_received_  = snapshot.in_bytes;
+        prev_stats_collect_mono_ms_ = now_mono_ms;
+        last_bitrate_kbps_          = kbps;
+        out_stats->bitrate_kbps     = kbps;
+    }
     return true;
 }
 

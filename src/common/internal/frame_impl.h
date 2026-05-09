@@ -72,6 +72,10 @@ struct librflow_stream_stats_s {
     uint32_t jitter_ms = 0;
     uint32_t freeze_count = 0;
     uint32_t decode_fail_count = 0;
+    // 抖动缓存平均延迟：jitter_buffer_delay / jitter_buffer_emitted_count（ms）
+    uint32_t jitter_buffer_delay_ms = 0;
+    // 当前 receiver 上的 min playout delay（ms），由 jitter_min_delay_seconds_ 同步而来
+    uint32_t jitter_min_delay_ms = 0;
 };
 
 #endif  // __RFLOW_INTERNAL_FRAME_IMPL_H__

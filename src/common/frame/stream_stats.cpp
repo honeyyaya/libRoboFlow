@@ -37,4 +37,12 @@ uint32_t librflow_stream_stats_get_decode_fail_count(librflow_stream_stats_t s) 
     return s ? s->decode_fail_count : 0;
 }
 
+uint32_t librflow_stream_stats_get_jitter_buffer_delay_ms(librflow_stream_stats_t s) {
+    return s ? s->jitter_buffer_delay_ms : 0;
+}
+
+uint32_t librflow_stream_stats_get_jitter_min_delay_ms(librflow_stream_stats_t s) {
+    return s ? s->jitter_min_delay_ms : 0;
+}
+
 }  // extern "C"

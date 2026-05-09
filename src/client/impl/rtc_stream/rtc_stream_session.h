@@ -144,6 +144,12 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
     std::string last_codec_mime_;
     uint32_t    last_codec_payload_type_     = 0;
 
+    // CollectStats 实时码率差分缓存（与日志/watchdog 路径解耦，业务侧 1Hz 调用足以）
+    std::mutex stats_bitrate_mu_;
+    uint64_t   prev_stats_bytes_received_ = 0;
+    int64_t    prev_stats_collect_mono_ms_ = 0;
+    uint32_t   last_bitrate_kbps_ = 0;
+
     std::mutex mu_;
     FrameSink frame_sink_;
     StateSink state_sink_;

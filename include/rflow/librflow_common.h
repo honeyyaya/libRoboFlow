@@ -522,6 +522,19 @@ LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_jitter_ms          (librf
 LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_freeze_count       (librflow_stream_stats_t s);
 LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_decode_fail_count  (librflow_stream_stats_t s);
 
+/*
+ * 抖动缓存平均延迟（jb_avg）：来自 RTCInboundRtpStreamStats::jitter_buffer_delay
+ * 与 jitter_buffer_emitted_count 的比值，单位 ms。代表"帧从入抖动缓存到出缓存"
+ * 的平均等待时间，是判断网络抖动 + jitter buffer 适配情况的核心指标。
+ */
+LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_jitter_buffer_delay_ms(librflow_stream_stats_t s);
+/*
+ * 当前 RtpReceiver 上的 min playout delay（playout 时序的下限），单位 ms。
+ * 由 SDK 内部 jitter min-delay 控制（关键帧 watchdog 触发后会临时上调，再回归
+ * floor）。多数场景为常量；用于上层显示"播放下限"。
+ */
+LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_jitter_min_delay_ms  (librflow_stream_stats_t s);
+
 #ifdef __cplusplus
 }
 #endif
