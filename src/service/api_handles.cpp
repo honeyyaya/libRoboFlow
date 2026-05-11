@@ -2,9 +2,9 @@
 
 #include "internal/handles.h"
 
-#include "common/base/abi_string_copy.h"
-#include "common/public/object_access_api.h"
-#include "common/public/logger_api.h"
+#include "base/abi_string_copy.h"
+#include "public/object_access_api.h"
+#include "public/logger_api.h"
 
 extern "C" {
 

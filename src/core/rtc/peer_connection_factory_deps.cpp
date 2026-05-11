@@ -1,4 +1,4 @@
-#include "core/rtc/peer_connection_factory_deps.h"
+#include "rtc/peer_connection_factory_deps.h"
 
 #include <memory>
 
@@ -8,7 +8,7 @@
 #include "api/enable_media.h"
 #include "api/scoped_refptr.h"
 #include "api/task_queue/default_task_queue_factory.h"
-#include "core/rtc/hw/backend_registry.h"
+#include "rtc/hw/backend_registry.h"
 #include "rtc_base/thread.h"
 
 namespace rflow::rtc {
@@ -55,10 +55,20 @@ void ConfigurePeerConnectionFactoryDependencies(
     if (deps.video_decoder_factory == nullptr) {
         rflow::rtc::hw::VideoBackendPreferences prefs;
         if (media_options) {
-            prefs.decoder_backend =
-                media_options->decoder_backend == VideoCodecBackendPreference::kRockchipMpp
-                    ? rflow::rtc::hw::VideoCodecBackend::kRockchipMpp
-                    : rflow::rtc::hw::VideoCodecBackend::kBuiltin;
+            switch (media_options->decoder_backend) {
+#if defined(WEBRTC_ANDROID)
+                case VideoCodecBackendPreference::kAndroidMediaCodec:
+                    prefs.decoder_backend = rflow::rtc::hw::VideoCodecBackend::kAndroidMediaCodec;
+                    break;
+#endif
+                case VideoCodecBackendPreference::kRockchipMpp:
+                    prefs.decoder_backend = rflow::rtc::hw::VideoCodecBackend::kRockchipMpp;
+                    break;
+                case VideoCodecBackendPreference::kBuiltin:
+                default:
+                    prefs.decoder_backend = rflow::rtc::hw::VideoCodecBackend::kBuiltin;
+                    break;
+            }
         }
         deps.video_decoder_factory = rflow::rtc::hw::CreatePreferredVideoDecoderFactory(prefs);
     }

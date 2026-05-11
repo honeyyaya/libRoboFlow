@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <optional>
 
-#include "common/media/video_frame_source.h"
+#include "media/video_frame_source.h"
 #include "media/base/adapted_video_track_source.h"
 
 namespace rflow::service::impl {

@@ -1,7 +1,7 @@
 #ifndef __RFLOW_CORE_RTC_PEER_CONNECTION_FACTORY_DEPS_H__
 #define __RFLOW_CORE_RTC_PEER_CONNECTION_FACTORY_DEPS_H__
 
-#include "core/rtc/rtc_factory_common.h"
+#include "rtc/rtc_factory_common.h"
 
 #include <memory>
 
@@ -16,6 +16,10 @@ namespace rflow::rtc {
 enum class VideoCodecBackendPreference {
     kBuiltin = 0,
     kRockchipMpp = 1,
+#if defined(WEBRTC_ANDROID)
+    /// 与 `CreatePreferredVideoDecoderFactory(kAndroidMediaCodec)` 对齐（收端 / Client 拉流）
+    kAndroidMediaCodec = 2,
+#endif
 };
 
 struct PeerConnectionFactoryMediaOptions {

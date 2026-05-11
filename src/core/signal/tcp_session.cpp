@@ -1,9 +1,9 @@
-#include "core/signal/tcp_session.h"
+#include "signal/tcp_session.h"
 
-#include "core/base/logging.h"
-#include "core/runtime/runtime_knobs.h"
-#include "core/signal/session_transport.h"
-#include "core/signal/shared_signaling_io_manager.h"
+#include "base/logging.h"
+#include "runtime/runtime_knobs.h"
+#include "signal/session_transport.h"
+#include "signal/shared_signaling_io_manager.h"
 #include "rflow/librflow_common.h"
 
 #include <atomic>

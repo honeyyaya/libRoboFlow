@@ -4,8 +4,8 @@
 
 #include <cstdint>
 
-#include "common/abi/handle.h"
-#include "common/abi/object_access_ops.h"
+#include "abi/handle.h"
+#include "abi/object_access_ops.h"
 
 namespace {
 

@@ -1,9 +1,9 @@
-#include "core/runtime/infra_lifecycle.h"
+#include "runtime/infra_lifecycle.h"
 
-#include "core/rtc/rtc.h"
-#include "core/runtime/runtime_knobs.h"
-#include "core/signal/signal.h"
-#include "core/thread/thread_pool.h"
+#include "rtc/rtc.h"
+#include "runtime/runtime_knobs.h"
+#include "signal/signal.h"
+#include "thread/thread_pool.h"
 
 namespace rflow::core::runtime {
 

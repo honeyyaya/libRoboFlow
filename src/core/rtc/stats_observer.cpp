@@ -1,4 +1,4 @@
-#include "core/rtc/stats_observer.h"
+#include "rtc/stats_observer.h"
 
 #include <utility>
 

@@ -11,10 +11,10 @@
 #include "internal/state.h"
 #include "internal/state_ops.h"
 
-#include "common/abi/object_layouts.h"
-#include "common/base/global_config_ops.h"
-#include "common/public/last_error_api.h"
-#include "common/public/logger_api.h"
+#include "abi/object_layouts.h"
+#include "base/global_config_ops.h"
+#include "public/last_error_api.h"
+#include "public/logger_api.h"
 
 #include <new>
 

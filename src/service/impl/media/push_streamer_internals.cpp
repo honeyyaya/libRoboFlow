@@ -4,14 +4,15 @@
 #include <cctype>
 #include <cstdlib>
 #include <future>
-#include <iostream>
+#include <sstream>
 #include <thread>
 #include <utility>
 
 #include "api/stats/rtcstats_objects.h"
 #include "rtc_base/thread.h"
 
-#include "common/base/trace_switches.h"
+#include "base/trace_switches.h"
+#include "public/log_tagged.h"
 
 namespace rflow::service::impl::detail::push {
 
@@ -31,7 +32,9 @@ void TraceSigTiming(const std::string& msg) {
     if (!SignalingTimingTraceEnabled()) {
         return;
     }
-    std::cout << "[SIG_TIMING][push] t_us=" << SignalingNowUs() << " " << msg << std::endl;
+    RFLOW_LOG_TAG_I("SIG_TIMING", "[push] t_us=%lld %s",
+                    static_cast<long long>(SignalingNowUs()),
+                    msg.c_str());
 }
 
 bool LatencyTraceEnabled() {
@@ -51,9 +54,8 @@ bool ClosePeerConnectionWithDeadline(
     std::future<void> done = task.get_future();
     std::thread worker(std::move(task));
     if (done.wait_for(std::chrono::seconds(timeout_sec)) != std::future_status::ready) {
-        std::cerr << "[PushStreamer] " << log_tag << " PeerConnection::Close exceeded " << timeout_sec
-                  << "s; continuing shutdown\n"
-                  << std::flush;
+        RFLOW_LOG_TAG_W("PushStreamer", "%s PeerConnection::Close exceeded %ds; continuing shutdown", log_tag,
+                        timeout_sec);
         worker.detach();
         return false;
     }
@@ -69,9 +71,8 @@ void StopWebrtcThreadWithDeadline(webrtc::Thread* thread, int timeout_sec) {
     std::future<void> done = task.get_future();
     std::thread worker(std::move(task));
     if (done.wait_for(std::chrono::seconds(timeout_sec)) != std::future_status::ready) {
-        std::cerr << "[PushStreamer] webrtc signaling Thread::Stop exceeded " << timeout_sec
-                  << "s; continuing shutdown\n"
-                  << std::flush;
+        RFLOW_LOG_TAG_W("PushStreamer", "webrtc signaling Thread::Stop exceeded %ds; continuing shutdown",
+                        timeout_sec);
         worker.detach();
         return;
     }
@@ -142,29 +143,30 @@ void PrintOutboundVideoStats(
         if (!s->kind.has_value() || *s->kind != "video") {
             continue;
         }
-        std::cout << "[OutboundVideoStats] pc=" << pc_tag << " id=" << s->id();
+        std::ostringstream line;
+        line << "pc=" << pc_tag << " id=" << s->id();
         if (s->ssrc.has_value()) {
-            std::cout << " ssrc=" << *s->ssrc;
+            line << " ssrc=" << *s->ssrc;
         }
         if (s->frames_encoded.has_value()) {
-            std::cout << " frames_encoded=" << *s->frames_encoded;
+            line << " frames_encoded=" << *s->frames_encoded;
         }
         if (s->key_frames_encoded.has_value()) {
-            std::cout << " key_frames_encoded=" << *s->key_frames_encoded;
+            line << " key_frames_encoded=" << *s->key_frames_encoded;
         }
         if (s->packets_sent.has_value()) {
-            std::cout << " packets_sent=" << *s->packets_sent;
+            line << " packets_sent=" << *s->packets_sent;
         }
         if (s->bytes_sent.has_value()) {
-            std::cout << " bytes_sent=" << *s->bytes_sent;
+            line << " bytes_sent=" << *s->bytes_sent;
         }
         if (s->retransmitted_packets_sent.has_value()) {
-            std::cout << " retrans_pkts=" << *s->retransmitted_packets_sent;
+            line << " retrans_pkts=" << *s->retransmitted_packets_sent;
         }
         if (s->quality_limitation_reason.has_value()) {
-            std::cout << " ql_reason=" << *s->quality_limitation_reason;
+            line << " ql_reason=" << *s->quality_limitation_reason;
         }
-        std::cout << std::endl;
+        RFLOW_LOG_TAG_I("OutboundVideoStats", "%s", line.str().c_str());
     }
 }
 

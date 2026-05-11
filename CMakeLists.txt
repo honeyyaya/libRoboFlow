@@ -100,6 +100,12 @@ elseif(ANDROID)
     target_link_libraries(rflow_sdk_internal_deps INTERFACE mediandk android log OpenSLES EGL GLESv2)
 endif()
 
+# GNU ld: export only librflow_* from shared SDK libs (Clang lld accepts --version-script on Linux/Android).
+set(RFLOW_SHARED_VERSION_SCRIPT "")
+if(RFLOW_BUILD_SHARED AND UNIX AND NOT APPLE)
+    set(RFLOW_SHARED_VERSION_SCRIPT "${CMAKE_SOURCE_DIR}/tools/linkmap/librflow_abi.map")
+endif()
+
 # -------------------------------------------------------------------- subdirs
 add_subdirectory(src/common)
 add_subdirectory(src/core)
@@ -125,8 +131,9 @@ if(RFLOW_ENABLE_STRUCTURE_CHECK)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_custom_target(rflow_structure_check
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_structure_rules.py
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_stream_stats_abi.py
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        COMMENT "Running libRoboFlow structure checks")
+        COMMENT "Running libRoboFlow structure + stream_stats ABI checks")
 endif()
 
 # -------------------------------------------------------------------- install rules

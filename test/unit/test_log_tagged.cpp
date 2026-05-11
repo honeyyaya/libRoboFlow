@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "common/public/log_tagged.h"
+#include "public/log_tagged.h"
 #include "rflow/librflow_common.h"
 
 namespace {

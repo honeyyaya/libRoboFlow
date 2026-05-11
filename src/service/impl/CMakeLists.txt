@@ -38,8 +38,10 @@ add_library(rflow_svc_impl OBJECT ${_SVC_IMPL_SRCS})
 target_include_directories(rflow_svc_impl
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/src/common
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${CMAKE_SOURCE_DIR}/src/service
+        ${CMAKE_SOURCE_DIR}/src/service/impl
 )
 
 target_link_libraries(rflow_svc_impl PRIVATE

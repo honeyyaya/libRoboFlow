@@ -25,7 +25,7 @@ void shutdown();
 }  // namespace rflow::rtc
 
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-#  include "core/rtc/peer_connection_factory.h"
+#  include "rtc/peer_connection_factory.h"
 #endif
 
 #endif  // __RFLOW_CORE_RTC_H__

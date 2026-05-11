@@ -5,7 +5,7 @@ set(SERVICE_SOURCES
     stream.cpp
     internal/stream_startup_policy.cpp
     internal/state_ops.cpp
-    internal/runtime_knobs.cpp
+    internal/service_default_params.cpp
 )
 
 # -------------------------------------------------------------------- impl 层
@@ -57,9 +57,10 @@ target_include_directories(rflow_svc
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/common
         ${CMAKE_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/impl
+        ${CMAKE_SOURCE_DIR}/src/service
+        ${CMAKE_SOURCE_DIR}/src/service/impl
 )
 
 target_link_libraries(rflow_svc PRIVATE rflow_sdk_internal_deps)
@@ -109,4 +110,7 @@ endif()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
     target_compile_options(rflow_svc PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 endif()
-# TODO: 后续通过 version script (GNU) 精准导出公开符号
+if(RFLOW_SHARED_VERSION_SCRIPT)
+    target_link_options(rflow_svc PRIVATE
+        "-Wl,--version-script=${RFLOW_SHARED_VERSION_SCRIPT}")
+endif()

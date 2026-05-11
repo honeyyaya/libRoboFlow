@@ -1,6 +1,6 @@
 # libRoboFlow Runtime Knobs
 
-本表由 `core/runtime/runtime_knobs.cpp` 中 `kKnobTable` 自动生成（75 项）。
+本表由 `core/runtime/runtime_knobs.cpp` 中 `kKnobTable` 自动生成（76 项）。
 
 
 ## signal
@@ -25,12 +25,13 @@
 
 | name | kind | default | range | alias | doc |
 |------|------|---------|-------|-------|-----|
-| `RFLOW_ZERO_PLAYOUT_MIN_PACING_MS` | int | 1 | [0,20] | - | JitterBuffer playout 最小 pacing；0=极致低时延 |
-| `RFLOW_MAX_DECODE_QUEUE_SIZE` | int | 6 | [4,16] | - | 解码队列上限；越小越低时延但更易丢帧 |
+| `RFLOW_ZERO_PLAYOUT_MIN_PACING_MS` | int | 2 | [0,20] | - | JitterBuffer playout 最小 pacing；0=极致低时延 |
+| `RFLOW_MAX_DECODE_QUEUE_SIZE` | int | 3 | [2,16] | - | 解码队列上限；越小越低时延但更易丢帧 |
 | `RFLOW_ENABLE_DECODE_QUEUE_GUARD` | bool | 0 | - | - | 启用解码队列的 guard 自动丢帧 |
 | `RFLOW_DECODE_QUEUE_GUARD_CAP` | int | 6 | [4,12] | - | decode queue guard 容量 |
-| `RFLOW_ENABLE_FLEXFEC` | bool | 0 | - | - | 启用 FlexFEC 前向纠错 |
+| `RFLOW_ENABLE_FLEXFEC` | bool | 1 | - | - | FlexFEC（默认开；设为 0/n/f 关闭） |
 | `RFLOW_FIELD_TRIALS_APPEND` | string | "" | - | - | WebRTC FieldTrials 字符串附加项（实验功能开关） |
+| `RFLOW_SYNC_GETSTATS_TIMEOUT_MS` | int | 1500 | [200,60000] | - | 同步阻塞等待 PeerConnection GetStats 回调超时(ms)，用于拉流/推流 QoS CollectStats |
 
 ## media.trace
 

@@ -1,6 +1,6 @@
 #include "rflow/librflow_common.h"
 
-#include "common/media/frame_types.h"
+#include "media/frame_types.h"
 
 #include <cstddef>
 #include <cstring>

@@ -1,6 +1,6 @@
 #include "rflow/librflow_common.h"
 
-#include "common/abi/object_layouts.h"
+#include "abi/object_layouts.h"
 
 #include <new>
 

@@ -56,9 +56,10 @@ target_include_directories(rflow_client
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/common
         ${CMAKE_SOURCE_DIR}/src/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/impl
+        ${CMAKE_SOURCE_DIR}/src/client
+        ${CMAKE_SOURCE_DIR}/src/client/impl
 )
 
 # 与预编译 libwebrtc 链接（定义在 src/core/CMakeLists.txt）
@@ -104,4 +105,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)
     # libwebrtc headers (e.g. PortInterface::Network) need this on GCC 9.
     target_compile_options(rflow_client PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 endif()
-# TODO: 后续通过 version script (GNU) 精准导出公开符号
+if(RFLOW_SHARED_VERSION_SCRIPT)
+    target_link_options(rflow_client PRIVATE
+        "-Wl,--version-script=${RFLOW_SHARED_VERSION_SCRIPT}")
+endif()

@@ -4,7 +4,7 @@
 // 注意：每个 TEST 自己 init/shutdown 以避免单测之间状态泄漏；GoogleTest 是单线程
 // 跑 TEST 的，全局静态状态可控。
 
-#include "core/thread/thread_pool.h"
+#include "thread/thread_pool.h"
 
 #include <atomic>
 #include <chrono>

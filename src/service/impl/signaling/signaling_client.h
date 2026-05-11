@@ -9,8 +9,8 @@
 // 真正的 TCP / IO 复用 / 注册握手等，由 core::signal::TcpClientSession 实现，
 // 同一份 transport 也被 client::impl::RtcStreamSession 直接使用，避免两边各维护一套。
 
-#include "core/signal/protocol.h"
-#include "core/signal/session.h"
+#include "signal/protocol.h"
+#include "signal/session.h"
 
 #include <functional>
 #include <memory>

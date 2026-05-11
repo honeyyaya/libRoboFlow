@@ -1,4 +1,4 @@
-#include "core/platform/rockchip/video_decoder_factory.h"
+#include "platform/rockchip/video_decoder_factory.h"
 
 #include <memory>
 #include <vector>
@@ -9,7 +9,7 @@
 #include "api/video_codecs/video_decoder.h"
 #include "api/video_codecs/video_decoder_factory.h"
 
-#include "core/platform/rockchip/h264_decoder.h"
+#include "platform/rockchip/h264_decoder.h"
 
 namespace rflow::rtc::hw::rockchip_mpp {
 

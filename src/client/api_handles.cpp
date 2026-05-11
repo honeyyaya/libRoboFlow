@@ -2,8 +2,8 @@
 
 #include "internal/handles.h"
 
-#include "common/public/object_access_api.h"
-#include "common/public/logger_api.h"
+#include "public/object_access_api.h"
+#include "public/logger_api.h"
 
 extern "C" {
 

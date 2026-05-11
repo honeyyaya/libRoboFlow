@@ -429,6 +429,12 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_region     (librflow_
  */
 typedef void (*librflow_gl_prepare_fn)(void *userdata);
 
+/*
+ * 线程安全（Video Frame Getter）
+ *   - librflow_video_frame_get_* 元数据在帧构造完成后不可变；get_data 内部可能懒生成 payload。
+ *   - 须在 retain 有效且未 release 前提下使用。
+ * 线程安全（retain / release）：原子引用计数；最后一次 release 同步释放底层资源。
+ */
 LIBRFLOW_API_EXPORT rflow_video_frame_backend_t librflow_video_frame_get_backend(librflow_video_frame_t f);
 LIBRFLOW_API_EXPORT rflow_native_handle_type_t  librflow_video_frame_get_native_handle_type(librflow_video_frame_t f);
 /* Returns 0 when this frame is not backed by Android OES texture. */
@@ -486,10 +492,12 @@ LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_bitrate_kbps   (librflow_
 LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_rtt_ms         (librflow_stream_stats_t s);
 LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_fps            (librflow_stream_stats_t s);
 
-/* QoS 补充指标（Client 拉流更关心） */
 LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_jitter_ms          (librflow_stream_stats_t s);
 LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_freeze_count       (librflow_stream_stats_t s);
 LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_decode_fail_count  (librflow_stream_stats_t s);
+
+LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_jitter_buffer_delay_ms(librflow_stream_stats_t s);
+LIBRFLOW_API_EXPORT uint32_t librflow_stream_stats_get_jitter_min_delay_ms  (librflow_stream_stats_t s);
 
 #ifdef __cplusplus
 }

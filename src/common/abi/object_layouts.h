@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "common/abi/handle.h"
+#include "abi/handle.h"
 #include "rflow/librflow_common.h"
 
 struct librflow_log_config_s {

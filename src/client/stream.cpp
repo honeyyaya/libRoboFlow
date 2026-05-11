@@ -9,12 +9,12 @@
 #include "internal/state_ops.h"
 #include "internal/state.h"
 
-#include "common/abi/handle.h"
-#include "common/base/stream_handle_ops.h"
-#include "common/media/frame_types.h"
-#include "common/media/stream_stats.h"
-#include "common/public/last_error_api.h"
-#include "common/public/logger_api.h"
+#include "abi/handle.h"
+#include "base/stream_handle_ops.h"
+#include "media/frame_types.h"
+#include "media/stream_stats.h"
+#include "public/last_error_api.h"
+#include "public/logger_api.h"
 
 #include <algorithm>
 #include <atomic>
@@ -30,6 +30,14 @@
 namespace {
 
 constexpr const char* kErrorOrigin = "client/stream";
+
+/// 仅填充与 RTC 快照无关的时长/收帧计数；QoS 字段由调用方决定是否再调 `CollectRtcStreamStats`。
+void FillClientStreamBaseStats(const librflow_stream_s& stream, librflow_stream_stats_s* ms) {
+    rflow::common::media::FillStreamStatsBase(
+        *ms,
+        stream.opened_at,
+        stream.video_frames_received.load(std::memory_order_relaxed));
+}
 
 void ResetOpenedStats(librflow_stream_s& sh) {
     const auto now = std::chrono::steady_clock::now();
@@ -56,10 +64,7 @@ void MaybeEmitPeriodicStats(librflow_stream_s& sh) {
     }
 
     auto* ms = const_cast<librflow_stream_stats_s*>(stats);
-    rflow::common::media::FillStreamStatsBase(*ms,
-                                              sh.opened_at,
-                                              sh.video_frames_received.load(std::memory_order_relaxed));
-
+    FillClientStreamBaseStats(sh, ms);
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
     if (sh.impl) {
         rflow::client::internal::CollectRtcStreamStats(sh.impl, ms);
@@ -216,23 +221,18 @@ rflow_err_t librflow_stream_get_stats(librflow_stream_handle_t handle,
     }
 
     auto* ms = const_cast<librflow_stream_stats_s*>(stats);
-    rflow::common::media::FillStreamStatsBase(
-        *ms,
-        handle->opened_at,
-        handle->video_frames_received.load(std::memory_order_relaxed));
+    FillClientStreamBaseStats(*handle, ms);
 
+    bool collected = false;
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-    const bool collected = rflow::client::internal::CollectRtcStreamStats(handle->impl, ms);
-    if (!collected && ms->fps == 0) {
-        const uint32_t duration_ms = std::max<uint32_t>(1, ms->duration_ms);
-        const uint64_t frames = handle->video_frames_received.load(std::memory_order_relaxed);
-        ms->fps = static_cast<uint32_t>((frames * 1000ULL) / duration_ms);
+    if (handle->impl) {
+        collected = rflow::client::internal::CollectRtcStreamStats(handle->impl, ms);
     }
-#else
-    const uint32_t duration_ms = std::max<uint32_t>(1, ms->duration_ms);
-    const uint64_t frames = handle->video_frames_received.load(std::memory_order_relaxed);
-    ms->fps = static_cast<uint32_t>((frames * 1000ULL) / duration_ms);
 #endif
+    if (!collected) {
+        rflow::common::media::ApplyStreamStatsFpsFallbackFromFrameCount(
+            *ms, handle->video_frames_received.load(std::memory_order_relaxed));
+    }
 
     *out_stats = stats;
     return RFLOW_OK;

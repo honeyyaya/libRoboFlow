@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "rflow/Service/librflow_service_api.h"
-#include "common/abi/handle.h"
+#include "abi/handle.h"
 
 namespace rflow::service {
 

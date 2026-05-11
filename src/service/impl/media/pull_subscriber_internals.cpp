@@ -3,12 +3,13 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <iostream>
+#include <sstream>
 #include <vector>
 
 #include "api/stats/rtcstats_objects.h"
 
-#include "common/base/trace_switches.h"
+#include "base/trace_switches.h"
+#include "public/log_tagged.h"
 
 namespace rflow::service::impl::detail::pull {
 
@@ -61,31 +62,35 @@ void PrintTimingFrameDerivedDeltas(const std::vector<std::string>& parts) {
         !ParseInt64Strict(parts[3], &enc_f) || !ParseInt64Strict(parts[8], &recv_s) ||
         !ParseInt64Strict(parts[9], &recv_f) || !ParseInt64Strict(parts[10], &dec_s) ||
         !ParseInt64Strict(parts[11], &dec_f)) {
-        std::cout << "[TimingDelta] 数值解析失败，跳过推导" << std::endl;
+        RFLOW_LOG_TAG_W("TimingDelta", "数值解析失败，跳过推导");
         return;
     }
 
-    std::cout << "[TimingDelta] 接收端同一本地时钟（可与 decode_*、receive_* 直接相减）:" << std::endl;
-    std::cout << "  first_RTP→decode_start = " << (dec_s - recv_s)
-              << " ms（首包进机 → 解码开始；含网传抖动、抖动缓冲、拼帧与调度）" << std::endl;
-    std::cout << "  last_RTP→decode_start = " << (dec_s - recv_f)
-              << " ms（收齐该帧 → 解码开始；主要反映 JB/解码器前排队）" << std::endl;
-    std::cout << "  decode_start→decode_finish = " << (dec_f - dec_s) << " ms（本帧解码耗时）" << std::endl;
-    std::cout << "  RTP_last−first = " << (recv_f - recv_s) << " ms（该帧多包到达时间跨度）" << std::endl;
+    RFLOW_LOG_TAG_I("TimingDelta", "接收端同一本地时钟（可与 decode_*、receive_* 直接相减）:");
+    RFLOW_LOG_TAG_I("TimingDelta", "  first_RTP→decode_start = %lld ms（首包进机 → 解码开始；含网传抖动、抖动缓冲、拼帧与调度）",
+                    static_cast<long long>(dec_s - recv_s));
+    RFLOW_LOG_TAG_I("TimingDelta", "  last_RTP→decode_start = %lld ms（收齐该帧 → 解码开始；主要反映 JB/解码器前排队）",
+                    static_cast<long long>(dec_s - recv_f));
+    RFLOW_LOG_TAG_I("TimingDelta", "  decode_start→decode_finish = %lld ms（本帧解码耗时）",
+                    static_cast<long long>(dec_f - dec_s));
+    RFLOW_LOG_TAG_I("TimingDelta", "  RTP_last−first = %lld ms（该帧多包到达时间跨度）",
+                    static_cast<long long>(recv_f - recv_s));
 
     if (cap >= 0) {
-        std::cout << "[TimingDelta] 端到端（WebRTC 已把发端时间对齐到可与收端比较时；capture_time_ms>=0）:" << std::endl;
-        std::cout << "  capture→decode_start = " << (dec_s - cap)
-                  << " ms（发端采集 → 收端解码开始；最接近「编码前→解码前」里的采集到解码前）" << std::endl;
+        RFLOW_LOG_TAG_I("TimingDelta", "端到端（WebRTC 已把发端时间对齐到可与收端比较时；capture_time_ms>=0）:");
+        RFLOW_LOG_TAG_I("TimingDelta", "  capture→decode_start = %lld ms（发端采集 → 收端解码开始）",
+                        static_cast<long long>(dec_s - cap));
     } else {
-        std::cout << "[TimingDelta] capture_time_ms<0：发收绝对时间尚未对齐，不能用 decode_start−capture 当整段端到端。"
-                     " 可临时用 first_RTP→decode_start 看「到机后」延迟，或在业务层打统一时钟时间戳。"
-                  << std::endl;
+        RFLOW_LOG_TAG_W(
+            "TimingDelta",
+            "capture_time_ms<0：发收绝对时间尚未对齐，不能用 decode_start−capture 当整段端到端。"
+            " 可临时用 first_RTP→decode_start 看「到机后」延迟，或在业务层打统一时钟时间戳。");
     }
 
-    std::cout << "[TimingDelta] 发端侧相对量（各字段同一偏移下互减仍有意义，与收端大正数不是同一绝对时钟）:" << std::endl;
-    std::cout << "  encode_start−capture = " << (enc_s - cap) << " ms" << std::endl;
-    std::cout << "  encode_finish−encode_start = " << (enc_f - enc_s) << " ms（约等于本帧编码时长）" << std::endl;
+    RFLOW_LOG_TAG_I("TimingDelta", "发端侧相对量（各字段同一偏移下互减仍有意义）:");
+    RFLOW_LOG_TAG_I("TimingDelta", "  encode_start−capture = %lld ms", static_cast<long long>(enc_s - cap));
+    RFLOW_LOG_TAG_I("TimingDelta", "  encode_finish−encode_start = %lld ms（约等于本帧编码时长）",
+                    static_cast<long long>(enc_f - enc_s));
 }
 
 void PrintGoogTimingFrameInfoLabeled(const std::string& raw) {
@@ -109,14 +114,14 @@ void PrintGoogTimingFrameInfoLabeled(const std::string& raw) {
     constexpr size_t kN = sizeof(kFieldZh) / sizeof(kFieldZh[0]);
     const std::vector<std::string> parts = SplitCommaFields(raw);
     if (parts.size() != kN) {
-        std::cout << "[VideoTiming] TimingFrameInfo (raw): " << raw << std::endl;
-        std::cout << "[VideoTiming] 字段数=" << parts.size() << "（期望 " << kN
-                  << "），与当前 libwebrtc 的 ToString 格式不一致，未逐字段标注" << std::endl;
+        RFLOW_LOG_TAG_I("VideoTiming", "TimingFrameInfo (raw): %s", raw.c_str());
+        RFLOW_LOG_TAG_W("VideoTiming", "字段数=%zu（期望 %zu），与当前 libwebrtc ToString 格式不一致",
+                        parts.size(), kN);
         return;
     }
-    std::cout << "[VideoTiming] TimingFrameInfo 逐字段 (goog_timing_frame_info):" << std::endl;
+    RFLOW_LOG_TAG_I("VideoTiming", "TimingFrameInfo 逐字段 (goog_timing_frame_info):");
     for (size_t i = 0; i < kN; ++i) {
-        std::cout << "  [" << (i + 1) << "] " << kFieldZh[i] << " = " << parts[i] << std::endl;
+        RFLOW_LOG_TAG_I("VideoTiming", "  [%zu] %s = %s", i + 1, kFieldZh[i], parts[i].c_str());
     }
     PrintTimingFrameDerivedDeltas(parts);
 }
@@ -139,7 +144,8 @@ void TraceSigTiming(const std::string& msg) {
     if (!SignalingTimingTraceEnabled()) {
         return;
     }
-    std::cout << "[SIG_TIMING][pull] t_us=" << SignalingNowUs() << " " << msg << std::endl;
+    RFLOW_LOG_TAG_I("SIG_TIMING", "[pull] t_us=%lld %s", static_cast<long long>(SignalingNowUs()),
+                    msg.c_str());
 }
 
 bool MediaTimingTraceEnabled() {
@@ -187,32 +193,33 @@ void PrintInboundVideoStats(
         if (!s->kind.has_value() || *s->kind != "video") {
             continue;
         }
-        std::cout << "[InboundVideoStats] id=" << s->id();
+        std::ostringstream line;
+        line << "id=" << s->id();
         if (s->ssrc.has_value()) {
-            std::cout << " ssrc=" << *s->ssrc;
+            line << " ssrc=" << *s->ssrc;
         }
         if (s->frames_decoded.has_value()) {
-            std::cout << " frames_decoded=" << *s->frames_decoded;
+            line << " frames_decoded=" << *s->frames_decoded;
         }
         if (s->frames_received.has_value()) {
-            std::cout << " frames_received=" << *s->frames_received;
+            line << " frames_received=" << *s->frames_received;
         }
         if (s->total_decode_time.has_value()) {
-            std::cout << " total_decode_time_s=" << *s->total_decode_time;
+            line << " total_decode_time_s=" << *s->total_decode_time;
         }
         if (s->total_processing_delay.has_value()) {
-            std::cout << " total_processing_delay_s=" << *s->total_processing_delay;
+            line << " total_processing_delay_s=" << *s->total_processing_delay;
         }
         if (s->jitter_buffer_delay.has_value()) {
-            std::cout << " jitter_buffer_delay_s=" << *s->jitter_buffer_delay;
+            line << " jitter_buffer_delay_s=" << *s->jitter_buffer_delay;
         }
-        std::cout << std::endl;
+        RFLOW_LOG_TAG_I("InboundVideoStats", "%s", line.str().c_str());
         if (s->goog_timing_frame_info.has_value() && !s->goog_timing_frame_info->empty()) {
             PrintGoogTimingFrameInfoLabeled(*s->goog_timing_frame_info);
         } else {
-            std::cout << "[VideoTiming] goog_timing_frame_info: (empty — 对端未带 video-timing 扩展、"
-                         "或尚未选中用于上报的 timing frame；仍可见上行 total_processing_delay 等)"
-                      << std::endl;
+            RFLOW_LOG_TAG_I(
+                "VideoTiming",
+                "goog_timing_frame_info: (empty — 对端未带 video-timing 扩展或尚未选中 timing frame)");
         }
     }
 }

@@ -1,7 +1,7 @@
 #ifndef __RFLOW_CLIENT_STATE_H__
 #define __RFLOW_CLIENT_STATE_H__
 
-#include "common/abi/object_layouts.h"
+#include "abi/object_layouts.h"
 #include "handles.h"
 
 #include <memory>

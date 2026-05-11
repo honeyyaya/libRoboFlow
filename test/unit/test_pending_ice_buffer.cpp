@@ -6,7 +6,7 @@
 #include <thread>
 #include <vector>
 
-#include "core/rtc/pending_ice_buffer.h"
+#include "rtc/pending_ice_buffer.h"
 
 using rflow::core::rtc::PendingIce;
 using rflow::core::rtc::PendingIceBuffer;

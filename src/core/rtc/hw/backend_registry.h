@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "core/rtc/hw/codec_backend_capabilities.h"
+#include "rtc/hw/codec_backend_capabilities.h"
 
 namespace webrtc {
 class VideoEncoderFactory;

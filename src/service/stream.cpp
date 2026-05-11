@@ -18,17 +18,17 @@
 #include "internal/state_ops.h"
 #include "internal/stream_startup_policy.h"
 
-#include "common/base/stream_handle_ops.h"
-#include "common/media/stream_stats.h"
-#include "common/public/last_error_api.h"
-#include "common/public/logger_api.h"
+#include "base/stream_handle_ops.h"
+#include "media/stream_stats.h"
+#include "public/last_error_api.h"
+#include "public/logger_api.h"
 
 #include <algorithm>
 #include <memory>
 #include <string>
 
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
-#  include "service/impl/publisher.h"
+#  include "impl/publisher.h"
 #endif
 
 namespace {
@@ -236,9 +236,8 @@ rflow_err_t librflow_svc_stream_get_stats(librflow_svc_stream_handle_t handle,
     if (pub) {
         collected = pub->CollectStats(ms);
     }
-    if (!collected && ms->fps == 0) {
-        const uint32_t duration_ms = std::max<uint32_t>(1, ms->duration_ms);
-        ms->fps = static_cast<uint32_t>((pushed * 1000ULL) / duration_ms);
+    if (!collected) {
+        rflow::common::media::ApplyStreamStatsFpsFallbackFromFrameCount(*ms, pushed);
     }
 #else
     rflow::common::media::FillStreamStatsBase(*ms, sh->started_at, 0);

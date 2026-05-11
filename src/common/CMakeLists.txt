@@ -19,7 +19,7 @@ target_include_directories(rflow_common
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/common
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

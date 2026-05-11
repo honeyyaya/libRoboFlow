@@ -1,9 +1,9 @@
-#ifndef __RFLOW_SERVICE_RUNTIME_KNOBS_H__
-#define __RFLOW_SERVICE_RUNTIME_KNOBS_H__
+#ifndef RFLOW_SERVICE_DEFAULT_PARAMS_H
+#define RFLOW_SERVICE_DEFAULT_PARAMS_H
 
 namespace rflow::service::internal {
 
-struct RuntimeKnobs {
+struct ServiceDefaultParams {
     int default_fps{30};
     int default_bitrate_kbps{0};
     int default_min_bitrate_kbps{0};
@@ -11,8 +11,8 @@ struct RuntimeKnobs {
     bool prefer_internal_video_source{false};
 };
 
-const RuntimeKnobs& GetRuntimeKnobs();
+const ServiceDefaultParams& GetServiceDefaultParams();
 
 }  // namespace rflow::service::internal
 
-#endif  // __RFLOW_SERVICE_RUNTIME_KNOBS_H__
+#endif  // RFLOW_SERVICE_DEFAULT_PARAMS_H

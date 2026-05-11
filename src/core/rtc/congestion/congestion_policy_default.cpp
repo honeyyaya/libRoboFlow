@@ -1,4 +1,4 @@
-#include "core/rtc/congestion/congestion_policy.h"
+#include "rtc/congestion/congestion_policy.h"
 
 #include <algorithm>
 

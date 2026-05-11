@@ -1,10 +1,10 @@
 #include "rtc_stream_manager.h"
 
-#include "core/rtc/rtc.h"
+#include "rtc/rtc.h"
 #include "rtc_stream/rtc_stream_session.h"
 
-#include "client/internal/handles.h"  // librflow_stream_param_s
-#include "common/public/logger_api.h"
+#include "internal/handles.h"  // librflow_stream_param_s
+#include "public/logger_api.h"
 
 #include <utility>
 #include <vector>

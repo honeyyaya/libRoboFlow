@@ -1,6 +1,6 @@
 #include "rflow/librflow_common.h"
 
-#include "common/base/last_error.h"
+#include "base/last_error.h"
 
 #include <chrono>
 #include <cstdint>

@@ -21,6 +21,7 @@ LibRoboFlow
 │   └── service/
 ├── apps/
 ├── docs/
+│   └── SDK_LAYERING.md   # Client/Service 分层、include 边界、ABI / 静态库说明
 └── scripts/
 ```
 
@@ -51,6 +52,14 @@ cmake --build build -j
 | `RFLOW_SERVICE_ENABLE_WEBRTC_IMPL` | `OFF` | 启用 Service 侧 WebRTC 推流实现；开启后可使用 SDK 内部采集推流，或使用 `librflow_svc_push_video_frame` 走业务侧外部投帧 |
 | `RFLOW_ENABLE_ROCKCHIP_MPP` | `OFF` | 启用 Rockchip MPP 硬件编解码 |
 | `RFLOW_BUILD_APPS` | `OFF` | 构建 `apps/` 下的 demo 和信令服务 |
+| `RFLOW_BUILD_TESTS` | `OFF` | 单元测试 + Python ABI 守门（`ctest` 含 `check_stream_stats_abi`） |
+| `RFLOW_ENABLE_STRUCTURE_CHECK` | `OFF` | 源码分层检查 + stream_stats ABI 脚本（目标 `rflow_structure_check`） |
+
+**分层与 ABI 说明** 见 [`docs/SDK_LAYERING.md`](docs/SDK_LAYERING.md)。
+
+### Android（脚本示例）
+
+Windows 下可用 `scripts/build_android.ps1` 配合本仓 NDK/Qt 路径（脚本内选项可能与桌面默认不同，例如仅编 Client；以脚本参数为准）。更多说明见 [`scripts/README.md`](scripts/README.md)。
 
 ### 打开完整推拉流能力
 
@@ -161,6 +170,6 @@ svc_set_global_config
 仍为 stub 或未完全收敛的部分：
 
 - `librflow_svc_connect` 目前未接入完整云端鉴权 / license 校验流程。
-- `librflow_stream_get_stats` / `librflow_svc_stream_get_stats` 仍返回 `NOT_SUPPORT`。
+- `librflow_stream_get_stats` / `librflow_svc_stream_get_stats` 已实现：合法句柄上会分配 `librflow_stream_stats` 并填入时长、帧计数与 FPS；启用 WebRTC 实现时 Client 侧会补充 RTC `GetStats` 派生的 QoS 字段（`RFLOW_RTC_WEBRTC_PEER_CONNECTION_API`），Service 发布端会经由 `Publisher::CollectStats` 补充推送侧统计（`RFLOW_SVC_WEBRTC_IMPL`）。未启用对应宏时仍可返回基础统计，由接收/推送计数推算 FPS。
 - Client / Service 两侧信令实现尚未完全合并。
 - 线程池仍为内置轻量实现，尚未接第三方 executor。

@@ -1,6 +1,6 @@
-#include "core/rtc/rtc_factory_common.h"
+#include "rtc/rtc_factory_common.h"
 
-#include "core/runtime/runtime_knobs.h"
+#include "runtime/runtime_knobs.h"
 
 #include <memory>
 #include <mutex>
@@ -39,7 +39,7 @@ void EnsureWebrtcFieldTrialsInitialized() {
     std::call_once(g_field_trials_once, []() {
         g_field_trials_storage =
             "WebRTC-VideoFrameTrackingIdAdvertised/Enabled/"
-            "WebRTC-ForcePlayoutDelay/min_ms:0,max_ms:0/";
+            "WebRTC-ForcePlayoutDelay/min_ms:0,max_ms:60/";
         g_field_trials_storage += ZeroPlayoutDelayTrialString();
         g_field_trials_storage +=
             "WebRTC-Pacer-KeyframeFlushing/Enabled/"

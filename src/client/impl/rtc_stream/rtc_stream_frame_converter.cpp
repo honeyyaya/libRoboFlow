@@ -1,7 +1,7 @@
 #include "rtc_stream_frame_converter.h"
 
-#include "common/media/frame_types.h"
-#include "common/public/logger_api.h"
+#include "media/frame_types.h"
+#include "public/logger_api.h"
 
 #include <chrono>
 #include <new>
@@ -12,7 +12,7 @@
 #include "api/video/video_frame_buffer.h"
 
 #if defined(WEBRTC_ANDROID)
-#include "core/platform/android/native_dec_frame_buffer.h"
+#include "platform/android/native_dec_frame_buffer.h"
 #endif
 
 namespace rflow::client::impl {

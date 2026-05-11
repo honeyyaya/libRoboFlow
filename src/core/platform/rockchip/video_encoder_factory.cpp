@@ -1,4 +1,4 @@
-#include "core/platform/rockchip/video_encoder_factory.h"
+#include "platform/rockchip/video_encoder_factory.h"
 
 #include <memory>
 #include <optional>
@@ -15,7 +15,7 @@
 #include "modules/video_coding/codecs/h264/include/h264.h"
 
 // Rockchip MPP H264 encoder; extend with HEVC/AV1 in same backend as needed.
-#include "core/platform/rockchip/h264_encoder.h"
+#include "platform/rockchip/h264_encoder.h"
 
 namespace rflow::rtc::hw::rockchip_mpp {
 

@@ -1,7 +1,7 @@
 #ifndef __RFLOW_CORE_SIGNAL_SESSION_H__
 #define __RFLOW_CORE_SIGNAL_SESSION_H__
 
-#include "core/signal/protocol.h"
+#include "signal/protocol.h"
 
 #include <string_view>
 

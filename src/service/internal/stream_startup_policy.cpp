@@ -1,11 +1,11 @@
-#include "service/internal/stream_startup_policy.h"
-#include "service/internal/runtime_knobs.h"
+#include "internal/stream_startup_policy.h"
+#include "internal/service_default_params.h"
 
-#include "core/rtc/hw/codec_mapping.h"
+#include "rtc/hw/codec_mapping.h"
 #include "rflow/librflow_common.h"
 
 #if defined(RFLOW_SVC_WEBRTC_IMPL)
-#include "service/impl/publisher.h"
+#include "impl/publisher.h"
 #endif
 
 namespace rflow::service::internal {
@@ -14,7 +14,7 @@ ResolvedPublisherStartup ResolvePublisherStartup(const librflow_svc_stream_s& st
                                                 const State& state,
                                                 int32_t stream_idx) {
     ResolvedPublisherStartup out;
-    const RuntimeKnobs& knobs = GetRuntimeKnobs();
+    const ServiceDefaultParams& knobs = GetServiceDefaultParams();
 
     out.width = static_cast<int>(stream.param.has_out_size ? stream.param.out_w
                                                             : (stream.param.has_src_size ? stream.param.src_w : 0));

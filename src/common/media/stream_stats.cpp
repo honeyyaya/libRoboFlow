@@ -1,8 +1,9 @@
 #include "rflow/librflow_common.h"
 
-#include "common/media/frame_types.h"
-#include "common/media/stream_stats.h"
+#include "media/frame_types.h"
+#include "media/stream_stats.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <new>
@@ -26,6 +27,15 @@ void FillStreamStatsBase(librflow_stream_stats_s& stats,
             std::chrono::duration_cast<std::chrono::milliseconds>(now - opened_at).count());
     }
     stats.in_bound_pkts = in_bound_pkts;
+}
+
+void ApplyStreamStatsFpsFallbackFromFrameCount(librflow_stream_stats_s& stats,
+                                               uint64_t frame_count) {
+    if (stats.fps != 0) {
+        return;
+    }
+    const uint32_t duration_ms = std::max<uint32_t>(1, stats.duration_ms);
+    stats.fps = static_cast<uint32_t>((frame_count * 1000ULL) / duration_ms);
 }
 
 }  // namespace rflow::common::media
@@ -60,6 +70,14 @@ uint32_t librflow_stream_stats_get_jitter_ms(librflow_stream_stats_t stats) { re
 uint32_t librflow_stream_stats_get_freeze_count(librflow_stream_stats_t stats) { return stats ? stats->freeze_count : 0; }
 uint32_t librflow_stream_stats_get_decode_fail_count(librflow_stream_stats_t stats) {
     return stats ? stats->decode_fail_count : 0;
+}
+
+uint32_t librflow_stream_stats_get_jitter_buffer_delay_ms(librflow_stream_stats_t stats) {
+    return stats ? stats->jitter_buffer_delay_ms : 0;
+}
+
+uint32_t librflow_stream_stats_get_jitter_min_delay_ms(librflow_stream_stats_t stats) {
+    return stats ? stats->jitter_min_delay_ms : 0;
 }
 
 }  // extern "C"

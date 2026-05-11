@@ -1,9 +1,9 @@
 #include "signaling/signaling_client.h"
 
-#include "common/base/trace_switches.h"
-#include "common/public/logger_api.h"
-#include "core/signal/protocol.h"
-#include "core/signal/tcp_session.h"
+#include "base/trace_switches.h"
+#include "public/logger_api.h"
+#include "signal/protocol.h"
+#include "signal/tcp_session.h"
 
 #include <chrono>
 #include <utility>

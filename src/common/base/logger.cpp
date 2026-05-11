@@ -1,6 +1,6 @@
 #include "rflow/librflow_common.h"
 
-#include "common/base/logger.h"
+#include "base/logger.h"
 
 #include <atomic>
 #include <cstdarg>

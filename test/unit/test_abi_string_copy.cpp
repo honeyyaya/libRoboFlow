@@ -11,7 +11,7 @@
 #include <cstring>
 #include <string>
 
-#include "common/base/abi_string_copy.h"
+#include "base/abi_string_copy.h"
 
 using rflow::common::base::CopyOutString;
 

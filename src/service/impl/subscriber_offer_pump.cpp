@@ -2,7 +2,7 @@
 
 #include <utility>
 
-#include "core/thread/thread_pool.h"
+#include "thread/thread_pool.h"
 
 namespace rflow::service::impl {
 

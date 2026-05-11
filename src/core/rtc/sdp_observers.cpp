@@ -1,4 +1,4 @@
-#include "core/rtc/sdp_observers.h"
+#include "rtc/sdp_observers.h"
 
 #include <utility>
 

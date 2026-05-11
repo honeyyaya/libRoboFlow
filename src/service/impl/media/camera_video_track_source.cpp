@@ -6,9 +6,9 @@
 #include "api/video/i420_buffer.h"
 #include "api/video/nv12_buffer.h"
 #include "api/video/video_frame.h"
-#include "common/base/env_reader.h"
-#include "common/base/trace_switches.h"
-#include "common/public/log_tagged.h"
+#include "base/env_reader.h"
+#include "base/trace_switches.h"
+#include "public/log_tagged.h"
 #include "common_video/libyuv/include/webrtc_libyuv.h"
 #include "media/zero_copy_pipeline_policy.h"
 #include "modules/video_capture/video_capture_factory.h"
@@ -19,8 +19,8 @@
 
 #if defined(WEBRTC_LINUX) && defined(__linux__)
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-#include "core/platform/rockchip/native_dec_frame_buffer.h"
-#include "core/platform/rockchip/mjpeg_decoder.h"
+#include "platform/rockchip/native_dec_frame_buffer.h"
+#include "platform/rockchip/mjpeg_decoder.h"
 #endif
 #include <cerrno>
 #include <fcntl.h>
@@ -35,7 +35,7 @@
 
 #include <chrono>
 #include <deque>
-#include <iostream>
+#include <sstream>
 #include <cstdlib>
 #include <atomic>
 #endif
@@ -62,7 +62,7 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
             CPU_SET(cpu, &cpuset);
             const int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
             if (rc != 0) {
-                std::cerr << "[ThreadTune] " << role << " setaffinity cpu=" << cpu << " failed rc=" << rc << std::endl;
+                RFLOW_LOG_TAG_E("ThreadTune", "%s setaffinity cpu=%d failed rc=%d", role, cpu, rc);
             }
         }
     }
@@ -80,16 +80,14 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
         sp.sched_priority = rr_prio;
         const int rc = pthread_setschedparam(pthread_self(), SCHED_RR, &sp);
         if (rc != 0) {
-            std::cerr << "[ThreadTune] " << role << " setschedparam rr prio=" << rr_prio << " failed rc=" << rc
-                      << std::endl;
+            RFLOW_LOG_TAG_E("ThreadTune", "%s setschedparam rr prio=%d failed rc=%d", role, rr_prio, rc);
         }
         return;
     }
 
     const int nice_val = rflow::common::util::ReadEnvIntInRange("RFLOW_MEDIA_THREAD_NICE", -8, -20, 19);
     if (setpriority(PRIO_PROCESS, 0, nice_val) != 0) {
-        std::cerr << "[ThreadTune] " << role << " setpriority nice=" << nice_val << " failed errno=" << errno
-                  << std::endl;
+        RFLOW_LOG_TAG_E("ThreadTune", "%s setpriority nice=%d failed errno=%d", role, nice_val, errno);
     }
 }
 
@@ -108,11 +106,12 @@ void LogMjpegDecodeTiming(const char* tag, int64_t before_us, int64_t after_us) 
         return;
     }
     const double ms = static_cast<double>(after_us - before_us) / 1000.0;
-    std::cout << "[MJPEG decode " << tag << "] frame#" << n << " before_us=" << before_us
-              << " after_us=" << after_us << " duration_ms=" << ms << std::endl;
+    RFLOW_LOG_TAG_I("MJPEG_DECODE", "[%s] frame#%u before_us=%lld after_us=%lld duration_ms=%f", tag,
+                    static_cast<unsigned>(n), static_cast<long long>(before_us), static_cast<long long>(after_us), ms);
+
 }
 
-}  // namespace
+}  // anonymous namespace inside WEBRTC_LINUX
 
 #endif  // WEBRTC_LINUX && __linux__
 
@@ -494,9 +493,11 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
         if (direct_cap_w_ == width && direct_cap_h_ == height) {
             fmt_ok = true;
         } else {
-            std::cerr << "[CameraV4L2] need capture " << width << "x" << height << " per config, but device is "
-                      << direct_cap_w_ << "x" << direct_cap_h_
-                      << " (VIDIOC_S_FMT unavailable or EBUSY). Match WIDTH/HEIGHT to the device or release the camera.\n";
+            RFLOW_LOG_TAG_E(
+                "CameraV4L2",
+                "need capture %dx%d per config, but device is %dx%d (VIDIOC_S_FMT unavailable or EBUSY). Match "
+                "WIDTH/HEIGHT to the device or release the camera.",
+                width, height, direct_cap_w_, direct_cap_h_);
             close(direct_fd_);
             direct_fd_ = -1;
             return false;
@@ -508,10 +509,12 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
         g.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         int e = errno;
         if (ioctl(direct_fd_, VIDIOC_G_FMT, &g) == 0) {
-            std::cerr << "[CameraV4L2] cannot set capture " << width << "x" << height << " (device reports "
-                      << g.fmt.pix.width << "x" << g.fmt.pix.height << ") errno=" << e << " (" << strerror(e) << ")\n";
+            RFLOW_LOG_TAG_E("CameraV4L2",
+                            "cannot set capture %dx%d (device reports %ux%u) errno=%d (%s)", width, height,
+                            static_cast<unsigned>(g.fmt.pix.width), static_cast<unsigned>(g.fmt.pix.height), e,
+                            strerror(e));
         } else {
-            std::cerr << "[CameraV4L2] VIDIOC_S_FMT failed for MJPEG/YUYV errno=" << e << " (" << strerror(e) << ")\n";
+            RFLOW_LOG_TAG_E("CameraV4L2", "VIDIOC_S_FMT failed for MJPEG/YUYV errno=%d (%s)", e, strerror(e));
         }
         close(direct_fd_);
         direct_fd_ = -1;
@@ -584,17 +587,16 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
         }
         if (exp_ok == nbuf) {
             if (zc_policy.use_v4l2_ext_dmabuf) {
-                std::cout << "[CameraV4L2] VIDIOC_EXPBUF: " << nbuf
-                          << " dma-buf fd(s) → MPP JPEG EXT_DMA import\n";
+                RFLOW_LOG_TAG_I("CameraV4L2", "VIDIOC_EXPBUF: %u dma-buf fd(s) → MPP JPEG EXT_DMA import", nbuf);
             } else {
-                std::cout << "[CameraV4L2] VIDIOC_EXPBUF: " << nbuf
-                          << " dma-buf fd(s) → RGA copy to MPP input (WEBRTC_MJPEG_RGA_TO_MPP)\n";
+                RFLOW_LOG_TAG_I("CameraV4L2",
+                                "VIDIOC_EXPBUF: %u dma-buf fd(s) → RGA copy to MPP input (WEBRTC_MJPEG_RGA_TO_MPP)",
+                                nbuf);
             }
         } else if (exp_ok > 0) {
-            std::cout << "[CameraV4L2] VIDIOC_EXPBUF: " << exp_ok << "/" << nbuf
-                      << " (per-buffer dma or memcpy)\n";
+            RFLOW_LOG_TAG_I("CameraV4L2", "VIDIOC_EXPBUF: %u/%u (per-buffer dma or memcpy)", exp_ok, nbuf);
         } else {
-            std::cout << "[CameraV4L2] VIDIOC_EXPBUF unsupported; MPP JPEG uses memcpy from mmap\n";
+            RFLOW_LOG_TAG_I("CameraV4L2", "VIDIOC_EXPBUF unsupported; MPP JPEG uses memcpy from mmap");
         }
     }
     }  // zc_policy scope
@@ -641,7 +643,8 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
             dec->SetPipelineV4l2ExtDmabuf(v4l2_ext_dma_config_);
             dec->SetPipelineRgaToMpp(mjpeg_rga_config_);
             mjpeg_mpp_ = std::move(dec);
-            std::cout << "[CameraV4L2] MJPEG: Rockchip MPP decode -> NV12 (zero I420/libyuv chroma conversion in HW encode path)\n";
+            RFLOW_LOG_TAG_I(
+                "CameraV4L2", "MJPEG: Rockchip MPP decode -> NV12 (zero I420/libyuv chroma conversion in HW encode path)");
         }
     }
 #endif
@@ -651,17 +654,18 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
         decode_thread_ = std::thread([this]() { DecodeWorkerThreadMain(); });
     }
     direct_thread_ = std::thread([this]() { DirectCaptureThreadMain(); });
-    std::cout << "[CameraV4L2] Direct capture " << device_path << " " << direct_cap_w_ << "x" << direct_cap_h_
-              << " @" << negotiated_capture_fps_ << "fps fourcc=0x" << std::hex << direct_pixfmt_ << std::dec
-              << " mmap_bufs=" << nbuf << " poll_timeout_ms=" << v4l2_poll_timeout_ms_;
+    std::ostringstream cap_line;
+    cap_line << "Direct capture " << device_path << " " << direct_cap_w_ << "x" << direct_cap_h_
+             << " @" << negotiated_capture_fps_ << "fps fourcc=0x" << std::hex << direct_pixfmt_ << std::dec
+             << " mmap_bufs=" << nbuf << " poll_timeout_ms=" << v4l2_poll_timeout_ms_;
     if (direct_pixfmt_ == static_cast<uint32_t>(V4L2_PIX_FMT_MJPEG)) {
         if (mjpeg_decode_inline_) {
-            std::cout << " mjpeg_inline_decode=1";
+            cap_line << " mjpeg_inline_decode=1";
         } else {
-            std::cout << " mjpeg_deferred_qbuf=1";
+            cap_line << " mjpeg_deferred_qbuf=1";
         }
     }
-    std::cout << std::endl;
+    RFLOW_LOG_TAG_I("CameraV4L2", "%s", cap_line.str().c_str());
     return true;
 }
 
@@ -813,9 +817,10 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
         static std::atomic<unsigned> conv_fail_n{0};
         const unsigned n = ++conv_fail_n;
         if ((n <= 5u) || ((n % 30u) == 0u)) {
-            std::cerr << "[CameraV4L2] frame convert failed pixfmt=0x" << std::hex << direct_pixfmt_ << std::dec
-                      << " bytes=" << bytesused << " size=" << w << "x" << h << " conv_ret=" << conv_ret
-                      << " (frame dropped)" << std::endl;
+            RFLOW_LOG_TAG_E(
+                "CameraV4L2",
+                "frame convert failed pixfmt=0x%x bytes=%zu size=%dx%d conv_ret=%d (frame dropped)",
+                static_cast<unsigned>(direct_pixfmt_), static_cast<size_t>(bytesused), w, h, conv_ret);
         }
     }
     if (ok && log_libyuv_mjpeg) {
@@ -850,7 +855,8 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                                      .count();
             const unsigned n = ++poll_log_counter;
             if ((n % 90u) == 0u && poll_ms > 3.0) {
-                std::cout << "[Latency] V4L2 poll→readable wait_ms=" << poll_ms << " (frame#" << n << ")\n";
+                RFLOW_LOG_TAG_I("Latency", "V4L2 poll→readable wait_ms=%f (frame#%u)", poll_ms,
+                                static_cast<unsigned>(n));
             }
         }
         if (pr <= 0) {
@@ -886,7 +892,8 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                     const unsigned n = ++inline_counter;
                     if ((n % 30u) == 0u) {
                         const double ms = static_cast<double>(webrtc::TimeMicros() - t0_us) / 1000.0;
-                        std::cout << "[Latency] MJPEG inline decode+OnFrame ms=" << ms << " (sample#" << n << ")\n";
+                        RFLOW_LOG_TAG_I("Latency", "MJPEG inline decode+OnFrame ms=%f (sample#%u)", ms,
+                                        static_cast<unsigned>(n));
                     }
                 }
                 ioctl(direct_fd_, VIDIOC_QBUF, &buf);

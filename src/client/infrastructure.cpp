@@ -1,10 +1,10 @@
 #include "internal/infrastructure.h"
 
-#include "core/runtime/infra_lifecycle.h"
-#include "core/rtc/rtc.h"
+#include "runtime/infra_lifecycle.h"
+#include "rtc/rtc.h"
 
-#include "common/public/last_error_api.h"
-#include "common/public/logger_api.h"
+#include "public/last_error_api.h"
+#include "public/logger_api.h"
 
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
 #  include "impl/rtc_stream/rtc_stream_manager.h"

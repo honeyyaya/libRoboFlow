@@ -12,7 +12,7 @@
 #include <string>
 #include <string_view>
 
-#include "core/signal/protocol.h"
+#include "signal/protocol.h"
 #include "rflow/librflow_common.h"
 
 using namespace rflow::signal;

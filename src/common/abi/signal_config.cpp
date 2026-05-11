@@ -1,7 +1,7 @@
 #include "rflow/librflow_common.h"
 
-#include "common/abi/object_layouts.h"
-#include "common/base/abi_string_copy.h"
+#include "abi/object_layouts.h"
+#include "base/abi_string_copy.h"
 
 #include <new>
 

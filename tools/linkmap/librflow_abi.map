@@ -1,0 +1,7 @@
+/* ELF shared library: export only stable C ABI (librflow_*). All other symbols local. */
+LIBRFLOW_ABI_1 {
+global:
+	librflow_*;
+local:
+	*;
+};

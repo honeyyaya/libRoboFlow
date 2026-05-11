@@ -1,7 +1,7 @@
 #ifndef __RFLOW_CORE_BASE_LOGGING_H__
 #define __RFLOW_CORE_BASE_LOGGING_H__
 
-#include "common/public/logger_api.h"
+#include "public/logger_api.h"
 
 // Core layer logging facade: keep core-side call sites decoupled from
 // common logger naming/details.

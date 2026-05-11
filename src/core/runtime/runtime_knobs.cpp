@@ -1,7 +1,7 @@
-#include "core/runtime/runtime_knobs.h"
+#include "runtime/runtime_knobs.h"
 
-#include "common/base/env_reader.h"
-#include "core/base/logging.h"
+#include "base/env_reader.h"
+#include "base/logging.h"
 
 #include <atomic>
 #include <cctype>
@@ -60,18 +60,21 @@ constexpr KnobSpec kKnobTable[] = {
      "WebRTC degradation_preference: maintain_framerate / maintain_resolution / balanced / disabled"},
 
     // ---------- RTC factory ----------------------------------------------
-    {"RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 1, 0, 20, "",
+    {"RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 2, 0, 20, "",
      "JitterBuffer playout 最小 pacing；0=极致低时延"},
-    {"RFLOW_MAX_DECODE_QUEUE_SIZE", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 6, 4, 16, "",
+    {"RFLOW_MAX_DECODE_QUEUE_SIZE", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 3, 2, 16, "",
      "解码队列上限；越小越低时延但更易丢帧"},
     {"RFLOW_ENABLE_DECODE_QUEUE_GUARD", nullptr, KnobGroup::kRtcFactory, KnobKind::kBool, 0, 0, 1, "",
      "启用解码队列的 guard 自动丢帧"},
     {"RFLOW_DECODE_QUEUE_GUARD_CAP", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 6, 4, 12, "",
      "decode queue guard 容量"},
-    {"RFLOW_ENABLE_FLEXFEC", nullptr, KnobGroup::kRtcFactory, KnobKind::kBool, 0, 0, 1, "",
-     "启用 FlexFEC 前向纠错"},
+    {"RFLOW_ENABLE_FLEXFEC", nullptr, KnobGroup::kRtcFactory, KnobKind::kBool, 1, 0, 1, "",
+     "启用 FlexFEC 前向纠错（默认开；设 0/n/f 关闭）"},
     {"RFLOW_FIELD_TRIALS_APPEND", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
      "WebRTC FieldTrials 字符串附加项（实验功能开关）"},
+    {"RFLOW_SYNC_GETSTATS_TIMEOUT_MS", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 1500, 200, 60000,
+     "",
+     "同步阻塞等待 PeerConnection GetStats 回调超时(ms)，用于拉流/推流 QoS CollectStats"},
 
     // ---------- Media trace ----------------------------------------------
     {"WEBRTC_LATENCY_TRACE", nullptr, KnobGroup::kMediaTrace, KnobKind::kBool, 0, 0, 1, "",

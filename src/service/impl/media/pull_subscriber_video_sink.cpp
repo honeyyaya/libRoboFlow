@@ -1,12 +1,12 @@
 #include "media/pull_subscriber_video_sink.h"
 
 #include <atomic>
-#include <iostream>
 
 #include "api/video/video_frame_buffer.h"
-#include "core/runtime/runtime_knobs.h"
+#include "runtime/runtime_knobs.h"
 #include "libyuv/convert.h"
 #include "media/pull_subscriber_internals.h"
+#include "public/log_tagged.h"
 #include "rtc_base/time_utils.h"
 
 namespace rflow::service::impl::observers {
@@ -45,7 +45,7 @@ void VideoSink::OnFrame(const webrtc::VideoFrame& frame) {
         static unsigned frame_count = 0;
         unsigned n = ++frame_count;
         if (n == 1 || n <= 5 || n % 30 == 0) {
-            std::cout << "[VideoSink] OnFrame #" << n << " (skip ARGB)" << std::endl;
+            RFLOW_LOG_TAG_I("VideoSink", "OnFrame #%u (skip ARGB)", static_cast<unsigned>(n));
         }
         const int64_t t_callback_done_us = e2e_trace ? webrtc::TimeMicros() : 0;
         on_frame_(nullptr, w, h, 0, frame.id(), t_callback_done_us);
@@ -56,18 +56,23 @@ void VideoSink::OnFrame(const webrtc::VideoFrame& frame) {
             static std::atomic<unsigned> media_sink_n{0};
             const unsigned n_trace = ++media_sink_n;
             if ((n_trace % MediaTimingTraceEveryN()) == 0u) {
-                std::cout << "[MEDIA_TIMING][sink] t_us=" << t_now_us << " trace_id="
-                          << static_cast<unsigned>(frame.id()) << " rtp_ts=" << frame.rtp_timestamp()
-                          << " event=onframe_skip_argb t_callback_done_us=" << t_callback_done_us
-                          << std::endl;
+                RFLOW_LOG_TAG_I(
+                    "MEDIA_TIMING", "[sink] t_us=%lld trace_id=%u rtp_ts=%u event=onframe_skip_argb "
+                                    "t_callback_done_us=%lld",
+                    static_cast<long long>(t_now_us),
+                    static_cast<unsigned>(frame.id()),
+                    frame.rtp_timestamp(),
+                    static_cast<long long>(t_callback_done_us));
             }
         }
         if (e2e_trace) {
-            std::cout << "[E2E_RX] rtp_ts=" << frame.rtp_timestamp() << " trace_id="
-                      << static_cast<unsigned>(frame.id()) << " frame_id="
-                      << static_cast<unsigned>(frame.id()) << " t_sink_us=" << t_sink_enter_us
-                      << " wall_utc_ms=" << wall_sink_utc_ms << " t_argb_done_us=" << t_fast_done_us
-                      << " t_callback_done_us=" << t_callback_done_us << std::endl;
+            RFLOW_LOG_TAG_I(
+                "E2E_RX", "rtp_ts=%u trace_id=%u frame_id=%u t_sink_us=%lld wall_utc_ms=%lld "
+                          "t_argb_done_us=%lld t_callback_done_us=%lld",
+                frame.rtp_timestamp(), static_cast<unsigned>(frame.id()),
+                static_cast<unsigned>(frame.id()), static_cast<long long>(t_sink_enter_us),
+                static_cast<long long>(wall_sink_utc_ms), static_cast<long long>(t_fast_done_us),
+                static_cast<long long>(t_callback_done_us));
         }
         return;
     }
@@ -83,7 +88,7 @@ void VideoSink::OnFrame(const webrtc::VideoFrame& frame) {
     static unsigned frame_count = 0;
     unsigned n = ++frame_count;
     if (n == 1 || n <= 5 || n % 30 == 0) {
-        std::cout << "[VideoSink] OnFrame #" << n << std::endl;
+        RFLOW_LOG_TAG_I("VideoSink", "OnFrame #%u", static_cast<unsigned>(n));
     }
     const int64_t t_callback_done_us = e2e_trace ? webrtc::TimeMicros() : 0;
     on_frame_(argb_.data(), w, h, stride, frame.id(), t_callback_done_us);
@@ -94,19 +99,25 @@ void VideoSink::OnFrame(const webrtc::VideoFrame& frame) {
     if (MediaTimingTraceEnabled()) {
         static std::atomic<unsigned> media_sink_n{0};
         const unsigned n_trace = ++media_sink_n;
-        if ((n_trace % MediaTimingTraceEveryN()) == 0u) {
-            std::cout << "[MEDIA_TIMING][sink] t_us=" << t_now_us << " trace_id="
-                      << static_cast<unsigned>(frame.id()) << " rtp_ts=" << frame.rtp_timestamp()
-                      << " event=onframe_argb_done t_argb_done_us=" << t_argb_done_us
-                      << " t_callback_done_us=" << t_callback_done_us << std::endl;
-        }
+            if ((n_trace % MediaTimingTraceEveryN()) == 0u) {
+                RFLOW_LOG_TAG_I(
+                    "MEDIA_TIMING", "[sink] t_us=%lld trace_id=%u rtp_ts=%u event=onframe_argb_done "
+                                    "t_argb_done_us=%lld t_callback_done_us=%lld",
+                    static_cast<long long>(t_now_us),
+                    static_cast<unsigned>(frame.id()),
+                    frame.rtp_timestamp(),
+                    static_cast<long long>(t_argb_done_us),
+                    static_cast<long long>(t_callback_done_us));
+            }
     }
     if (e2e_trace) {
-        std::cout << "[E2E_RX] rtp_ts=" << frame.rtp_timestamp() << " trace_id="
-                  << static_cast<unsigned>(frame.id()) << " frame_id="
-                  << static_cast<unsigned>(frame.id()) << " t_sink_us=" << t_sink_enter_us
-                  << " wall_utc_ms=" << wall_sink_utc_ms << " t_argb_done_us=" << t_argb_done_us
-                  << " t_callback_done_us=" << t_callback_done_us << std::endl;
+        RFLOW_LOG_TAG_I(
+            "E2E_RX", "rtp_ts=%u trace_id=%u frame_id=%u t_sink_us=%lld wall_utc_ms=%lld t_argb_done_us=%lld "
+                      "t_callback_done_us=%lld",
+            frame.rtp_timestamp(), static_cast<unsigned>(frame.id()),
+            static_cast<unsigned>(frame.id()), static_cast<long long>(t_sink_enter_us),
+            static_cast<long long>(wall_sink_utc_ms), static_cast<long long>(t_argb_done_us),
+            static_cast<long long>(t_callback_done_us));
     }
 }
 

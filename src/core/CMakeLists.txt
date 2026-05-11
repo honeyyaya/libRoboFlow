@@ -19,7 +19,7 @@ add_library(rflow_core_runtime OBJECT runtime/infra_lifecycle.cpp)
 target_include_directories(rflow_core_runtime
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/common
         ${CMAKE_SOURCE_DIR}/src/core
 )
 target_link_libraries(rflow_core_runtime PRIVATE rflow_warnings)
@@ -32,7 +32,9 @@ add_library(rflow_signal_server OBJECT signal/server.cpp)
 target_include_directories(rflow_signal_server
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/src
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${CMAKE_SOURCE_DIR}/src/common
 )
 target_link_libraries(rflow_signal_server PRIVATE rflow_warnings)
 
@@ -49,6 +51,10 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
         rtc/rtc_factory_common.cpp
         rtc/peer_connection_factory.cpp
         rtc/peer_connection_factory_deps.cpp
+        rtc/inbound_video_stats_aggregation.cpp
+        rtc/outbound_video_stats_aggregation.cpp
+        rtc/ice_nominated_pair_rtt.cpp
+        rtc/rtc_sync_stats.cpp
         rtc/sdp_observers.cpp
         rtc/stats_observer.cpp
         rtc/hw/backend_registry.cpp
@@ -132,7 +138,8 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
         target_include_directories(${_rtc_target}
             PUBLIC
                 ${CMAKE_SOURCE_DIR}/include
-                ${CMAKE_SOURCE_DIR}/src
+                ${CMAKE_SOURCE_DIR}/src/common
+                ${CMAKE_SOURCE_DIR}/src/core
             PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/rtc
         )
@@ -178,7 +185,7 @@ endif()
 target_include_directories(rflow_core
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/common
         ${CMAKE_SOURCE_DIR}/src/core
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -187,7 +194,8 @@ target_include_directories(rflow_core
 target_include_directories(rflow_rtc_stub
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${CMAKE_SOURCE_DIR}/src/common
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/rtc
 )

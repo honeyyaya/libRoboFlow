@@ -1,7 +1,7 @@
 #include "rflow/Client/librflow_client_api.h"
 
 #include "internal/handles.h"
-#include "common/public/object_access_api.h"
+#include "public/object_access_api.h"
 
 extern "C" {
 

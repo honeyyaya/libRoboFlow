@@ -16,9 +16,10 @@ add_executable(signaling_server signaling_server.cpp
     $<TARGET_OBJECTS:rflow_core>
     $<TARGET_OBJECTS:rflow_signal_server>
 )
-target_include_directories(signaling_server PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/src
+target_include_directories(signaling_server     PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${CMAKE_SOURCE_DIR}/src/common
 )
 target_link_libraries(signaling_server PRIVATE rflow_warnings Threads::Threads)
 

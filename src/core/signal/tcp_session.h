@@ -14,7 +14,7 @@
 #ifndef __RFLOW_CORE_SIGNAL_TCP_SESSION_H__
 #define __RFLOW_CORE_SIGNAL_TCP_SESSION_H__
 
-#include "core/signal/session.h"
+#include "signal/session.h"
 
 #include <atomic>
 #include <memory>

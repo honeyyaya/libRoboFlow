@@ -14,7 +14,7 @@
 
 #include "thread_pool.h"
 
-#include "core/base/logging.h"
+#include "base/logging.h"
 
 #include <atomic>
 #include <chrono>

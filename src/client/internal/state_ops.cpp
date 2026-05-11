@@ -1,12 +1,12 @@
-#include "client/internal/state_ops.h"
+#include "internal/state_ops.h"
 
-#include "common/base/lifecycle_fsm.h"
-#include "common/base/stream_handle_ops.h"
+#include "base/lifecycle_fsm.h"
+#include "base/stream_handle_ops.h"
 #include "rflow/librflow_common.h"
 
 #if defined(RFLOW_RTC_WEBRTC_PEER_CONNECTION_API)
-#include "client/impl/rtc_stream/rtc_stream_manager.h"
-#include "client/impl/rtc_stream/rtc_stream_session.h"
+#include "impl/rtc_stream/rtc_stream_manager.h"
+#include "impl/rtc_stream/rtc_stream_session.h"
 #endif
 
 namespace rflow::client::internal {

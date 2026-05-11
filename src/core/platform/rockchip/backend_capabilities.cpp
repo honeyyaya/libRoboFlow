@@ -1,4 +1,4 @@
-#include "core/platform/rockchip/backend_capabilities.h"
+#include "platform/rockchip/backend_capabilities.h"
 
 namespace rflow::rtc::hw::rockchip_mpp {
 

@@ -1,8 +1,8 @@
-#include "service/internal/state_ops.h"
+#include "internal/state_ops.h"
 
-#include "common/base/lifecycle_fsm.h"
-#include "common/base/stream_handle_ops.h"
-#include "core/runtime/infra_lifecycle.h"
+#include "base/lifecycle_fsm.h"
+#include "base/stream_handle_ops.h"
+#include "runtime/infra_lifecycle.h"
 
 namespace rflow::service::internal {
 

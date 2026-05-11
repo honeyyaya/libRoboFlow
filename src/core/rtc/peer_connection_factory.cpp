@@ -1,15 +1,13 @@
 #include "rtc.h"
 
-#include "core/rtc/rtc_factory_common.h"
-#include "core/rtc/hw/backend_registry.h"
+#include "rtc/peer_connection_factory_deps.h"
+#include "rtc/rtc_factory_common.h"
 
-#include "core/base/logging.h"
+#include "base/logging.h"
 
 #include <memory>
 #include <utility>
 
-#include "api/audio_codecs/builtin_audio_decoder_factory.h"
-#include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/create_peerconnection_factory.h"
 #include "api/peer_connection_interface.h"
 #include "rtc_base/thread.h"
@@ -73,25 +71,21 @@ bool initialize() {
         return false;
     }
 
-    rflow::rtc::hw::VideoBackendPreferences decoder_prefs;
-#if defined(WEBRTC_ANDROID)
-    decoder_prefs.decoder_backend = rflow::rtc::hw::VideoCodecBackend::kAndroidMediaCodec;
-#else
-    decoder_prefs.decoder_backend = rflow::rtc::hw::VideoCodecBackend::kBuiltin;
-#endif
-    auto video_decoder_factory = rflow::rtc::hw::CreatePreferredVideoDecoderFactory(decoder_prefs);
+    webrtc::PeerConnectionFactoryDependencies deps;
+    deps.network_thread   = s.network.get();
+    deps.worker_thread    = s.worker.get();
+    deps.signaling_thread = s.signaling.get();
+    deps.adm              = std::move(adm);
 
-    s.factory = webrtc::CreatePeerConnectionFactory(
-        s.network.get(), s.worker.get(), s.signaling.get(),
-        adm,
-        webrtc::CreateBuiltinAudioEncoderFactory(),
-        webrtc::CreateBuiltinAudioDecoderFactory(),
-        /*video_encoder_factory=*/nullptr,
-        std::move(video_decoder_factory),
-        /*audio_mixer=*/nullptr,
-        /*audio_processing=*/nullptr);
+    rflow::rtc::PeerConnectionFactoryMediaOptions media_opts;
+#if defined(WEBRTC_ANDROID)
+    media_opts.decoder_backend = rflow::rtc::VideoCodecBackendPreference::kAndroidMediaCodec;
+#endif
+    rflow::rtc::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
+
+    s.factory = webrtc::CreateModularPeerConnectionFactory(std::move(deps));
     if (!s.factory) {
-        RFLOW_CORE_LOGE("[rtc] CreatePeerConnectionFactory failed");
+        RFLOW_CORE_LOGE("[rtc] CreateModularPeerConnectionFactory failed");
         StopThreads(s);
         return false;
     }

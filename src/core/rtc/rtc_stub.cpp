@@ -1,6 +1,6 @@
 #include "rtc.h"
 
-#include "core/base/logging.h"
+#include "base/logging.h"
 
 namespace rflow::rtc {
 

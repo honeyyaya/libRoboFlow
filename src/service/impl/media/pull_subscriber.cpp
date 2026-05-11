@@ -1,10 +1,10 @@
 #include "media/pull_subscriber.h"
 
-#include "common/public/log_tagged.h"
-#include "core/rtc/peer_connection_factory_deps.h"
-#include "core/rtc/sdp_observers.h"
-#include "core/rtc/stats_observer.h"
-#include "core/runtime/runtime_knobs.h"
+#include "public/log_tagged.h"
+#include "rtc/peer_connection_factory_deps.h"
+#include "rtc/sdp_observers.h"
+#include "rtc/stats_observer.h"
+#include "runtime/runtime_knobs.h"
 #include "media/pull_subscriber_internals.h"
 #include "media/pull_subscriber_video_sink.h"
 #include "signaling/signaling_client.h"
@@ -37,7 +37,6 @@
 #include <atomic>
 #include <functional>
 #include <chrono>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -217,7 +216,7 @@ public:
                     }
                     TraceSigTiming("CreateAnswer success sdp_len=" + std::to_string(sdp.size()));
                     if (rflow::core::runtime::ReadBool("WEBRTC_DUMP_LOCAL_ANSWER")) {
-                        std::cout << "\n--- Local answer SDP ---\n" << sdp << "\n--- End ---\n" << std::flush;
+                        RFLOW_LOG_TAG_I("PullSubscriber", "\n--- Local answer SDP ---\n%s\n--- End ---", sdp.c_str());
                     }
                     auto set_local = rflow::core::rtc::MakeSetLocalDescObserver(
                             [this, sdp](webrtc::RTCError err) {
@@ -305,7 +304,7 @@ public:
         if (!candidate->ToString(&sdp)) {
             return;
         }
-        std::cout << "[PullSubscriber] Send ICE candidate mid=" << candidate->sdp_mid() << std::endl;
+        RFLOW_LOG_TAG_I("PullSubscriber", "Send ICE candidate mid=%s", candidate->sdp_mid().c_str());
         signaling_->SendIceCandidate(candidate->sdp_mid(), candidate->sdp_mline_index(), sdp);
     }
 
@@ -425,11 +424,13 @@ private:
     RxPathStats stats_{};
 
     void TracePathStat(const char* code, const std::string& details) const {
-        std::cout << "[PATH_STAT][rx] t_us=" << SignalingNowUs() << " code=" << code;
-        if (!details.empty()) {
-            std::cout << " " << details;
+        if (details.empty()) {
+            RFLOW_LOG_TAG_I("PATH_STAT", "[rx] t_us=%lld code=%s", static_cast<long long>(SignalingNowUs()),
+                            code);
+        } else {
+            RFLOW_LOG_TAG_I("PATH_STAT", "[rx] t_us=%lld code=%s %s", static_cast<long long>(SignalingNowUs()),
+                            code, details.c_str());
         }
-        std::cout << std::endl;
     }
 
     void ReportPathError(const char* code, const std::string& msg) {
@@ -500,7 +501,7 @@ private:
         if (!same_track) {
             ++stats_.attach_effective;
             video_track_->AddOrUpdateSink(video_sink_.get(), webrtc::VideoSinkWants());
-            std::cout << "[PullSubscriber] Video track attached" << std::endl;
+            RFLOW_LOG_TAG_I("PullSubscriber", "Video track attached");
             TracePathStat("RX_ATTACH_VIDEO", "attach_effective=" + std::to_string(stats_.attach_effective));
         }
     }
@@ -530,21 +531,21 @@ void PullSubscriber::Play() {
             }
         });
     if (impl_->recv_config_.common.skip_sink_argb_conversion) {
-        std::cout << "[PullSubscriber] VideoSink: skip I420→ARGB (client low-latency path)" << std::endl;
+        RFLOW_LOG_TAG_I("PullSubscriber", "VideoSink: skip I420→ARGB (client low-latency path)");
     }
 
     impl_->signaling_->SetOnOffer([this](const std::string& peer_id, const std::string& type,
                                          const std::string& sdp) {
-        std::cout << "[PullSubscriber] Received offer from=" << peer_id << " (type=" << type << ", len=" << sdp.size() << ")"
-                  << std::endl;
+        RFLOW_LOG_TAG_I("PullSubscriber", "Received offer from=%s (type=%s, len=%zu)", peer_id.c_str(),
+                        type.c_str(), sdp.size());
         if (rflow::core::runtime::ReadBool("WEBRTC_DUMP_REMOTE_OFFER")) {
-            std::cout << "\n--- Remote offer SDP ---\n" << sdp << "\n--- End ---\n" << std::flush;
+            RFLOW_LOG_TAG_I("PullSubscriber", "\n--- Remote offer SDP ---\n%s\n--- End ---", sdp.c_str());
         }
         impl_->SetRemoteDescription(type, sdp);
     });
     impl_->signaling_->SetOnIce([this](const std::string& peer_id, const std::string& mid, int mline_index,
                                        const std::string& candidate) {
-        std::cout << "[PullSubscriber] ICE from=" << peer_id << " mid=" << mid << " idx=" << mline_index << std::endl;
+        RFLOW_LOG_TAG_I("PullSubscriber", "ICE from=%s mid=%s idx=%d", peer_id.c_str(), mid.c_str(), mline_index);
         impl_->AddRemoteIceCandidate(mid, mline_index, candidate);
     });
     impl_->signaling_->SetOnError([this](const std::string& msg) {
@@ -570,7 +571,7 @@ void PullSubscriber::Play() {
         return;
     }
     is_playing_ = true;
-    std::cout << "[PullSubscriber] Waiting for offer from publisher..." << std::endl;
+    RFLOW_LOG_TAG_I("PullSubscriber", "Waiting for offer from publisher...");
 }
 
 void PullSubscriber::Stop() {

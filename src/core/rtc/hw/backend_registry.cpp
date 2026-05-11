@@ -1,4 +1,4 @@
-#include "core/rtc/hw/backend_registry.h"
+#include "rtc/hw/backend_registry.h"
 
 #include <algorithm>
 #include <mutex>
@@ -7,16 +7,16 @@
 
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "api/video_codecs/builtin_video_encoder_factory.h"
-#include "core/runtime/runtime_knobs.h"
+#include "runtime/runtime_knobs.h"
 
 #if defined(WEBRTC_ANDROID)
-#include "core/platform/android/video_decoder_factory.h"
+#include "platform/android/video_decoder_factory.h"
 #endif
 
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-#include "core/platform/rockchip/backend_capabilities.h"
-#include "core/platform/rockchip/video_decoder_factory.h"
-#include "core/platform/rockchip/video_encoder_factory.h"
+#include "platform/rockchip/backend_capabilities.h"
+#include "platform/rockchip/video_decoder_factory.h"
+#include "platform/rockchip/video_encoder_factory.h"
 #endif
 
 namespace rflow::rtc::hw {

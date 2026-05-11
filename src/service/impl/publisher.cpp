@@ -6,8 +6,8 @@
 #include "media/push_streamer.h"
 #include "signaling/signaling_client.h"
 
-#include "common/public/logger_api.h"
-#include "core/runtime/runtime_knobs.h"
+#include "public/logger_api.h"
+#include "runtime/runtime_knobs.h"
 
 namespace rflow::service::impl {
 

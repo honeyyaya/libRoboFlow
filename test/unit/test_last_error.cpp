@@ -1,7 +1,7 @@
 // Unit tests for common/base/last_error.{h,cpp} 与 librflow_get_last_error C ABI。
 // origin / timestamp_ms 等结构化字段不对外暴露，直接通过内部 snapshot 验证。
 
-#include "common/base/last_error.h"
+#include "base/last_error.h"
 
 #include <thread>
 

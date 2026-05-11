@@ -17,7 +17,7 @@
 
 #include "api/scoped_refptr.h"
 #include "api/video/video_sink_interface.h"
-#include "common/media/video_frame_source.h"
+#include "media/video_frame_source.h"
 #include "media/base/adapted_video_track_source.h"
 #include "modules/video_capture/video_capture.h"
 

@@ -1,10 +1,12 @@
 // Rockchip MPP H.264 ???? backend?????????
-#include "core/platform/rockchip/h264_decoder.h"
+#include "platform/rockchip/h264_decoder.h"
 
 #include <cstring>
 #include <cstdlib>
 #include <atomic>
-#include <iostream>
+#include <string>
+
+#include "public/log_tagged.h"
 
 #include "api/video/i420_buffer.h"
 #include "api/video/video_codec_type.h"
@@ -137,7 +139,7 @@ bool H264Decoder::EnsureMppInitialized() {
 
     if (!logged_init_) {
         logged_init_ = true;
-        std::cout << "[RkMppH264Dec] Initialized (hardware) low_latency=" << (LowLatencyEnv() ? 1 : 0) << std::endl;
+        RFLOW_LOG_TAG_I("RkMppH264Dec", "Initialized (hardware) low_latency=%d", LowLatencyEnv() ? 1 : 0);
     }
     return true;
 }
@@ -273,20 +275,21 @@ bool H264Decoder::TryDrainOneDecodedFrame(int64_t render_time_ms, const webrtc::
         if (callback_) {
             if (!logged_first_frame_) {
                 logged_first_frame_ = true;
-                std::cout << "[RkMppH264Dec] Decoded first frame " << width << "x" << height << " fmt=" << fmt
-                          << std::endl;
+                RFLOW_LOG_TAG_I("RkMppH264Dec", "Decoded first frame %dx%d fmt=%u", width, height,
+                                static_cast<unsigned>(fmt));
             }
             if (MediaTimingTraceEnabled()) {
                 static std::atomic<unsigned> media_trace_n{0};
                 const unsigned n = ++media_trace_n;
                 if ((n % MediaTimingTraceEveryN()) == 0u) {
                     const auto tid = ref_meta.VideoFrameTrackingId();
-                    std::cout << "[MEDIA_TIMING][dec] t_us=" << webrtc::TimeMicros()
-                              << " trace_id="
-                              << (tid.has_value() ? std::to_string(static_cast<unsigned>(*tid))
-                                                  : std::string("-"))
-                              << " rtp_ts=" << ref_meta.RtpTimestamp() << " width=" << width
-                              << " height=" << height << std::endl;
+                    const std::string trace_str =
+                        tid.has_value() ? std::to_string(static_cast<unsigned>(*tid)) : "-";
+                    RFLOW_LOG_TAG_I(
+                        "MEDIA_TIMING",
+                        "[dec] t_us=%lld trace_id=%s rtp_ts=%u width=%d height=%d",
+                        static_cast<long long>(webrtc::TimeMicros()), trace_str.c_str(),
+                        ref_meta.RtpTimestamp(), width, height);
                 }
             }
             callback_->Decoded(out);
@@ -344,12 +347,13 @@ int32_t H264Decoder::Decode(const webrtc::EncodedImage& input_image, bool /*miss
         const unsigned n = ++media_ingress_n;
         if ((n % MediaTimingTraceEveryN()) == 0u) {
             const auto tid = input_image.VideoFrameTrackingId();
-            std::cout << "[MEDIA_TIMING][rx] t_us=" << webrtc::TimeMicros()
-                      << " trace_id="
-                      << (tid.has_value() ? std::to_string(static_cast<unsigned>(*tid))
-                                          : std::string("-"))
-                      << " rtp_ts=" << input_image.RtpTimestamp()
-                      << " enc_bytes=" << input_image.size() << " event=decode_put_packet_ok" << std::endl;
+            const std::string trace_str =
+                tid.has_value() ? std::to_string(static_cast<unsigned>(*tid)) : "-";
+            RFLOW_LOG_TAG_I(
+                "MEDIA_TIMING",
+                "[rx] t_us=%lld trace_id=%s rtp_ts=%u enc_bytes=%zu event=decode_put_packet_ok",
+                static_cast<long long>(webrtc::TimeMicros()), trace_str.c_str(), input_image.RtpTimestamp(),
+                input_image.size());
         }
     }
 

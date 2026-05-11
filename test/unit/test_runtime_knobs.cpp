@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "core/runtime/runtime_knobs.h"
+#include "runtime/runtime_knobs.h"
 
 namespace {
 

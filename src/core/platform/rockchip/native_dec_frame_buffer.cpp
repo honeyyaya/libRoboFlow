@@ -1,4 +1,4 @@
-#include "core/platform/rockchip/native_dec_frame_buffer.h"
+#include "platform/rockchip/native_dec_frame_buffer.h"
 
 #include <cstring>
 

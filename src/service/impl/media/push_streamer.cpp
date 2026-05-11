@@ -4,15 +4,17 @@
 #include "camera/camera_utils.h"
 #include "media/camera_video_track_source.h"
 #include "media/external_push_video_track_source.h"
-#include "common/base/env_reader.h"
-#include "common/base/trace_switches.h"
-#include "common/media/frame_types.h"
-#include "common/public/log_tagged.h"
-#include "core/rtc/peer_connection_factory_deps.h"
-#include "core/rtc/sdp_observers.h"
-#include "core/rtc/stats_observer.h"
-#include "core/runtime/runtime_knobs.h"
-#include "core/thread/thread_pool.h"
+#include "base/env_reader.h"
+#include "base/trace_switches.h"
+#include "media/frame_types.h"
+#include "public/log_tagged.h"
+#include "rtc/outbound_video_stats_aggregation.h"
+#include "rtc/peer_connection_factory_deps.h"
+#include "rtc/rtc_sync_stats.h"
+#include "rtc/sdp_observers.h"
+#include "rtc/stats_observer.h"
+#include "runtime/runtime_knobs.h"
+#include "thread/thread_pool.h"
 #include "media/push_h264_profile.h"
 #include "media/push_streamer_internals.h"
 #include "media/push_streamer_observers.h"
@@ -45,7 +47,6 @@
 #include <cstring>
 #include <functional>
 #include <future>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <unistd.h>
@@ -210,9 +211,9 @@ public:
                             config_.common.stream_id.c_str());
             MaybeStartOutboundStatsLoop();
         } else {
-            std::cout << "[PushStreamer] Video track ready (subscriber-offer-only; sender per subscriber PC, "
-                         "stream_id="
-                      << config_.common.stream_id << ")" << std::endl;
+            RFLOW_LOG_TAG_I("PushStreamer",
+                            "Video track ready (subscriber-offer-only; sender per subscriber PC, stream_id=%s)",
+                            config_.common.stream_id.c_str());
         }
         return true;
     }
@@ -243,7 +244,7 @@ public:
 
         webrtc::RtpCapabilities caps = factory_->GetRtpSenderCapabilities(webrtc::MediaType::VIDEO);
         if (caps.codecs.empty()) {
-            std::cerr << "[PushStreamer] GetRtpSenderCapabilities(VIDEO) empty" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "GetRtpSenderCapabilities(VIDEO) empty");
             return;
         }
 
@@ -277,8 +278,9 @@ public:
             }
         }
         if (preferred.empty()) {
-            std::cout << "[PushStreamer] SetCodecPreferences skipped: no match for VIDEO_CODEC=" << config_.common.video_codec
-                      << std::endl;
+            RFLOW_LOG_TAG_I(
+                "PushStreamer", "SetCodecPreferences skipped: no match for VIDEO_CODEC=%s",
+                config_.common.video_codec.c_str());
             return;
         }
         if (want == "h264") {
@@ -292,11 +294,14 @@ public:
             }
             if (!filtered.empty()) {
                 preferred = std::move(filtered);
-                std::cout << "[PushStreamer] H264 profile filter: profile_idc=0x" << want_idc << " (H264_PROFILE="
-                          << config_.common.h264_profile << ")" << std::endl;
+                RFLOW_LOG_TAG_I(
+                    "PushStreamer", "H264 profile filter: profile_idc=0x%s (H264_PROFILE=%s)",
+                    want_idc.c_str(), config_.common.h264_profile.c_str());
             } else {
-                std::cout << "[PushStreamer] H264 profile filter skipped: no payload matched profile_idc=0x" << want_idc
-                          << ", using all H264 payloads" << std::endl;
+                RFLOW_LOG_TAG_I(
+                    "PushStreamer",
+                    "H264 profile filter skipped: no payload matched profile_idc=0x%s, using all H264 payloads",
+                    want_idc.c_str());
             }
         }
         std::vector<webrtc::RtpCodecCapability> ordered;
@@ -311,9 +316,9 @@ public:
             auto err = tr->SetCodecPreferences(webrtc::ArrayView<webrtc::RtpCodecCapability>(
                 ordered.data(), ordered.size()));
             if (!err.ok()) {
-                std::cerr << "[PushStreamer] SetCodecPreferences: " << err.message() << std::endl;
+                RFLOW_LOG_TAG_E("PushStreamer", "SetCodecPreferences: %s", err.message());
             } else {
-                std::cout << "[PushStreamer] SetCodecPreferences: prefer " << want << std::endl;
+                RFLOW_LOG_TAG_I("PushStreamer", "SetCodecPreferences: prefer %s", want.c_str());
             }
             return;
         }
@@ -350,7 +355,7 @@ public:
             }
             auto err = sender->SetParameters(params);
             if (!err.ok()) {
-                std::cerr << "[PushStreamer] SetParameters failed: " << err.message() << std::endl;
+                RFLOW_LOG_TAG_E("PushStreamer", "SetParameters failed: %s", err.message());
             } else {
                 webrtc::BitrateSettings br;
                 const int min_bps = std::max(0, config_.common.min_bitrate_kbps * 1000);
@@ -361,15 +366,15 @@ public:
                 br.max_bitrate_bps = max_bps;
                 auto br_err = pc->SetBitrate(br);
                 if (!br_err.ok()) {
-                    std::cerr << "[PushStreamer] SetBitrate failed: " << br_err.message() << std::endl;
+                    RFLOW_LOG_TAG_E("PushStreamer", "SetBitrate failed: %s", br_err.message());
                 } else {
-                    std::cout << "[PushStreamer] SetBitrate: min/start/max=" << min_bps << "/" << target_bps
-                              << "/" << max_bps << " bps" << std::endl;
+                    RFLOW_LOG_TAG_I("PushStreamer", "SetBitrate: min/start/max=%d/%d/%d bps", min_bps, target_bps,
+                                    max_bps);
                 }
-                std::cout << "[PushStreamer] Encoding params: bitrate " << config_.common.min_bitrate_kbps << "-"
-                          << config_.common.max_bitrate_kbps << " kbps"
-                          << " max_fps=" << max_fps
-                          << " network_priority=" << config_.common.video_network_priority << std::endl;
+                RFLOW_LOG_TAG_I(
+                    "PushStreamer", "Encoding params: bitrate %d-%d kbps max_fps=%f network_priority=%s",
+                    config_.common.min_bitrate_kbps, config_.common.max_bitrate_kbps, max_fps,
+                    config_.common.video_network_priority.c_str());
                 {
                     const char* deg = "maintain_framerate";
                     if (config_.common.degradation_preference == "maintain_resolution") {
@@ -377,11 +382,12 @@ public:
                     } else if (config_.common.degradation_preference == "balanced") {
                         deg = "balanced";
                     }
-                    std::cout << "[PushStreamer] degradation_preference=" << deg
-                              << " (maintain_framerate: 弱网时优先保帧、倾向降分辨率)\n";
+                    RFLOW_LOG_TAG_I(
+                        "PushStreamer",
+                        "degradation_preference=%s (maintain_framerate: 弱网时优先保帧、倾向降分辨率)", deg);
                 }
                 if (LatencyTraceEnabled()) {
-                    std::cout << "[Latency] WebRTC degradation_preference trace ok\n";
+                    RFLOW_LOG_TAG_I("Latency", "WebRTC degradation_preference trace ok");
                 }
             }
             break;
@@ -396,8 +402,8 @@ public:
         }
         outbound_stats_stop_.store(false, std::memory_order_release);
         outbound_stats_interval_sec_.store(interval_sec, std::memory_order_relaxed);
-        std::cout << "[PushStreamer] Outbound stats enabled, interval=" << interval_sec
-                  << "s (process thread_pool scheduled)" << std::endl;
+        RFLOW_LOG_TAG_I("PushStreamer", "Outbound stats enabled, interval=%ds (process thread_pool scheduled)",
+                        interval_sec);
         // 通过 thread_pool::post_after 实现自重投，无需常驻线程；shutdown 时
         // outbound_stats_stop_ 置位即可让下一次 tick 退出。
         ScheduleOutboundStatsTick();
@@ -456,20 +462,20 @@ public:
             const std::string& p = config_.common.video_device_path;
             if (p.rfind("/dev/video", 0) == 0 && access(p.c_str(), R_OK | W_OK) == 0) {
                 *out_unique = p;
-                std::cout << "[PushStreamer] Camera " << p << " -> capture by device path (multi-node safe)"
-                          << std::endl;
+                RFLOW_LOG_TAG_I("PushStreamer", "Camera %s -> capture by device path (multi-node safe)",
+                                p.c_str());
                 return true;
             }
         }
 
         std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> info(webrtc::VideoCaptureFactory::CreateDeviceInfo());
         if (!info) {
-            std::cerr << "[PushStreamer] CreateDeviceInfo failed" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "CreateDeviceInfo failed");
             return false;
         }
         uint32_t n = info->NumberOfDevices();
         if (n == 0) {
-            std::cerr << "[PushStreamer] No V4L2/video capture devices" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "No V4L2/video capture devices");
             return false;
         }
 
@@ -484,8 +490,8 @@ public:
                     if (info->GetDeviceName(static_cast<uint32_t>(path_idx), name, sizeof(name), unique, sizeof(unique),
                                             product, sizeof(product)) == 0) {
                         *out_unique = unique;
-                        std::cout << "[PushStreamer] Camera path " << config_.common.video_device_path
-                                  << " -> /dev/video enum index match" << std::endl;
+                        RFLOW_LOG_TAG_I("PushStreamer", "Camera path %s -> /dev/video enum index match",
+                                        config_.common.video_device_path.c_str());
                         return true;
                     }
                 }
@@ -501,8 +507,8 @@ public:
                 }
                 if (!bus.empty() && std::string(unique) == bus) {
                     *out_unique = unique;
-                    std::cout << "[PushStreamer] Camera path " << config_.common.video_device_path << " -> bus_info match"
-                              << std::endl;
+                    RFLOW_LOG_TAG_I("PushStreamer", "Camera path %s -> bus_info match",
+                                    config_.common.video_device_path.c_str());
                     return true;
                 }
             }
@@ -532,20 +538,20 @@ public:
                         }
                         if (std::string(name) == card) {
                             *out_unique = unique;
-                            std::cout << "[PushStreamer] Camera path " << config_.common.video_device_path
-                                      << " -> device name/card match" << std::endl;
+                            RFLOW_LOG_TAG_I("PushStreamer", "Camera path %s -> device name/card match",
+                                            config_.common.video_device_path.c_str());
                             return true;
                         }
                     }
                 }
             }
-            std::cerr << "[PushStreamer] No device match for " << config_.common.video_device_path << ", using index 0"
-                      << std::endl;
+            RFLOW_LOG_TAG_W("PushStreamer", "No device match for %s, using index 0",
+                            config_.common.video_device_path.c_str());
         }
 
         uint32_t idx = static_cast<uint32_t>(config_.common.video_device_index);
         if (idx >= n) {
-            std::cerr << "[PushStreamer] Device index out of range" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "Device index out of range");
             return false;
         }
         char name[256] = {0};
@@ -586,10 +592,13 @@ public:
                 : config_.backend.use_rockchip_dual_mpp_mjpeg_h264;
         if (mpp_mjpeg_decode && config_.backend.use_rockchip_mpp_h264 && !allow_dual_mpp) {
             mpp_mjpeg_decode = false;
-            std::cout << "[PushStreamer] MPP MJPEG decode off while MPP H.264 encode on (use libyuv for MJPEG). "
-                         "Set USE_DUAL_MPP_MJPEG_H264=1 or WEBRTC_DUAL_MPP_MJPEG_H264=1 to enable both.\n";
+            RFLOW_LOG_TAG_I(
+                "PushStreamer",
+                "MPP MJPEG decode off while MPP H.264 encode on (use libyuv for MJPEG). "
+                "Set USE_DUAL_MPP_MJPEG_H264=1 or WEBRTC_DUAL_MPP_MJPEG_H264=1 to enable both.");
         } else if (mpp_mjpeg_decode && config_.backend.use_rockchip_mpp_h264 && allow_dual_mpp) {
-            std::cout << "[PushStreamer] Dual MPP: MJPEG hardware decode + H.264 hardware encode (experimental).\n";
+            RFLOW_LOG_TAG_I(
+                "PushStreamer", "Dual MPP: MJPEG hardware decode + H.264 hardware encode (experimental).");
         }
 #endif
         V4l2MjpegPipelineOptions mjpeg_pipe;
@@ -628,8 +637,11 @@ public:
             int cam_fps = 0;
             if (camera_impl_->GetNegotiatedCaptureFramerate(&cam_fps) && cam_fps > 0) {
                 if (cam_fps != config_.common.video_fps) {
-                    std::cout << "[PushStreamer] Using camera actual frame rate " << cam_fps << " fps (config FPS="
-                              << config_.common.video_fps << " was request only; encoding/WebRTC caps follow device)\n";
+                    RFLOW_LOG_TAG_I(
+                        "PushStreamer",
+                        "Using camera actual frame rate %d fps (config FPS=%d was request only; encoding/WebRTC "
+                        "caps follow device)",
+                        cam_fps, config_.common.video_fps);
                 }
                 config_.common.video_fps = cam_fps;
             }
@@ -640,21 +652,22 @@ public:
             int nh = 0;
             if (camera_impl_->GetNegotiatedCaptureSize(&nw, &nh) &&
                 (nw != config_.common.video_width || nh != config_.common.video_height)) {
-                std::cout << "[PushStreamer] V4L2 negotiated " << nw << "x" << nh << ", config requests "
-                          << config_.common.video_width << "x" << config_.common.video_height
-                          << " — set WIDTH/HEIGHT in streams.conf to match to reduce capture/encode scaling.\n";
+                RFLOW_LOG_TAG_I(
+                    "PushStreamer", "V4L2 negotiated %dx%d, config requests %dx%d — set WIDTH/HEIGHT in streams.conf "
+                                    "to match to reduce capture/encode scaling.",
+                    nw, nh, config_.common.video_width, config_.common.video_height);
             }
         }
 
         if (config_.common.capture_warmup_sec > 0) {
-            std::cout << "[PushStreamer] Camera warmup " << config_.common.capture_warmup_sec << "s..." << std::endl;
+            RFLOW_LOG_TAG_I("PushStreamer", "Camera warmup %ds...", config_.common.capture_warmup_sec);
             const auto w0 = std::chrono::steady_clock::now();
             std::this_thread::sleep_for(std::chrono::seconds(config_.common.capture_warmup_sec));
             if (LatencyTraceEnabled()) {
                 const auto wms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - w0)
                                      .count();
-                std::cout << "[Latency] capture_warmup actual_ms=" << wms << " configured_sec=" << config_.common.capture_warmup_sec
-                          << std::endl;
+                RFLOW_LOG_TAG_I("Latency", "capture_warmup actual_ms=%f configured_sec=%d", wms,
+                                config_.common.capture_warmup_sec);
             }
         }
         return true;
@@ -685,9 +698,8 @@ public:
         }
         video_track_->set_content_hint(webrtc::VideoTrackInterface::ContentHint::kFluid);
 
-        std::cout << "[PushStreamer] External video source ready "
-                  << config_.common.video_width << "x" << config_.common.video_height
-                  << " fps=" << config_.common.video_fps << std::endl;
+        RFLOW_LOG_TAG_I("PushStreamer", "External video source ready %dx%d fps=%d", config_.common.video_width,
+                        config_.common.video_height, config_.common.video_fps);
         return true;
     }
 
@@ -707,27 +719,27 @@ public:
         using clock = std::chrono::steady_clock;
         const auto deadline = clock::now() + std::chrono::seconds(max_wait);
         const auto gate_t0 = clock::now();
-        std::cout << "[PushStreamer] Capture gate: need >= " << need << " frames (" << context << "), max wait "
-                  << max_wait << "s" << std::endl;
+        RFLOW_LOG_TAG_I("PushStreamer", "Capture gate: need >= %d frames (%s), max wait %ds", need, context.c_str(),
+                        max_wait);
         while (clock::now() < deadline) {
             const unsigned int got = EffectiveCaptureFrameCount();
             if (got >= static_cast<unsigned int>(need)) {
-                std::cout << "[PushStreamer] Capture gate OK: " << got << " frames" << std::endl;
+                RFLOW_LOG_TAG_I("PushStreamer", "Capture gate OK: %u frames", got);
                 if (LatencyTraceEnabled()) {
                     const auto gms =
                         std::chrono::duration<double, std::milli>(clock::now() - gate_t0).count();
-                    std::cout << "[Latency] capture_gate elapsed_ms=" << gms << " frames=" << got << " need=" << need
-                              << std::endl;
+                    RFLOW_LOG_TAG_I("Latency", "capture_gate elapsed_ms=%f frames=%u need=%d", gms, got, need);
                 }
                 return true;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(40));
         }
-        std::cerr << "[PushStreamer] Capture gate failed (" << context << ")" << std::endl;
+        RFLOW_LOG_TAG_E("PushStreamer", "Capture gate failed (%s)", context.c_str());
         if (LatencyTraceEnabled()) {
             const auto gms = std::chrono::duration<double, std::milli>(clock::now() - gate_t0).count();
-            std::cout << "[Latency] capture_gate TIMEOUT elapsed_ms=" << gms << " last_frames=" << EffectiveCaptureFrameCount()
-                      << " need=" << need << std::endl;
+            RFLOW_LOG_TAG_I(
+                "Latency", "capture_gate TIMEOUT elapsed_ms=%f last_frames=%u need=%d", gms,
+                EffectiveCaptureFrameCount(), need);
         }
         return false;
     }
@@ -741,10 +753,10 @@ public:
         }
         webrtc::Thread* sig = peer_connection_->signaling_thread();
         if (!sig) {
-            std::cerr << "[PushStreamer] CreateOffer: no signaling thread" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "CreateOffer: no signaling thread");
             return;
         }
-        std::cout << "[PushStreamer] Creating default Offer..." << std::endl;
+        RFLOW_LOG_TAG_I("PushStreamer", "Creating default Offer...");
         auto run = [this]() { CreateOfferOnConnection("", peer_connection_); };
         if (sig->IsCurrent()) {
             run();
@@ -759,7 +771,7 @@ public:
             return;
         }
         if (!peer_connection_) {
-            std::cerr << "[PushStreamer] CreateOfferForPeer: no default peer connection" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "CreateOfferForPeer: no default peer connection");
             return;
         }
         if (!WaitForCaptureGate(std::string("peer=") + peer_id)) {
@@ -768,7 +780,7 @@ public:
         TraceSigTiming("CreateOfferForPeer gate_ok peer=" + peer_id);
         webrtc::Thread* sig = peer_connection_->signaling_thread();
         if (!sig) {
-            std::cerr << "[PushStreamer] CreateOfferForPeer: no signaling thread" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "CreateOfferForPeer: no signaling thread");
             return;
         }
         // AddTrack / CreateOffer 必须在专用 signaling 线程（见 EnsureDedicatedPeerConnectionSignalingThread）。
@@ -785,10 +797,10 @@ public:
                 }
             }
             if (!pc) {
-                std::cerr << "[PushStreamer] peer not found: " << peer_id << std::endl;
+                RFLOW_LOG_TAG_E("PushStreamer", "peer not found: %s", peer_id.c_str());
                 return;
             }
-            std::cout << "[PushStreamer] Creating Offer for subscriber: " << peer_id << std::endl;
+            RFLOW_LOG_TAG_I("PushStreamer", "Creating Offer for subscriber: %s", peer_id.c_str());
             CreateOfferOnConnection(peer_id, pc);
         };
         if (sig->IsCurrent()) {
@@ -857,7 +869,7 @@ public:
                     std::string type = desc->type();
                     std::string sdp;
                     if (!desc->ToString(&sdp)) {
-                        std::cerr << "[PushStreamer] SDP ToString failed" << std::endl;
+                        RFLOW_LOG_TAG_E("PushStreamer", "SDP ToString failed");
                         return;
                     }
                     TraceSigTiming("CreateOffer success peer=" +
@@ -867,8 +879,8 @@ public:
                     auto set_local = rflow::core::rtc::MakeSetLocalDescObserver(
                             [this, peer_id_ptr, type, sdp](webrtc::RTCError err) {
                                 if (!err.ok()) {
-                                    std::cerr << "[PushStreamer] SetLocalDescription failed: " << err.message()
-                                              << std::endl;
+                                    RFLOW_LOG_TAG_E("PushStreamer", "SetLocalDescription failed: %s",
+                                                    err.message());
                                     return;
                                 }
                                 TraceSigTiming("SetLocalDescription OK peer=" +
@@ -876,13 +888,15 @@ public:
                                 const bool dump_offer = rflow::core::runtime::ReadBool("WEBRTC_DUMP_OFFER");
                                 if (config_.common.test_encode_mode && peer_id_ptr->empty()) {
                                     if (dump_offer) {
-                                        std::cout << "\n--- Local offer SDP ---\n" << sdp << "\n--- End ---\n" << std::flush;
+                                        RFLOW_LOG_TAG_I("PushStreamer", "\n--- Local offer SDP ---\n%s\n--- End ---",
+                                                        sdp.c_str());
                                     }
                                     DoLoopbackExchange(type, sdp);
                                 } else {
                                     if (dump_offer && on_sdp_) {
-                                        std::cout << "\n--- Local offer SDP (peer=" << *peer_id_ptr << ") ---\n" << sdp
-                                                  << "\n--- End ---\n" << std::flush;
+                                        RFLOW_LOG_TAG_I(
+                                            "PushStreamer", "\n--- Local offer SDP (peer=%s) ---\n%s\n--- End ---",
+                                            peer_id_ptr->c_str(), sdp.c_str());
                                     }
                                     if (on_sdp_) {
                                         on_sdp_(*peer_id_ptr, type, sdp);
@@ -913,24 +927,24 @@ public:
             }
         }
         if (!pc) {
-            std::cerr << "[PushStreamer] SetRemoteDescription: no peer" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "SetRemoteDescription: no peer");
             return;
         }
         webrtc::Thread* sig = pc->signaling_thread();
         if (!sig) {
-            std::cerr << "[PushStreamer] SetRemoteDescription: no signaling thread" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "SetRemoteDescription: no signaling thread");
             return;
         }
         auto work = [pc, type, sdp]() {
             TraceSigTiming("SetRemoteDescription begin type=" + type + " sdp_len=" + std::to_string(sdp.size()));
             auto opt_type = webrtc::SdpTypeFromString(type);
             if (!opt_type.has_value()) {
-                std::cerr << "[PushStreamer] Bad SDP type: " << type << std::endl;
+                RFLOW_LOG_TAG_E("PushStreamer", "Bad SDP type: %s", type.c_str());
                 return;
             }
             auto desc = webrtc::CreateSessionDescription(*opt_type, sdp);
             if (!desc) {
-                std::cerr << "[PushStreamer] CreateSessionDescription(parse) failed" << std::endl;
+                RFLOW_LOG_TAG_E("PushStreamer", "CreateSessionDescription(parse) failed");
                 return;
             }
             auto obs = rflow::core::rtc::MakeSetRemoteDescObserver([](webrtc::RTCError err) {
@@ -976,12 +990,12 @@ public:
             webrtc::SdpParseError err;
             webrtc::IceCandidateInterface* cand = webrtc::CreateIceCandidate(mid, mline_index, candidate, &err);
             if (!cand) {
-                std::cerr << "[PushStreamer] CreateIceCandidate failed: " << err.description << std::endl;
+                RFLOW_LOG_TAG_E("PushStreamer", "CreateIceCandidate failed: %s", err.description.c_str());
                 return;
             }
             std::unique_ptr<webrtc::IceCandidateInterface> owned(cand);
             if (!pc->AddIceCandidate(owned.get())) {
-                std::cerr << "[PushStreamer] AddIceCandidate failed" << std::endl;
+                RFLOW_LOG_TAG_E("PushStreamer", "AddIceCandidate failed");
             }
         };
         if (sig->IsCurrent()) {
@@ -993,10 +1007,10 @@ public:
 
     void DoLoopbackExchange(const std::string& offer_type, const std::string& offer_sdp) {
         if (rflow::core::runtime::ReadBool("WEBRTC_SKIP_LOOPBACK_RECV")) {
-            std::cout << "[PushStreamer] Loopback skipped (WEBRTC_SKIP_LOOPBACK_RECV=1)\n";
+            RFLOW_LOG_TAG_I("PushStreamer", "Loopback skipped (WEBRTC_SKIP_LOOPBACK_RECV=1)");
             return;
         }
-        std::cout << "[PushStreamer] Loopback: creating receiver PC..." << std::endl;
+        RFLOW_LOG_TAG_I("PushStreamer", "Loopback: creating receiver PC...");
         auto rtc_config = MakeRtcConfiguration(config_);
         loopback_observer_ = std::make_unique<LoopbackPcObserver>(
             [this](const std::string& mid, int idx, const std::string& cand) {
@@ -1032,7 +1046,7 @@ public:
         init.direction = webrtc::RtpTransceiverDirection::kRecvOnly;
         auto tr = receiver_->AddTransceiver(webrtc::MediaType::VIDEO, init);
         if (!tr.ok()) {
-            std::cerr << "[PushStreamer] AddTransceiver failed" << std::endl;
+            RFLOW_LOG_TAG_E("PushStreamer", "AddTransceiver failed");
             return;
         }
 
@@ -1048,7 +1062,7 @@ public:
         auto obs_remote = rflow::core::rtc::MakeSetRemoteDescObserver(
                 [this](webrtc::RTCError e) {
                     if (!e.ok()) {
-                        std::cerr << "[PushStreamer] receiver SetRemote failed: " << e.message() << std::endl;
+                        RFLOW_LOG_TAG_E("PushStreamer", "receiver SetRemote failed: %s", e.message());
                         return;
                     }
                     OnReceiverRemoteDescriptionSet();
@@ -1071,8 +1085,7 @@ public:
                     auto set_local = rflow::core::rtc::MakeSetLocalDescObserver(
                             [this](webrtc::RTCError err) {
                                 if (!err.ok()) {
-                                    std::cerr << "[PushStreamer] receiver SetLocal failed: " << err.message()
-                                              << std::endl;
+                                    RFLOW_LOG_TAG_E("PushStreamer", "receiver SetLocal failed: %s", err.message());
                                     return;
                                 }
                                 OnReceiverLocalDescriptionSet();
@@ -1080,7 +1093,7 @@ public:
                     receiver_->SetLocalDescription(std::move(desc), set_local);
                 },
                 [](webrtc::RTCError err) {
-                    std::cerr << "[PushStreamer] CreateAnswer failed: " << err.message() << std::endl;
+                    RFLOW_LOG_TAG_E("PushStreamer", "CreateAnswer failed: %s", err.message());
                 });
         receiver_->CreateAnswer(obs.get(), opts);
     }
@@ -1096,7 +1109,7 @@ public:
         }
         auto obs = rflow::core::rtc::MakeSetRemoteDescObserver([](webrtc::RTCError e) {
             if (e.ok()) {
-                std::cout << "[PushStreamer] Loopback SDP exchange done" << std::endl;
+                RFLOW_LOG_TAG_I("PushStreamer", "Loopback SDP exchange done");
             }
         });
         peer_connection_->SetRemoteDescription(std::move(answer), obs);
@@ -1146,7 +1159,7 @@ public:
         const char* names[] = {"New", "Gathering", "Complete"};
         int idx = static_cast<int>(state);
         if (idx >= 0 && idx < 3) {
-            std::cout << "[PushStreamer] ICE gathering: " << names[idx] << std::endl;
+            RFLOW_LOG_TAG_I("PushStreamer", "ICE gathering: %s", names[idx]);
         }
     }
 
@@ -1362,82 +1375,27 @@ unsigned int PushStreamer::GetDecodedFrameCount() const {
 bool PushStreamer::CollectStats(librflow_stream_stats_s* out_stats) {
     if (!out_stats) return false;
 
-    auto [pc, tag] = impl_->SelectStatsPeerConnection();
+    auto sel = impl_->SelectStatsPeerConnection();
+    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc = sel.first;
     if (!pc) return false;
 
-    struct Snapshot {
-        bool done = false;
-        uint64_t out_bytes = 0;
-        uint64_t out_pkts = 0;
-        uint32_t lost_pkts = 0;
-        uint32_t fps = 0;
-        uint32_t bitrate_kbps = 0;
-        uint32_t rtt_ms = 0;
-    };
-
-    std::mutex mu;
-    std::condition_variable cv;
-    Snapshot snapshot;
-
-    auto callback = rflow::core::rtc::MakeStatsCollectorObserver(
-        [&mu, &cv, &snapshot](const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
-            Snapshot local;
-            if (report) {
-                for (const auto* outbound : report->GetStatsOfType<webrtc::RTCOutboundRtpStreamStats>()) {
-                    if (!outbound || !outbound->kind || *outbound->kind != "video") continue;
-                    if (outbound->bytes_sent) local.out_bytes += *outbound->bytes_sent;
-                    if (outbound->packets_sent) local.out_pkts += *outbound->packets_sent;
-                    if (outbound->frames_per_second) {
-                        local.fps = std::max(local.fps,
-                                             static_cast<uint32_t>(*outbound->frames_per_second + 0.5));
-                    }
-                }
-                for (const auto* remote_in : report->GetStatsOfType<webrtc::RTCRemoteInboundRtpStreamStats>()) {
-                    if (!remote_in || !remote_in->kind || *remote_in->kind != "video") continue;
-                    if (remote_in->packets_lost && *remote_in->packets_lost > 0) {
-                        local.lost_pkts += static_cast<uint32_t>(*remote_in->packets_lost);
-                    }
-                    if (remote_in->round_trip_time) {
-                        local.rtt_ms = std::max(
-                            local.rtt_ms,
-                            static_cast<uint32_t>(*remote_in->round_trip_time * 1000.0 + 0.5));
-                    }
-                }
-                for (const auto* pair : report->GetStatsOfType<webrtc::RTCIceCandidatePairStats>()) {
-                    if (!pair) continue;
-                    if (pair->current_round_trip_time) {
-                        local.rtt_ms = std::max(
-                            local.rtt_ms,
-                            static_cast<uint32_t>(*pair->current_round_trip_time * 1000.0 + 0.5));
-                    }
-                    if (pair->available_outgoing_bitrate) {
-                        local.bitrate_kbps = std::max(
-                            local.bitrate_kbps,
-                            static_cast<uint32_t>(*pair->available_outgoing_bitrate / 1000.0 + 0.5));
-                    }
-                }
-            }
-            {
-                std::lock_guard<std::mutex> lk(mu);
-                snapshot = local;
-                snapshot.done = true;
-            }
-            cv.notify_one();
+    rflow::core::rtc::OutboundPublisherVideoAggregation agg{};
+    const bool ok = rflow::core::rtc::SyncGetPeerConnectionStats(
+        pc.get(),
+        rflow::core::rtc::SyncGetPeerConnectionStatsTimeout(),
+        [&](const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
+            rflow::core::rtc::AccumulateOutboundPublisherVideoFromReport(report, &agg);
         });
-
-    pc->GetStats(callback.get());
-
-    std::unique_lock<std::mutex> lk(mu);
-    if (!cv.wait_for(lk, std::chrono::milliseconds(1500), [&snapshot] { return snapshot.done; })) {
+    if (!ok) {
         return false;
     }
 
-    out_stats->out_bound_bytes = snapshot.out_bytes;
-    out_stats->out_bound_pkts = snapshot.out_pkts;
-    out_stats->lost_pkts = snapshot.lost_pkts;
-    if (snapshot.fps > 0) out_stats->fps = snapshot.fps;
-    out_stats->bitrate_kbps = snapshot.bitrate_kbps;
-    out_stats->rtt_ms = snapshot.rtt_ms;
+    out_stats->out_bound_bytes = agg.out_bytes;
+    out_stats->out_bound_pkts = agg.out_pkts;
+    out_stats->lost_pkts = agg.lost_pkts;
+    if (agg.fps > 0) out_stats->fps = agg.fps;
+    out_stats->bitrate_kbps = agg.bitrate_kbps;
+    out_stats->rtt_ms = agg.rtt_ms;
     return true;
 }
 

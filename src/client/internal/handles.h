@@ -12,7 +12,7 @@
 #include <string>
 
 #include "rflow/Client/librflow_client_api.h"
-#include "common/abi/handle.h"
+#include "abi/handle.h"
 
 namespace rflow::client {
 

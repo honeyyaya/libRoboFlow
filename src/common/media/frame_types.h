@@ -6,7 +6,7 @@
 #include <mutex>
 #include <vector>
 
-#include "common/abi/handle.h"
+#include "abi/handle.h"
 #include "api/scoped_refptr.h"
 #include "api/video/video_frame_buffer.h"
 
@@ -64,6 +64,8 @@ struct librflow_stream_stats_s {
     uint32_t jitter_ms = 0;
     uint32_t freeze_count = 0;
     uint32_t decode_fail_count = 0;
+    uint32_t jitter_buffer_delay_ms = 0;
+    uint32_t jitter_min_delay_ms = 0;
 };
 
 #endif  // __RFLOW_COMMON_MEDIA_FRAME_TYPES_H__

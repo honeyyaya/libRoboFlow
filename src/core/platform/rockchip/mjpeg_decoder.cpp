@@ -1,8 +1,8 @@
 #define MODULE_TAG "rflow_mpp_mjpeg"
 
-#include "core/platform/rockchip/mjpeg_decoder.h"
+#include "platform/rockchip/mjpeg_decoder.h"
 
-#include "core/platform/rockchip/native_dec_frame_buffer.h"
+#include "platform/rockchip/native_dec_frame_buffer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,8 +10,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
-#include <iostream>
 #include <limits>
+
+#include "public/log_tagged.h"
 #include <unistd.h>
 
 #include <linux/dma-buf.h>
@@ -218,7 +219,7 @@ static bool RgaCopyDmaBufJpeg(int src_fd,
     int h = 0;
     if (!RgaPickY400Rect(cap, jpeg_len, &w, &h)) {
         if (MjpegDecTraceEnabled()) {
-            std::cerr << "[RkMppMjpeg] RGA layout failed need=" << jpeg_len << " cap=" << cap << "\n";
+            RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA layout failed need=%zu cap=%zu", static_cast<size_t>(jpeg_len), cap);
         }
         return false;
     }
@@ -227,14 +228,14 @@ static bool RgaCopyDmaBufJpeg(int src_fd,
         struct dma_buf_sync sync {};
         sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
         if (ioctl(src_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0 && MjpegDecTraceEnabled()) {
-            std::cerr << "[RkMppMjpeg] RGA src DMA_BUF_SYNC(READ) errno=" << errno << "\n";
+            RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA src DMA_BUF_SYNC(READ) errno=%d", errno);
         }
     }
     {
         struct dma_buf_sync sync {};
         sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE;
         if (ioctl(dst_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0 && MjpegDecTraceEnabled()) {
-            std::cerr << "[RkMppMjpeg] RGA dst DMA_BUF_SYNC(WRITE) errno=" << errno << "\n";
+            RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA dst DMA_BUF_SYNC(WRITE) errno=%d", errno);
         }
     }
 
@@ -248,14 +249,14 @@ static bool RgaCopyDmaBufJpeg(int src_fd,
             struct dma_buf_sync sync {};
             sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
             if (ioctl(dst_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0 && MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] RGA dst DMA_BUF_SYNC(END WRITE) errno=" << errno << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA dst DMA_BUF_SYNC(END WRITE) errno=%d", errno);
             }
         }
         {
             struct dma_buf_sync sync {};
             sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
             if (ioctl(src_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0 && MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] RGA src DMA_BUF_SYNC(END READ) errno=" << errno << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA src DMA_BUF_SYNC(END READ) errno=%d", errno);
             }
         }
     };
@@ -281,8 +282,8 @@ static bool RgaCopyDmaBufJpeg(int src_fd,
 
     if (st != IM_STATUS_SUCCESS && st != IM_STATUS_NOERROR) {
         if (MjpegDecTraceEnabled()) {
-            std::cerr << "[RkMppMjpeg] RGA imcopy(importbuffer) status=" << static_cast<int>(st) << " ("
-                      << imStrError_t(st) << "), retry wrapbuffer_fd\n";
+            RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA imcopy(importbuffer) status=%d (%s), retry wrapbuffer_fd",
+                            static_cast<int>(st), imStrError_t(st));
         }
         rga_buffer_t src = wrapbuffer_fd(src_fd, w, h, RK_FORMAT_YCbCr_400);
         rga_buffer_t dst = wrapbuffer_fd(dst_fd, w, h, RK_FORMAT_YCbCr_400);
@@ -293,7 +294,7 @@ static bool RgaCopyDmaBufJpeg(int src_fd,
 
     if (st != IM_STATUS_SUCCESS && st != IM_STATUS_NOERROR) {
         if (MjpegDecTraceEnabled()) {
-            std::cerr << "[RkMppMjpeg] imcopy failed status=" << static_cast<int>(st) << " (" << imStrError_t(st) << ")\n";
+            RFLOW_LOG_TAG_E("RkMppMjpeg", "imcopy failed status=%d (%s)", static_cast<int>(st), imStrError_t(st));
         }
         return false;
     }
@@ -404,11 +405,11 @@ bool RkMppMjpegDecoder::Init() {
     MppBufferGroup output_grp = nullptr;
     MppBufferGroup input_grp = nullptr;
     if (mpp_buffer_group_get_internal(&output_grp, MPP_BUFFER_TYPE_DRM) != MPP_OK || !output_grp) {
-        std::cerr << "[RkMppMjpeg] output mpp_buffer_group_get_internal(DRM) failed\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "output mpp_buffer_group_get_internal(DRM) failed");
         return false;
     }
     if (mpp_buffer_group_get_internal(&input_grp, MPP_BUFFER_TYPE_DRM) != MPP_OK || !input_grp) {
-        std::cerr << "[RkMppMjpeg] input mpp_buffer_group_get_internal(DRM) failed\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "input mpp_buffer_group_get_internal(DRM) failed");
         mpp_buffer_group_put(output_grp);
         return false;
     }
@@ -418,7 +419,7 @@ bool RkMppMjpegDecoder::Init() {
     MppCtx ctx = nullptr;
     MppApi* mpi = nullptr;
     if (mpp_create(&ctx, &mpi) != MPP_OK || !ctx || !mpi) {
-        std::cerr << "[RkMppMjpeg] mpp_create failed\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "mpp_create failed");
         Close();
         return false;
     }
@@ -433,14 +434,14 @@ bool RkMppMjpegDecoder::Init() {
     mpi->control(ctx, MPP_DEC_SET_PARSER_FAST_MODE, &fast_mode);
 
     if (mpp_init(ctx, MPP_CTX_DEC, MPP_VIDEO_CodingMJPEG) != MPP_OK) {
-        std::cerr << "[RkMppMjpeg] mpp_init(MJPEG) failed\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "mpp_init(MJPEG) failed");
         Close();
         return false;
     }
 
     // Same as gstmppdec.c set_format: bind allocator group right after mpp_init.
     if (mpi->control(ctx, MPP_DEC_SET_EXT_BUF_GROUP, output_grp) != MPP_OK) {
-        std::cerr << "[RkMppMjpeg] MPP_DEC_SET_EXT_BUF_GROUP failed\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "MPP_DEC_SET_EXT_BUF_GROUP failed");
         Close();
         return false;
     }
@@ -464,12 +465,13 @@ bool RkMppMjpegDecoder::Init() {
     MppFrameFormat want = MPP_FMT_YUV420SP;
     if (mpi->control(ctx, MPP_DEC_SET_OUTPUT_FORMAT, &want) != MPP_OK) {
         if (MjpegDecTraceEnabled()) {
-            std::cerr << "[RkMppMjpeg] MPP_DEC_SET_OUTPUT_FORMAT(NV12) failed (non-fatal)\n";
+            RFLOW_LOG_TAG_W("RkMppMjpeg", "MPP_DEC_SET_OUTPUT_FORMAT(NV12) failed (non-fatal)");
         }
     }
 
     if (MjpegDecTraceEnabled()) {
-        std::cerr << "[RkMppMjpeg] Init OK (GStreamer-style: DRM groups + EXT_BUF_GROUP at init + task path)\n";
+        RFLOW_LOG_TAG_I("RkMppMjpeg",
+                        "Init OK (GStreamer-style: DRM groups + EXT_BUF_GROUP at init + task path)");
     }
     return true;
 }
@@ -497,7 +499,7 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
             sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
             if (ioctl(dma_buf_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0) {
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] DMA_BUF_IOCTL_SYNC failed errno=" << errno << "\n";
+                    RFLOW_LOG_TAG_E("RkMppMjpeg", "DMA_BUF_IOCTL_SYNC failed errno=%d", errno);
                 }
             }
         }
@@ -510,8 +512,8 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
         info.index = 0;
         if (mpp_buffer_import(&mbuf, &info) != MPP_OK || !mbuf) {
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] mpp_buffer_import EXT_DMA failed fd=" << dma_buf_fd << " cap=" << dma_buf_capacity
-                          << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "mpp_buffer_import EXT_DMA failed fd=%d cap=%zu", dma_buf_fd,
+                                  dma_buf_capacity);
             }
             return false;
         }
@@ -536,7 +538,7 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
 #endif
         if (mpp_buffer_get(ig, &mbuf, in_alloc) != MPP_OK || !mbuf) {
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] mpp_buffer_get input jpeg failed len=" << in_alloc << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "mpp_buffer_get input jpeg failed len=%zu", in_alloc);
             }
             return false;
         }
@@ -556,7 +558,7 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
             if (LatencyTraceEnabled()) {
                 const double rga_ms =
                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_rga0).count();
-                std::cout << "[Latency] MPP JPEG input RGA copy ms=" << rga_ms << " ok=" << (rga_ok ? 1 : 0) << "\n";
+                RFLOW_LOG_TAG_I("Latency", "MPP JPEG input RGA copy ms=%f ok=%d", rga_ms, rga_ok ? 1 : 0);
             }
             if (rga_ok) {
                 filled = true;
@@ -564,12 +566,12 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
                 if (RgaDisableAfterFailEnabled()) {
                     session_skip_rga_ = true;
                     if (LatencyTraceEnabled() || MjpegDecTraceEnabled()) {
-                        std::cerr << "[RkMppMjpeg] RGA disabled for rest of session "
-                                     "(WEBRTC_MJPEG_RGA_DISABLE_AFTER_FAIL=1)\n";
+                        RFLOW_LOG_TAG_W("RkMppMjpeg",
+                                        "RGA disabled for rest of session (WEBRTC_MJPEG_RGA_DISABLE_AFTER_FAIL=1)");
                     }
                 }
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] RGA copy failed, falling back to memcpy\n";
+                    RFLOW_LOG_TAG_W("RkMppMjpeg", "RGA copy failed, falling back to memcpy");
                 }
             }
         }
@@ -584,7 +586,7 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
             if (LatencyTraceEnabled()) {
                 const double mc_ms =
                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_mc0).count();
-                std::cout << "[Latency] MPP JPEG input memcpy ms=" << mc_ms << " bytes=" << jpeg_len << "\n";
+                RFLOW_LOG_TAG_I("Latency", "MPP JPEG input memcpy ms=%f bytes=%zu", mc_ms, jpeg_len);
             }
         }
     }
@@ -625,7 +627,7 @@ bool RkMppMjpegDecoder::SendMppPacket(void* packet_vp) {
         MppBuffer out_mbuf = nullptr;
         if (mpp_buffer_get(og, &out_mbuf, output_buf_size_) != MPP_OK || !out_mbuf) {
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] mpp_buffer_get output failed size=" << output_buf_size_ << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "mpp_buffer_get output failed size=%zu", output_buf_size_);
             }
             mpp_task_meta_set_packet(task, KEY_INPUT_PACKET, nullptr);
             mpi->enqueue(ctx, MPP_PORT_INPUT, task);
@@ -653,7 +655,7 @@ bool RkMppMjpegDecoder::SendMppPacket(void* packet_vp) {
         return true;
     }
     if (MjpegDecTraceEnabled()) {
-        std::cerr << "[RkMppMjpeg] SendMppPacket: dequeue input task timeout\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "SendMppPacket: dequeue input task timeout");
     }
     return false;
 }
@@ -695,12 +697,12 @@ bool RkMppMjpegDecoder::HandleInfoChangeFrame(void* frame_vp) {
     if (bs > 0 && static_cast<size_t>(bs) > output_buf_size_) {
         output_buf_size_ = bs;
         if (MjpegDecTraceEnabled()) {
-            std::cerr << "[RkMppMjpeg] info_change: bump output_buf_size to " << output_buf_size_ << "\n";
+            RFLOW_LOG_TAG_W("RkMppMjpeg", "info_change: bump output_buf_size to %zu", output_buf_size_);
         }
     }
 
     if (mpi->control(ctx, MPP_DEC_SET_INFO_CHANGE_READY, nullptr) != MPP_OK) {
-        std::cerr << "[RkMppMjpeg] MPP_DEC_SET_INFO_CHANGE_READY failed\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "MPP_DEC_SET_INFO_CHANGE_READY failed");
         return false;
     }
     return true;
@@ -742,7 +744,7 @@ bool RkMppMjpegDecoder::DecodeJpegToI420(const uint8_t* jpeg,
         if (!SendMppPacket(packet)) {
             mpp_packet_deinit(&packet);
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] SendMppPacket failed submit=" << submit << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "SendMppPacket failed submit=%d", static_cast<int>(submit));
             }
             return false;
         }
@@ -768,7 +770,8 @@ bool RkMppMjpegDecoder::DecodeJpegToI420(const uint8_t* jpeg,
             const RK_U32 discard = mpp_frame_get_discard(frame);
             if (err || discard) {
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] frame errinfo=" << err << " discard=" << discard << "\n";
+                    RFLOW_LOG_TAG_W("RkMppMjpeg", "frame errinfo=%u discard=%u", static_cast<unsigned>(err),
+                                    static_cast<unsigned>(discard));
                 }
                 mpp_frame_deinit(&frame);
                 return false;
@@ -778,8 +781,8 @@ bool RkMppMjpegDecoder::DecodeJpegToI420(const uint8_t* jpeg,
             const int fh = static_cast<int>(mpp_frame_get_height(frame));
             if (fw != expect_w || fh != expect_h) {
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] size mismatch decoded " << fw << "x" << fh << " expect " << expect_w << "x"
-                              << expect_h << "\n";
+                    RFLOW_LOG_TAG_W("RkMppMjpeg", "size mismatch decoded %dx%d expect %dx%d", fw, fh, expect_w,
+                                    expect_h);
                 }
                 mpp_frame_deinit(&frame);
                 return false;
@@ -813,7 +816,7 @@ bool RkMppMjpegDecoder::DecodeJpegToI420(const uint8_t* jpeg,
                                           out_i420->StrideV(), fw, fh);
             } else {
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] unexpected fmt=" << fmt << "\n";
+                    RFLOW_LOG_TAG_E("RkMppMjpeg", "unexpected fmt=%u", static_cast<unsigned>(fmt));
                 }
                 mpp_frame_deinit(&frame);
                 return false;
@@ -822,21 +825,21 @@ bool RkMppMjpegDecoder::DecodeJpegToI420(const uint8_t* jpeg,
             mpp_frame_deinit(&frame);
             decoded = (conv == 0);
             if (!decoded && MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] libyuv convert failed conv=" << conv << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "libyuv convert failed conv=%d", conv);
             }
             break;
         }
 
         if (!decoded && !need_resubmit) {
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] decode timeout (no output frame) submit=" << submit << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "decode timeout (no output frame) submit=%d", static_cast<int>(submit));
             }
             return false;
         }
     }
 
     if (!decoded && MjpegDecTraceEnabled()) {
-        std::cerr << "[RkMppMjpeg] DecodeJpegToI420 failed after resubmit loop\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "DecodeJpegToI420 failed after resubmit loop");
     }
     return decoded;
 }
@@ -880,7 +883,7 @@ bool RkMppMjpegDecoder::DecodeJpegToNV12(const uint8_t* jpeg,
         if (!SendMppPacket(packet)) {
             mpp_packet_deinit(&packet);
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] SendMppPacket failed submit=" << submit << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "SendMppPacket failed submit=%d", static_cast<int>(submit));
             }
             return false;
         }
@@ -906,7 +909,8 @@ bool RkMppMjpegDecoder::DecodeJpegToNV12(const uint8_t* jpeg,
             const RK_U32 discard = mpp_frame_get_discard(frame);
             if (err || discard) {
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] frame errinfo=" << err << " discard=" << discard << "\n";
+                    RFLOW_LOG_TAG_W("RkMppMjpeg", "frame errinfo=%u discard=%u", static_cast<unsigned>(err),
+                                    static_cast<unsigned>(discard));
                 }
                 mpp_frame_deinit(&frame);
                 return false;
@@ -916,8 +920,8 @@ bool RkMppMjpegDecoder::DecodeJpegToNV12(const uint8_t* jpeg,
             const int fh = static_cast<int>(mpp_frame_get_height(frame));
             if (fw != expect_w || fh != expect_h) {
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] size mismatch decoded " << fw << "x" << fh << " expect " << expect_w << "x"
-                              << expect_h << "\n";
+                    RFLOW_LOG_TAG_W("RkMppMjpeg", "size mismatch decoded %dx%d expect %dx%d", fw, fh, expect_w,
+                                    expect_h);
                 }
                 mpp_frame_deinit(&frame);
                 return false;
@@ -943,21 +947,21 @@ bool RkMppMjpegDecoder::DecodeJpegToNV12(const uint8_t* jpeg,
             decoded = CopyMppSemiPlanarToNv12(fmt, src_y, src_uv, hs, fw, fh, out_nv12);
             mpp_frame_deinit(&frame);
             if (!decoded && MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] CopyMppSemiPlanarToNv12 failed fmt=" << fmt << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "CopyMppSemiPlanarToNv12 failed fmt=%u", static_cast<unsigned>(fmt));
             }
             break;
         }
 
         if (!decoded && !need_resubmit) {
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] decode timeout (no output frame) submit=" << submit << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "decode timeout (no output frame) submit=%d", static_cast<int>(submit));
             }
             return false;
         }
     }
 
     if (!decoded && MjpegDecTraceEnabled()) {
-        std::cerr << "[RkMppMjpeg] DecodeJpegToNV12 failed after resubmit loop\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "DecodeJpegToNV12 failed after resubmit loop");
     }
     return decoded;
 }
@@ -1010,7 +1014,7 @@ bool RkMppMjpegDecoder::DecodeJpegToNativeDecFrame(const uint8_t* jpeg,
         if (!SendMppPacket(packet)) {
             mpp_packet_deinit(&packet);
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] NativeDec: SendMppPacket failed submit=" << submit << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "NativeDec: SendMppPacket failed submit=%d", static_cast<int>(submit));
             }
             return false;
         }
@@ -1036,7 +1040,8 @@ bool RkMppMjpegDecoder::DecodeJpegToNativeDecFrame(const uint8_t* jpeg,
             const RK_U32 discard = mpp_frame_get_discard(frame);
             if (err || discard) {
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] NativeDec: errinfo=" << err << " discard=" << discard << "\n";
+                    RFLOW_LOG_TAG_W("RkMppMjpeg", "NativeDec: errinfo=%u discard=%u", static_cast<unsigned>(err),
+                                    static_cast<unsigned>(discard));
                 }
                 mpp_frame_deinit(&frame);
                 return false;
@@ -1046,8 +1051,8 @@ bool RkMppMjpegDecoder::DecodeJpegToNativeDecFrame(const uint8_t* jpeg,
             const int fh = static_cast<int>(mpp_frame_get_height(frame));
             if (fw != expect_w || fh != expect_h) {
                 if (MjpegDecTraceEnabled()) {
-                    std::cerr << "[RkMppMjpeg] NativeDec: size mismatch decoded " << fw << "x" << fh << " expect "
-                              << expect_w << "x" << expect_h << "\n";
+                    RFLOW_LOG_TAG_W("RkMppMjpeg", "NativeDec: size mismatch decoded %dx%d expect %dx%d", fw, fh,
+                                    expect_w, expect_h);
                 }
                 mpp_frame_deinit(&frame);
                 return false;
@@ -1082,14 +1087,14 @@ bool RkMppMjpegDecoder::DecodeJpegToNativeDecFrame(const uint8_t* jpeg,
 
         if (!decoded && !need_resubmit) {
             if (MjpegDecTraceEnabled()) {
-                std::cerr << "[RkMppMjpeg] NativeDec: decode timeout submit=" << submit << "\n";
+                RFLOW_LOG_TAG_E("RkMppMjpeg", "NativeDec: decode timeout submit=%d", static_cast<int>(submit));
             }
             return false;
         }
     }
 
     if (!decoded && MjpegDecTraceEnabled()) {
-        std::cerr << "[RkMppMjpeg] DecodeJpegToNativeDecFrame failed after resubmit loop\n";
+        RFLOW_LOG_TAG_E("RkMppMjpeg", "DecodeJpegToNativeDecFrame failed after resubmit loop");
     }
     return decoded;
 }

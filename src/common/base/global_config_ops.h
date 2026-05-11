@@ -1,8 +1,8 @@
 #ifndef __RFLOW_COMMON_BASE_GLOBAL_CONFIG_OPS_H__
 #define __RFLOW_COMMON_BASE_GLOBAL_CONFIG_OPS_H__
 
-#include "common/abi/object_layouts.h"
-#include "common/base/logger.h"
+#include "abi/object_layouts.h"
+#include "base/logger.h"
 
 namespace rflow::common::base {
 

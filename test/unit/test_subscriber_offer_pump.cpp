@@ -15,7 +15,7 @@
 #include <thread>
 #include <vector>
 
-#include "core/thread/thread_pool.h"
+#include "thread/thread_pool.h"
 #include "subscriber_offer_pump.h"
 
 using rflow::service::impl::SubscriberOfferPump;

@@ -36,17 +36,27 @@ def main() -> int:
         t = read_text(p)
         if 'common/internal/' in t:
             violations.append(f"{p}: core should not include common/internal headers")
-        if 'common/public/logger_api.h' in t and p != core_base_logging:
-            violations.append(f"{p}: core should include core/base/logging.h instead of common/public/logger_api.h")
+        if 'public/logger_api.h' in t and p != core_base_logging:
+            violations.append(f"{p}: core should include core/base/logging.h instead of public/logger_api.h")
 
         # Core layering rule:
         # - rtc(domain) must not depend on platform implementation details
         # - backend_registry.cpp is the only bridge point that can reference platform/*
         if is_under(p, SRC / "core" / "rtc"):
-            if 'core/platform/' in t and p not in core_rtc_bridge_files:
+            if '"platform/' in t and p not in core_rtc_bridge_files:
                 violations.append(
-                    f"{p}: core/rtc domain cannot include core/platform directly "
+                    f"{p}: core/rtc domain cannot include platform/* directly "
                     f"(only backend_registry.cpp may bridge platform bindings)")
+
+    for p in collect_sources(SRC / "client"):
+        t = read_text(p)
+        if '"service/' in t:
+            violations.append(f"{p}: client must not include service headers")
+
+    for p in collect_sources(SRC / "service"):
+        t = read_text(p)
+        if '"client/' in t:
+            violations.append(f"{p}: service must not include client headers")
 
     for p in collect_sources(SRC):
         t = read_text(p)

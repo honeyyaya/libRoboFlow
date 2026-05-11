@@ -2,11 +2,11 @@
  * WebRTC P2P ??????(C++ TCP + epoll)
  * ????SDP/ICE???????????????JSON?? *
  * - ??epoll ???? accept??????????????register??????????????? * - ??????????fd % pool_size ??????????????????????? * - ??????????????SIGNALING_VERBOSE=1 ????/?????? */
-#include "core/signal/server.h"
+#include "signal/server.h"
 
-#include "core/net/posix_io.h"
-#include "core/signal/protocol.h"
-#include "common/base/env_reader.h"
+#include "net/posix_io.h"
+#include "signal/protocol.h"
+#include "base/env_reader.h"
 #include <arpa/inet.h>
 #include <atomic>
 #include <condition_variable>
@@ -21,7 +21,6 @@
 
 #include <chrono>
 #include <deque>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -29,6 +28,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "public/log_tagged.h"
 
 namespace {
 
@@ -64,7 +65,7 @@ size_t MaxShardQueueBytes() {
 
 void LogVerbose(const std::string& msg) {
     if (g_verbose.load(std::memory_order_relaxed)) {
-        std::cout << msg << std::endl;
+        RFLOW_LOGI("%s", msg.c_str());
     }
 }
 
@@ -128,7 +129,7 @@ void EpollCtl(int op, int fd, uint32_t events) {
     ev.events = events;
     ev.data.fd = fd;
     if (epoll_ctl(g_epoll_fd, op, fd, &ev) != 0) {
-        std::cerr << "[Signaling] epoll_ctl failed fd=" << fd << std::endl;
+        RFLOW_LOG_TAG_E("Signaling", "epoll_ctl failed fd=%d", fd);
     }
 }
 
@@ -591,7 +592,7 @@ int rflow::signal::server::RunMain(int argc, char* argv[]) {
 
     g_listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (g_listen_fd < 0) {
-        std::cerr << "socket() failed" << std::endl;
+        RFLOW_LOG_TAG_E("Signaling", "socket() failed");
         return 1;
     }
     int opt = 1;
@@ -604,19 +605,19 @@ int rflow::signal::server::RunMain(int argc, char* argv[]) {
     addr.sin_port = htons(static_cast<uint16_t>(port));
 
     if (bind(g_listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        std::cerr << "bind() failed" << std::endl;
+        RFLOW_LOG_TAG_E("Signaling", "bind() failed");
         close(g_listen_fd);
         return 1;
     }
     if (listen(g_listen_fd, 128) != 0) {
-        std::cerr << "listen() failed" << std::endl;
+        RFLOW_LOG_TAG_E("Signaling", "listen() failed");
         close(g_listen_fd);
         return 1;
     }
 
     g_epoll_fd = epoll_create1(EPOLL_CLOEXEC);
     if (g_epoll_fd < 0) {
-        std::cerr << "epoll_create1 failed" << std::endl;
+        RFLOW_LOG_TAG_E("Signaling", "epoll_create1 failed");
         close(g_listen_fd);
         return 1;
     }
@@ -625,7 +626,7 @@ int rflow::signal::server::RunMain(int argc, char* argv[]) {
     lev.events = EPOLLIN;
     lev.data.fd = g_listen_fd;
     if (epoll_ctl(g_epoll_fd, EPOLL_CTL_ADD, g_listen_fd, &lev) != 0) {
-        std::cerr << "epoll_ctl listen failed" << std::endl;
+        RFLOW_LOG_TAG_E("Signaling", "epoll_ctl listen failed");
         close(g_epoll_fd);
         close(g_listen_fd);
         return 1;
@@ -634,10 +635,11 @@ int rflow::signal::server::RunMain(int argc, char* argv[]) {
     std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler);
 
-    std::cout << "WebRTC P2P signaling server: 0.0.0.0:" << port << " (TCP epoll, pool=" << pool_threads << ")"
-              << std::endl;
-    std::cout << "Multi-stream: publisher register + stream_id; subscriber register + stream_id" << std::endl;
-    std::cout << "Verbose: SIGNALING_VERBOSE=1; threads: argv[2] or SIGNALING_POOL_THREADS" << std::endl;
+    RFLOW_LOG_TAG_I("Signaling", "WebRTC P2P signaling server: 0.0.0.0:%d (TCP epoll, pool=%zu)", port,
+                    pool_threads);
+    RFLOW_LOG_TAG_I("Signaling",
+                    "Multi-stream: publisher register + stream_id; subscriber register + stream_id");
+    RFLOW_LOG_TAG_I("Signaling", "Verbose: SIGNALING_VERBOSE=1; threads: argv[2] or SIGNALING_POOL_THREADS");
 
     std::vector<epoll_event> events(256);
 
@@ -737,6 +739,6 @@ int rflow::signal::server::RunMain(int argc, char* argv[]) {
     }
     g_workers.reset();
 
-    std::cout << "Signaling server exited" << std::endl;
+    RFLOW_LOG_TAG_I("Signaling", "server exited");
     return 0;
 }

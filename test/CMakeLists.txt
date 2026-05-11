@@ -11,11 +11,12 @@
 
 find_package(GTest REQUIRED)
 find_package(Threads REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-# 全局 include：所有单测都能 #include "rflow/..." / "common/..." / "core/..." / "service/..."
+# 全局 include：单测源码使用与 SDK 一致的 "base/..." / "rtc/..." 前缀（分别以 src/common、src/core 为根）。
 set(_RFLOW_TEST_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/common
     ${CMAKE_SOURCE_DIR}/src/core
 )
 
@@ -117,5 +118,12 @@ add_rflow_unit_test(test_thread_pool
         unit/test_thread_pool.cpp
         ${CMAKE_SOURCE_DIR}/src/core/thread/thread_pool.cpp
         ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp)
+
+# -------------------------------------------------------------------- ABI checks (Python, no linkage)
+add_test(
+    NAME unit.check_stream_stats_abi
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_stream_stats_abi.py
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(unit.check_stream_stats_abi PROPERTIES LABELS abi)
 
 message(STATUS "libRoboFlow unit tests enabled (GTest ${GTEST_VERSION})")

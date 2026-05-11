@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "common/base/lifecycle_fsm.h"
+#include "base/lifecycle_fsm.h"
 
 namespace {
 enum class TestState { kUninit, kInited, kConnecting, kConnected };

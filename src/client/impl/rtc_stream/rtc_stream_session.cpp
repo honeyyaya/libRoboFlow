@@ -1,30 +1,147 @@
 #include "rtc_stream_session.h"
 
-#include "core/rtc/rtc.h"
-#include "core/rtc/sdp_observers.h"
-#include "core/rtc/stats_observer.h"
-#include "core/signal/tcp_session.h"
+#include "rtc/ice_nominated_pair_rtt.h"
+#include "rtc/inbound_video_stats_aggregation.h"
+#include "rtc/rtc_sync_stats.h"
+#include "rtc/rtc.h"
+#include "rtc/sdp_observers.h"
+#include "rtc/stats_observer.h"
+#include "signal/tcp_session.h"
+#include "base/timing_log.h"
 
-#include "common/media/frame_types.h"
-#include "common/public/logger_api.h"
+#include "media/frame_types.h"
+#include "public/logger_api.h"
 #include "rflow/librflow_common.h"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "api/jsep.h"
 #include "api/make_ref_counted.h"
 #include "api/media_types.h"
-#include "api/rtc_error.h"
+#include "api/rtp_parameters.h"
 #include "api/rtp_receiver_interface.h"
 #include "api/rtp_transceiver_interface.h"
+#include "api/rtc_error.h"
 #include "api/stats/rtc_stats_collector_callback.h"
+#include "api/stats/rtcstats_objects.h"
+#include "api/video_codecs/h264_profile_level_id.h"
 #include "rtc_base/thread.h"
 
 namespace rflow::client::impl {
+
+namespace {
+
+constexpr double kDefaultReceiverVideoJitterBufferMinDelaySeconds = 0.02;
+
+double ReadReceiverJitterMinDelaySeconds() {
+    if (const char* v = std::getenv("RFLOW_RECEIVER_JITTER_MIN_DELAY_MS")) {
+        if (v[0] != '\0') {
+            const int ms = std::atoi(v);
+            if (ms >= 0 && ms <= 1000) {
+                return static_cast<double>(ms) / 1000.0;
+            }
+        }
+    }
+    return kDefaultReceiverVideoJitterBufferMinDelaySeconds;
+}
+
+bool IsLowLatencyH264Capability(const webrtc::RtpCodecCapability& codec) {
+    if (codec.kind != webrtc::MediaType::VIDEO || codec.name != "H264") {
+        return false;
+    }
+    const std::optional<webrtc::H264ProfileLevelId> profile =
+        webrtc::ParseSdpForH264ProfileLevelId(codec.parameters);
+    if (!profile.has_value()) return false;
+    return profile->profile == webrtc::H264Profile::kProfileConstrainedBaseline ||
+           profile->profile == webrtc::H264Profile::kProfileBaseline;
+}
+
+std::vector<webrtc::RtpCodecCapability> BuildLowLatencyVideoCodecPreferences(
+    const webrtc::RtpCapabilities& capabilities) {
+    std::vector<webrtc::RtpCodecCapability> preferred_h264;
+    std::vector<webrtc::RtpCodecCapability> other_h264;
+    std::vector<webrtc::RtpCodecCapability> other_media;
+    std::vector<webrtc::RtpCodecCapability> auxiliary;
+    std::vector<int>                        allowed_pts;
+
+    for (const auto& codec : capabilities.codecs) {
+        if (codec.kind != webrtc::MediaType::VIDEO) continue;
+        if (codec.IsMediaCodec()) {
+            if (IsLowLatencyH264Capability(codec)) {
+                preferred_h264.push_back(codec);
+            } else if (codec.name == "H264") {
+                other_h264.push_back(codec);
+            } else {
+                other_media.push_back(codec);
+            }
+            continue;
+        }
+        auxiliary.push_back(codec);
+    }
+
+    if (preferred_h264.empty() && other_h264.empty()) {
+        return {};
+    }
+
+    auto collect_pt = [&allowed_pts](const std::vector<webrtc::RtpCodecCapability>& list) {
+        for (const auto& c : list) {
+            if (c.preferred_payload_type.has_value()) {
+                allowed_pts.push_back(*c.preferred_payload_type);
+            }
+        }
+    };
+    collect_pt(preferred_h264);
+    collect_pt(other_h264);
+    collect_pt(other_media);
+
+    std::vector<webrtc::RtpCodecCapability> result = preferred_h264;
+    result.insert(result.end(), other_h264.begin(), other_h264.end());
+    result.insert(result.end(), other_media.begin(), other_media.end());
+    for (const auto& codec : auxiliary) {
+        if (codec.name == "rtx") {
+            const auto apt_it = codec.parameters.find("apt");
+            if (apt_it == codec.parameters.end()) continue;
+            const int apt = std::atoi(apt_it->second.c_str());
+            if (std::find(allowed_pts.begin(), allowed_pts.end(), apt) == allowed_pts.end()) {
+                continue;
+            }
+        }
+        result.push_back(codec);
+    }
+    return result;
+}
+
+bool ReadEnvBoolDefaultWd(const char* name, bool def) {
+    const char* v = std::getenv(name);
+    if (!v || !v[0]) return def;
+    if (v[0] == '0' || v[0] == 'n' || v[0] == 'N' || v[0] == 'f' || v[0] == 'F') return false;
+    if (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T') return true;
+    return def;
+}
+
+int64_t ReadEnvIntWd(const char* name, int64_t def, int64_t lo, int64_t hi) {
+    const char* v = std::getenv(name);
+    if (!v || !v[0]) return def;
+    const int64_t n = std::atoll(v);
+    if (n < lo || n > hi) return def;
+    return n;
+}
+
+int64_t MonoTimeMsWd() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+}  // namespace
 
 class RtcStreamSession::FrameAdapter final
     : public webrtc::VideoSinkInterface<webrtc::VideoFrame> {
@@ -94,7 +211,11 @@ class RtcStreamSession::PeerConnectionObserverImpl : public webrtc::PeerConnecti
 
         auto receiver = transceiver->receiver();
         if (!receiver) return;
-        receiver->SetJitterBufferMinimumDelay(std::optional<double>(0.0));
+        const double floor_s = ReadReceiverJitterMinDelaySeconds();
+        receiver->SetJitterBufferMinimumDelay(std::optional<double>(floor_s));
+        stream_->jitter_min_delay_seconds_.store(floor_s, std::memory_order_release);
+        RFLOW_LOGI("[pull idx=%d] video jitter min delay floor = %.1f ms",
+                   stream_->index_, floor_s * 1000.0);
 
         auto track = receiver->track();
         if (!track ||
@@ -130,6 +251,11 @@ RtcStreamSession::RtcStreamSession(
       factory_(std::move(factory)) {
     observer_ = std::make_unique<PeerConnectionObserverImpl>(this);
     frame_adapter_ = std::make_unique<FrameAdapter>(this);
+    watchdog_enabled_ = ReadEnvBoolDefaultWd("RFLOW_RECEIVER_KEYFRAME_WATCHDOG", true);
+    watchdog_stuck_threshold_ms_ =
+        ReadEnvIntWd("RFLOW_RECEIVER_WATCHDOG_STUCK_MS", 300, 50, 5000);
+    watchdog_cooldown_ms_ =
+        ReadEnvIntWd("RFLOW_RECEIVER_WATCHDOG_COOLDOWN_MS", 600, 100, 10000);
 }
 
 RtcStreamSession::~RtcStreamSession() {
@@ -184,11 +310,17 @@ bool RtcStreamSession::Start() {
         RFLOW_LOGI("[pull idx=%d] signaling room=%s (须与推流 stream_id 一致), waiting for offer...",
                    index_, room.c_str());
     }
+
+    if (watchdog_enabled_ || rflow::timing_log::IsEnabled()) {
+        StartWatchdogThread();
+    }
     return true;
 }
 
 void RtcStreamSession::Close() {
     if (closed_.exchange(true, std::memory_order_acq_rel)) return;
+
+    StopWatchdogThread();
 
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -250,7 +382,9 @@ void RtcStreamSession::CreatePeerConnectionLocked() {
 
     webrtc::PeerConnectionInterface::RTCConfiguration config;
     config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
+    config.audio_jitter_buffer_max_packets = 1;
     config.audio_jitter_buffer_min_delay_ms = 0;
+    config.audio_jitter_buffer_fast_accelerate = true;
 
     webrtc::PeerConnectionInterface::IceServer ice_server;
     ice_server.urls.push_back("stun:stun.l.google.com:19302");
@@ -393,6 +527,31 @@ void RtcStreamSession::HandleOffer(const std::string& sdp) {
 void RtcStreamSession::DoCreateAnswerAfterSetRemote() {
     if (!peer_connection_) return;
 
+    if (factory_) {
+        const webrtc::RtpCapabilities caps =
+            factory_->GetRtpReceiverCapabilities(webrtc::MediaType::VIDEO);
+        std::vector<webrtc::RtpCodecCapability> preferred = BuildLowLatencyVideoCodecPreferences(caps);
+        if (!preferred.empty()) {
+            for (const auto& transceiver : peer_connection_->GetTransceivers()) {
+                if (!transceiver || transceiver->media_type() != webrtc::MediaType::VIDEO) {
+                    continue;
+                }
+                const webrtc::RTCError err = transceiver->SetCodecPreferences(preferred);
+                if (!err.ok()) {
+                    RFLOW_LOGW("[pull idx=%d] SetCodecPreferences failed: %s",
+                               index_, err.message());
+                } else {
+                    RFLOW_LOGI("[pull idx=%d] SetCodecPreferences ok, codecs=%zu",
+                               index_, preferred.size());
+                }
+            }
+        } else {
+            RFLOW_LOGD("[pull idx=%d] no preferred low-latency video codec list, skip "
+                       "SetCodecPreferences",
+                       index_);
+        }
+    }
+
     auto self = shared_from_this();
     pending_create_answer_observer_ = rflow::core::rtc::MakeCreateSdpObserver(
         [self](std::unique_ptr<webrtc::SessionDescriptionInterface> desc) {
@@ -516,92 +675,309 @@ bool RtcStreamSession::CollectStats(librflow_stream_stats_s* out_stats) {
         return false;
     }
 
-    struct Snapshot {
-        bool done = false;
-        uint64_t in_bytes = 0;
-        uint64_t in_pkts = 0;
-        uint32_t lost_pkts = 0;
-        uint32_t fps = 0;
-        uint32_t jitter_ms = 0;
-        uint32_t freeze_count = 0;
-        uint32_t decode_fail_count = 0;
-        uint32_t rtt_ms = 0;
-        uint32_t bitrate_kbps = 0;
-    };
+    rflow::core::rtc::InboundVideoRtpAggregation agg;
+    uint32_t                   rtt_ms                   = 0;
+    uint32_t                   available_incoming_kbps = 0;
 
-    std::mutex mu;
-    std::condition_variable cv;
-    Snapshot snapshot;
-
-    auto callback = rflow::core::rtc::MakeStatsCollectorObserver(
-        [&mu, &cv, &snapshot](const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
-            Snapshot local;
-            if (report) {
-                for (const auto* inbound : report->GetStatsOfType<webrtc::RTCInboundRtpStreamStats>()) {
-                    if (!inbound || !inbound->kind || *inbound->kind != "video") continue;
-
-                    if (inbound->bytes_received) local.in_bytes += *inbound->bytes_received;
-                    if (inbound->packets_received) local.in_pkts += *inbound->packets_received;
-                    if (inbound->packets_lost && *inbound->packets_lost > 0) {
-                        local.lost_pkts += static_cast<uint32_t>(*inbound->packets_lost);
-                    }
-                    if (inbound->frames_per_second) {
-                        local.fps = std::max(local.fps,
-                                             static_cast<uint32_t>(*inbound->frames_per_second + 0.5));
-                    }
-                    if (inbound->jitter) {
-                        local.jitter_ms = std::max(
-                            local.jitter_ms, static_cast<uint32_t>(*inbound->jitter * 1000.0 + 0.5));
-                    }
-                    if (inbound->freeze_count) {
-                        local.freeze_count = std::max(local.freeze_count, *inbound->freeze_count);
-                    }
-                    if (inbound->frames_dropped) {
-                        local.decode_fail_count =
-                            std::max(local.decode_fail_count, *inbound->frames_dropped);
-                    }
-                }
-
-                for (const auto* pair : report->GetStatsOfType<webrtc::RTCIceCandidatePairStats>()) {
-                    if (!pair) continue;
-                    if (pair->current_round_trip_time) {
-                        local.rtt_ms = std::max(
-                            local.rtt_ms,
-                            static_cast<uint32_t>(*pair->current_round_trip_time * 1000.0 + 0.5));
-                    }
-                    if (pair->available_incoming_bitrate) {
-                        local.bitrate_kbps = std::max(
-                            local.bitrate_kbps,
-                            static_cast<uint32_t>(*pair->available_incoming_bitrate / 1000.0 + 0.5));
-                    }
-                }
-            }
-
-            {
-                std::lock_guard<std::mutex> lk(mu);
-                snapshot = local;
-                snapshot.done = true;
-            }
-            cv.notify_one();
+    const bool synced = rflow::core::rtc::SyncGetPeerConnectionStats(
+        peer_connection_.get(),
+        rflow::core::rtc::SyncGetPeerConnectionStatsTimeout(),
+        [&](const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
+            rflow::core::rtc::AccumulateInboundVideoRtpFromReport(report, &agg);
+            rflow::core::rtc::AccumulateIncomingIcePairMetricsFromReport(report,
+                                                                         &rtt_ms,
+                                                                         &available_incoming_kbps);
         });
-
-    peer_connection_->GetStats(callback.get());
-
-    std::unique_lock<std::mutex> lk(mu);
-    if (!cv.wait_for(lk, std::chrono::milliseconds(1500), [&snapshot] { return snapshot.done; })) {
+    if (!synced) {
         return false;
     }
 
-    out_stats->in_bound_bytes = snapshot.in_bytes;
-    out_stats->in_bound_pkts = snapshot.in_pkts;
-    out_stats->lost_pkts = snapshot.lost_pkts;
-    out_stats->fps = snapshot.fps;
-    out_stats->jitter_ms = snapshot.jitter_ms;
-    out_stats->freeze_count = snapshot.freeze_count;
-    out_stats->decode_fail_count = snapshot.decode_fail_count;
-    out_stats->rtt_ms = snapshot.rtt_ms;
-    out_stats->bitrate_kbps = snapshot.bitrate_kbps;
+    out_stats->in_bound_bytes = agg.bytes_received;
+    out_stats->in_bound_pkts = agg.packets_received;
+    out_stats->lost_pkts = agg.lost_pkts_positive_sum;
+    out_stats->fps = agg.fps_uint;
+    out_stats->jitter_ms = agg.jitter_ms_max;
+    out_stats->freeze_count = agg.freeze_count_max;
+    out_stats->decode_fail_count = static_cast<uint32_t>(
+        std::min<uint64_t>(agg.frames_dropped_max, static_cast<uint64_t>(UINT32_MAX)));
+    out_stats->rtt_ms = rtt_ms;
+
+    out_stats->jitter_buffer_delay_ms =
+        (agg.jitter_buffer_emitted_count > 0)
+            ? static_cast<uint32_t>(
+                  agg.jitter_buffer_delay_seconds * 1000.0 /
+                      static_cast<double>(agg.jitter_buffer_emitted_count) +
+                  0.5)
+            : 0;
+    out_stats->jitter_min_delay_ms = static_cast<uint32_t>(
+        jitter_min_delay_seconds_.load(std::memory_order_relaxed) * 1000.0 + 0.5);
+
+    {
+        const int64_t now_mono_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch())
+                                        .count();
+        std::lock_guard<std::mutex> blk(stats_bitrate_mu_);
+        const uint64_t prev_bytes = prev_stats_bytes_received_;
+        const int64_t  prev_ms    = prev_stats_collect_mono_ms_;
+        uint32_t       kbps       = 0;
+        if (prev_ms > 0 && now_mono_ms > prev_ms && agg.bytes_received >= prev_bytes) {
+            const uint64_t d_bytes = agg.bytes_received - prev_bytes;
+            const int64_t  d_ms    = now_mono_ms - prev_ms;
+            kbps = static_cast<uint32_t>((d_bytes * 8ULL) / static_cast<uint64_t>(d_ms));
+        } else if (available_incoming_kbps > 0) {
+            kbps = available_incoming_kbps;
+        }
+        prev_stats_bytes_received_  = agg.bytes_received;
+        prev_stats_collect_mono_ms_ = now_mono_ms;
+        last_bitrate_kbps_          = kbps;
+        out_stats->bitrate_kbps     = kbps;
+    }
     return true;
 }
 
+void RtcStreamSession::StartWatchdogThread() {
+    bool expected = false;
+    if (!stats_running_.compare_exchange_strong(expected, true,
+                                                std::memory_order_acq_rel)) {
+        return;
+    }
+    prev_frames_decoded_          = 0;
+    prev_packets_received_        = 0;
+    last_decode_progress_mono_ms_ = MonoTimeMsWd();
+    last_keyframe_kick_mono_ms_   = 0;
+    last_keyframe_kick_packets_   = 0;
+    stats_thread_ = std::thread([this] { RunWatchdogLoop(); });
+}
+
+void RtcStreamSession::StopWatchdogThread() {
+    if (!stats_running_.exchange(false, std::memory_order_acq_rel)) return;
+    stats_cv_.notify_all();
+    if (stats_thread_.joinable() &&
+        stats_thread_.get_id() != std::this_thread::get_id()) {
+        stats_thread_.join();
+    }
+}
+
+void RtcStreamSession::RunWatchdogLoop() {
+    while (stats_running_.load(std::memory_order_acquire)) {
+        TickWatchdog();
+        std::unique_lock<std::mutex> lk(stats_cv_mu_);
+        stats_cv_.wait_for(lk, std::chrono::seconds(1), [this] {
+            return !stats_running_.load(std::memory_order_acquire);
+        });
+    }
+}
+
+void RtcStreamSession::TickWatchdog() {
+    if (!peer_connection_) return;
+    auto self = shared_from_this();
+    auto cb = rflow::core::rtc::MakeStatsCollectorObserver(
+        [self](const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
+            self->OnWatchdogStats(report);
+        });
+    peer_connection_->GetStats(cb.get());
+}
+
+void RtcStreamSession::OnWatchdogStats(
+    const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
+    if (!report || !peer_connection_ || closed_.load(std::memory_order_acquire)) return;
+
+    rflow::core::rtc::InboundVideoRtpAggregation agg;
+    rflow::core::rtc::AccumulateInboundVideoRtpFromReport(report, &agg);
+    if (!agg.have_video) return;
+
+    const uint64_t frames_decoded      = agg.frames_decoded;
+    const uint64_t packets_received    = agg.packets_received;
+    const int64_t  packets_lost_signed = agg.packets_lost_signed;
+    const uint64_t frames_dropped      = agg.frames_dropped_sum;
+    const uint64_t bytes_received      = agg.bytes_received;
+    const uint64_t fec_packets         = agg.fec_packets_received;
+    const uint32_t nack_count          = agg.nack_count_max;
+    const uint32_t pli_count           = agg.pli_count_max;
+    const uint32_t fir_count           = agg.fir_count_max;
+    const uint32_t frame_w             = agg.frame_width;
+    const uint32_t frame_h             = agg.frame_height;
+    double         fps                 = agg.fps_double;
+    double         total_decode_time_s        = agg.total_decode_time_s;
+    double         total_processing_delay_s   = agg.total_processing_delay_s;
+    double         total_assembly_time_s      = agg.total_assembly_time_s;
+    double         jitter_s                   = agg.jitter_seconds_max;
+    double         jb_delay_s                 = agg.jitter_buffer_delay_seconds;
+    const uint64_t jb_emitted                 = agg.jitter_buffer_emitted_count;
+    std::string    decoder_impl               = agg.decoder_implementation;
+    std::string    codec_id                   = agg.codec_id;
+
+    const int64_t now_ms       = MonoTimeMsWd();
+    const uint64_t delta_frames =
+        (frames_decoded >= prev_frames_decoded_) ? (frames_decoded - prev_frames_decoded_) : 0;
+
+    if (watchdog_enabled_) {
+        if (delta_frames > 0) {
+            last_decode_progress_mono_ms_ = now_ms;
+            last_keyframe_kick_packets_     = packets_received;
+        } else if (last_decode_progress_mono_ms_ == 0) {
+            last_decode_progress_mono_ms_ = now_ms;
+        }
+
+        const int64_t stuck_ms           = now_ms - last_decode_progress_mono_ms_;
+        const bool    packets_still_flowing = packets_received > last_keyframe_kick_packets_;
+        const bool    cooldown_elapsed =
+            last_keyframe_kick_mono_ms_ == 0 ||
+            (now_ms - last_keyframe_kick_mono_ms_) >= watchdog_cooldown_ms_;
+
+        if (delta_frames == 0 && packets_still_flowing && stuck_ms >= watchdog_stuck_threshold_ms_ &&
+            cooldown_elapsed) {
+            RFLOW_LOGW("[pull idx=%d] keyframe watchdog: decoder stalled %lld ms, packets=%llu; "
+                       "kicking jitter buffer to force PLI",
+                       index_, static_cast<long long>(stuck_ms),
+                       static_cast<unsigned long long>(packets_received));
+            KickJitterBufferForKeyframe();
+            last_keyframe_kick_mono_ms_ = now_ms;
+            last_keyframe_kick_packets_ = packets_received;
+        }
+    }
+
+    if (rflow::timing_log::IsEnabled()) {
+        rflow::core::rtc::IceNominatedRttAggregation ice_rtt;
+        rflow::core::rtc::AccumulateNominatedIcePairRttFromReport(report, &ice_rtt);
+        const double cur_rtt_ms =
+            ice_rtt.current_round_trip_time_s * 1000.0;
+        const double avg_rtt_ms =
+            (ice_rtt.responses_received > 0)
+                ? (ice_rtt.total_round_trip_time_s /
+                   static_cast<double>(ice_rtt.responses_received)) *
+                      1000.0
+                : cur_rtt_ms;
+
+        const uint64_t d_decoded =
+            stats_log_baseline_done_ && frames_decoded >= prev_frames_decoded_
+                ? frames_decoded - prev_frames_decoded_
+                : 0;
+        const uint64_t d_dropped =
+            stats_log_baseline_done_ && frames_dropped >= prev_frames_dropped_
+                ? frames_dropped - prev_frames_dropped_
+                : 0;
+        const double d_decode_time_s =
+            stats_log_baseline_done_ && total_decode_time_s >= prev_total_decode_time_s_
+                ? total_decode_time_s - prev_total_decode_time_s_
+                : 0.0;
+        const double d_processing_s =
+            stats_log_baseline_done_ && total_processing_delay_s >= prev_total_processing_delay_s_
+                ? total_processing_delay_s - prev_total_processing_delay_s_
+                : 0.0;
+        const double d_assembly_s =
+            stats_log_baseline_done_ && total_assembly_time_s >= prev_total_assembly_time_s_
+                ? total_assembly_time_s - prev_total_assembly_time_s_
+                : 0.0;
+        const double avg_decode_ms =
+            (d_decoded > 0) ? (d_decode_time_s * 1000.0 / static_cast<double>(d_decoded)) : 0.0;
+        const double avg_processing_ms =
+            (d_decoded > 0) ? (d_processing_s * 1000.0 / static_cast<double>(d_decoded)) : 0.0;
+        const double avg_assembly_ms =
+            (d_decoded > 0) ? (d_assembly_s * 1000.0 / static_cast<double>(d_decoded)) : 0.0;
+
+        const double jb_delay_ms =
+            (jb_emitted > 0) ? (jb_delay_s * 1000.0 / static_cast<double>(jb_emitted)) : 0.0;
+        const uint64_t bytes_kb = bytes_received / 1024ULL;
+
+        const int64_t lost = packets_lost_signed;
+        const uint64_t pos_lost     = (lost > 0) ? static_cast<uint64_t>(lost) : 0;
+        const uint64_t total_for_loss = packets_received + pos_lost;
+        const double loss_pct =
+            (total_for_loss > 0)
+                ? (static_cast<double>(pos_lost) * 100.0 / static_cast<double>(total_for_loss))
+                : 0.0;
+        const double jitter_ms = jitter_s * 1000.0;
+
+        const char* decoder_cstr = decoder_impl.empty() ? "unknown" : decoder_impl.c_str();
+
+        std::string codec_mime;
+        std::string codec_fmtp;
+        uint32_t    codec_pt      = 0;
+        bool        has_codec_pt  = false;
+        if (!codec_id.empty()) {
+            if (const auto* codec = report->GetAs<webrtc::RTCCodecStats>(codec_id)) {
+                if (codec->mime_type) codec_mime = *codec->mime_type;
+                if (codec->sdp_fmtp_line) codec_fmtp = *codec->sdp_fmtp_line;
+                if (codec->payload_type) {
+                    codec_pt     = *codec->payload_type;
+                    has_codec_pt = true;
+                }
+            }
+        }
+
+        const std::string codec_label =
+            codec_mime.empty()
+                ? std::string("unknown")
+                : (has_codec_pt ? codec_mime + " pt=" + std::to_string(codec_pt) : codec_mime);
+
+        RFLOW_LOGD(
+            "[Pipeline/Video] %ux%u | decoder=%s | codec=%s | fps=%.1f | "
+            "decoded=+%llu total=%llu | dropped=+%llu total=%llu | recv=%llu KB",
+            frame_w, frame_h, decoder_cstr, codec_label.c_str(), fps,
+            static_cast<unsigned long long>(d_decoded),
+            static_cast<unsigned long long>(frames_decoded),
+            static_cast<unsigned long long>(d_dropped),
+            static_cast<unsigned long long>(frames_dropped),
+            static_cast<unsigned long long>(bytes_kb));
+
+        const double jitter_min_ms =
+            jitter_min_delay_seconds_.load(std::memory_order_relaxed) * 1000.0;
+        RFLOW_LOGD(
+            "[Pipeline/Latency] jb_avg=%.1f ms | decode_avg=%.2f ms | "
+            "processing_avg=%.2f ms | assembly_avg=%.2f ms | jitter_min=%.1f ms",
+            jb_delay_ms, avg_decode_ms, avg_processing_ms, avg_assembly_ms, jitter_min_ms);
+
+        if (codec_mime != last_codec_mime_ || codec_fmtp != last_codec_fmtp_ ||
+            codec_pt != last_codec_payload_type_) {
+            if (!codec_mime.empty() || !codec_fmtp.empty()) {
+                RFLOW_LOGD("[Pipeline/Codec] mime=%s pt=%u fmtp=%s",
+                           codec_mime.empty() ? "unknown" : codec_mime.c_str(),
+                           codec_pt,
+                           codec_fmtp.empty() ? "" : codec_fmtp.c_str());
+            }
+            last_codec_mime_         = codec_mime;
+            last_codec_fmtp_         = codec_fmtp;
+            last_codec_payload_type_ = codec_pt;
+        }
+
+        RFLOW_LOGD(
+            "[Pipeline/Net] rtt=%.1f ms | rtt_avg=%.1f ms | jitter=%.1f ms | "
+            "loss=%.2f%% (%lld/%llu) | nack=%u | pli=%u | fir=%u | fec=%llu",
+            cur_rtt_ms, avg_rtt_ms, jitter_ms, loss_pct,
+            static_cast<long long>(lost),
+            static_cast<unsigned long long>(total_for_loss),
+            nack_count, pli_count, fir_count,
+            static_cast<unsigned long long>(fec_packets));
+
+        prev_frames_dropped_            = frames_dropped;
+        prev_total_decode_time_s_       = total_decode_time_s;
+        prev_total_processing_delay_s_  = total_processing_delay_s;
+        prev_total_assembly_time_s_     = total_assembly_time_s;
+        stats_log_baseline_done_       = true;
+    }
+
+    prev_frames_decoded_   = frames_decoded;
+    prev_packets_received_ = packets_received;
+}
+
+void RtcStreamSession::KickJitterBufferForKeyframe() {
+    if (!peer_connection_) return;
+    const double floor_s = jitter_min_delay_seconds_.load(std::memory_order_acquire);
+    auto kick = [this, floor_s]() {
+        if (!peer_connection_) return;
+        for (const auto& transceiver : peer_connection_->GetTransceivers()) {
+            if (!transceiver || transceiver->media_type() != webrtc::MediaType::VIDEO) {
+                continue;
+            }
+            auto receiver = transceiver->receiver();
+            if (!receiver) continue;
+            receiver->SetJitterBufferMinimumDelay(std::optional<double>(0.3));
+            receiver->SetJitterBufferMinimumDelay(std::optional<double>(floor_s));
+        }
+    };
+    RunOnPeerConnectionSignalingThread(kick);
+}
+
 }  // namespace rflow::client::impl
+

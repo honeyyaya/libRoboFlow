@@ -1,7 +1,7 @@
 #ifndef __RFLOW_COMMON_ABI_OBJECT_ACCESS_OPS_H__
 #define __RFLOW_COMMON_ABI_OBJECT_ACCESS_OPS_H__
 
-#include "common/abi/handle.h"
+#include "abi/handle.h"
 
 #include <cstdint>
 #include <new>
