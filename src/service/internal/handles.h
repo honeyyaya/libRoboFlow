@@ -59,6 +59,7 @@ struct librflow_svc_stream_param_s {
     bool               enable_transcode;
     std::string        video_device_path;
     uint32_t           video_device_index;
+    rflow_degradation_preference_t degradation_preference{RFLOW_DEGRADATION_MAINTAIN_FRAMERATE};
 
     /* 追踪每个字段是否被 setter 显式赋值过（NOT_FOUND vs 显式 0 的消歧） */
     bool               has_in_codec;
@@ -74,6 +75,7 @@ struct librflow_svc_stream_param_s {
     bool               has_enable_transcode;
     bool               has_video_device_path;
     bool               has_video_device_index;
+    bool               has_degradation_preference{false};
 };
 
 struct librflow_svc_stream_cb_s {

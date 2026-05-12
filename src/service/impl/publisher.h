@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "rflow/Service/librflow_service_api.h"
@@ -48,6 +49,7 @@ public:
               bool use_internal_video_source,
               const std::string& video_device_path,
               int video_device_index,
+              std::optional<std::string> degradation_pref_override,
               const PublisherPullCallbacks& cbs);
     ~Publisher();
 
@@ -90,6 +92,7 @@ private:
     bool          use_internal_video_source_{false};
     std::string   video_device_path_;
     int           video_device_index_{0};
+    std::optional<std::string> degradation_pref_override_;
     PublisherPullCallbacks cbs_{};
 
     std::unique_ptr<PushStreamer>    streamer_;

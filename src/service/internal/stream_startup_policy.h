@@ -5,6 +5,7 @@
 #include "state.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace rflow::service::internal {
@@ -23,6 +24,8 @@ struct ResolvedPublisherStartup {
     std::string signal_url;
     std::string device_id;
     std::string stream_id;
+    /* 由 stream_param 显式设置时非空，覆盖 RFLOW_SVC_DEGRADATION_PREFERENCE */
+    std::optional<std::string> degradation_pref_explicit;
 };
 
 ResolvedPublisherStartup ResolvePublisherStartup(const librflow_svc_stream_s& stream,

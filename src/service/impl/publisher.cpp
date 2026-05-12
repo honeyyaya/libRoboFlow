@@ -31,6 +31,7 @@ Publisher::Publisher(int32_t stream_idx,
                      bool use_internal_video_source,
                      const std::string& video_device_path,
                      int video_device_index,
+                     std::optional<std::string> degradation_pref_override,
                      const PublisherPullCallbacks& cbs)
     : stream_idx_(stream_idx),
       in_codec_(in_codec),
@@ -47,6 +48,7 @@ Publisher::Publisher(int32_t stream_idx,
       use_internal_video_source_(use_internal_video_source),
       video_device_path_(video_device_path),
       video_device_index_(video_device_index >= 0 ? video_device_index : 0),
+      degradation_pref_override_(std::move(degradation_pref_override)),
       cbs_(cbs) {}
 
 Publisher::~Publisher() {
@@ -74,7 +76,9 @@ bool Publisher::Start() {
     if (min_kbps_ == max_kbps_) {
         cfg.common.bitrate_mode = "cbr";
     }
-    {
+    if (degradation_pref_override_) {
+        cfg.common.degradation_preference = LowerCopy(*degradation_pref_override_);
+    } else {
         const std::string deg =
             rflow::core::runtime::ReadString("RFLOW_SVC_DEGRADATION_PREFERENCE");
         cfg.common.degradation_preference = deg.empty() ? "maintain_framerate" : deg;

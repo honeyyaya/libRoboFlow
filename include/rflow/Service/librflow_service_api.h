@@ -56,6 +56,13 @@ typedef enum {
     RFLOW_BIND_FAILED    = 2,
 } rflow_bind_state_t;
 
+/* WebRTC 发送端弱网降质策略，与 streams.conf DEGRADATION_PREFERENCE / RFLOW_SVC_DEGRADATION_PREFERENCE 一致 */
+typedef enum {
+    RFLOW_DEGRADATION_MAINTAIN_FRAMERATE  = 0, /* 倾向保帧率、降分辨率 */
+    RFLOW_DEGRADATION_MAINTAIN_RESOLUTION = 1, /* 倾向保分辨率、降帧率 */
+    RFLOW_DEGRADATION_BALANCED            = 2,
+} rflow_degradation_preference_t;
+
 /******************************************************************************
  *                          Opaque Handles — Service 专属
  ******************************************************************************/
@@ -204,6 +211,10 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_enable_transcode(l
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_video_device_path (librflow_svc_stream_param_t p, const char *device_path);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_video_device_index(librflow_svc_stream_param_t p, uint32_t device_index);
 
+/* 显式设置 RTP encoding degradation_preference；未设置时仍走 RFLOW_SVC_DEGRADATION_PREFERENCE（缺省 maintain_framerate） */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_degradation_preference(librflow_svc_stream_param_t          p,
+                                                                                    rflow_degradation_preference_t       pref);
+
 /*
  * Getter：读回当前设置值。统一返回 rflow_err_t，以消除"未设置"与"显式设为 0 /
  * UNKNOWN"的语义歧义：
@@ -234,6 +245,8 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_video_device_path 
                                                                                  uint32_t *out_needed);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_video_device_index(librflow_svc_stream_param_t p,
                                                                                  uint32_t *out_device_index);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_degradation_preference(librflow_svc_stream_param_t    p,
+                                                                                     rflow_degradation_preference_t *out_pref);
 
 /******************************************************************************
  *                          StreamCb（流本地观测回调，可选）

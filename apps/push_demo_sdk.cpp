@@ -12,6 +12,9 @@
  *   stream_idx    = 0
  *   camera        = Linux 下优先 RFLOW_PUSH_DEMO_CAMERA，其次 /dev/video0；其他平台默认索引 0
  *
+ * degradation_preference（弱网降质）：示例中显式调用 maintain_framerate；亦可省略以使用
+ * RFLOW_SVC_DEGRADATION_PREFERENCE 环境变量（缺省同 maintain_framerate）。
+ *
  * 说明:
  *   本 demo 只调用 SDK，采集/编码/推流全部由 SDK 内部完成。
  */
@@ -114,6 +117,7 @@ int main(int argc, char** argv) {
     librflow_svc_stream_param_set_out_size(sp, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     librflow_svc_stream_param_set_fps(sp, static_cast<uint32_t>(fps));
     librflow_svc_stream_param_set_bitrate(sp, 1500, 2500);
+    librflow_svc_stream_param_set_degradation_preference(sp, RFLOW_DEGRADATION_MAINTAIN_FRAMERATE);
 #if defined(__linux__)
     librflow_svc_stream_param_set_video_device_path(sp, camera.c_str());
 #else

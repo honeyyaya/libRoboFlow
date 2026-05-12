@@ -116,6 +116,22 @@ rflow_err_t librflow_svc_stream_param_set_video_device_index(librflow_svc_stream
         p, rflow::service::kMagicStreamParam, video_device_index, has_video_device_index, index);
 }
 
+rflow_err_t librflow_svc_stream_param_set_degradation_preference(librflow_svc_stream_param_t          p,
+                                                                 rflow_degradation_preference_t       pref) {
+    RFLOW_CHECK_HANDLE(p, rflow::service::kMagicStreamParam);
+    switch (pref) {
+        case RFLOW_DEGRADATION_MAINTAIN_FRAMERATE:
+        case RFLOW_DEGRADATION_MAINTAIN_RESOLUTION:
+        case RFLOW_DEGRADATION_BALANCED:
+            break;
+        default:
+            return RFLOW_ERR_PARAM;
+    }
+    p->degradation_preference     = pref;
+    p->has_degradation_preference = true;
+    return RFLOW_OK;
+}
+
 rflow_err_t librflow_svc_stream_param_get_in_codec(librflow_svc_stream_param_t p, rflow_codec_t* out_codec) {
     RFLOW_GET_VALUE_WITH_FLAG(
         p, rflow::service::kMagicStreamParam, out_codec, has_in_codec, p->in_codec);
@@ -198,6 +214,12 @@ rflow_err_t librflow_svc_stream_param_get_video_device_index(librflow_svc_stream
                                                               uint32_t* out_device_index) {
     RFLOW_GET_VALUE_WITH_FLAG(
         p, rflow::service::kMagicStreamParam, out_device_index, has_video_device_index, p->video_device_index);
+}
+
+rflow_err_t librflow_svc_stream_param_get_degradation_preference(librflow_svc_stream_param_t    p,
+                                                                 rflow_degradation_preference_t* out_pref) {
+    RFLOW_GET_VALUE_WITH_FLAG(
+        p, rflow::service::kMagicStreamParam, out_pref, has_degradation_preference, p->degradation_preference);
 }
 
 librflow_svc_push_frame_t librflow_svc_push_frame_create(void) {

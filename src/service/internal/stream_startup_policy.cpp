@@ -10,6 +10,23 @@
 
 namespace rflow::service::internal {
 
+namespace {
+
+const char* DegradationPreferenceToConfigLiteral(rflow_degradation_preference_t v) {
+    switch (v) {
+        case RFLOW_DEGRADATION_MAINTAIN_FRAMERATE:
+            return "maintain_framerate";
+        case RFLOW_DEGRADATION_MAINTAIN_RESOLUTION:
+            return "maintain_resolution";
+        case RFLOW_DEGRADATION_BALANCED:
+            return "balanced";
+        default:
+            return nullptr;
+    }
+}
+
+}  // namespace
+
 ResolvedPublisherStartup ResolvePublisherStartup(const librflow_svc_stream_s& stream,
                                                 const State& state,
                                                 int32_t stream_idx) {
@@ -45,6 +62,11 @@ ResolvedPublisherStartup ResolvePublisherStartup(const librflow_svc_stream_s& st
     out.signal_url = state.global_config.has_signal ? state.global_config.signal.url : std::string();
     out.device_id = state.connect_info.device_id.empty() ? std::string(RFLOW_DEFAULT_DEVICE_ID) : state.connect_info.device_id;
     out.stream_id = out.device_id + ":" + std::to_string(stream_idx);
+    if (stream.param.has_degradation_preference) {
+        if (const char* lit = DegradationPreferenceToConfigLiteral(stream.param.degradation_preference)) {
+            out.degradation_pref_explicit = std::string(lit);
+        }
+    }
     return out;
 }
 
@@ -75,6 +97,7 @@ std::shared_ptr<void> CreatePublisherImplForStream(const librflow_svc_stream_s& 
         startup.use_internal_video_source,
         startup.video_device_path,
         startup.video_device_index,
+        startup.degradation_pref_explicit,
         cbs);
 }
 #endif
