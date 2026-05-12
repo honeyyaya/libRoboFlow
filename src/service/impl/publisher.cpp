@@ -32,6 +32,7 @@ Publisher::Publisher(int32_t stream_idx,
                      const std::string& video_device_path,
                      int video_device_index,
                      std::optional<std::string> degradation_pref_override,
+                     PublisherMediaOptions          media_opts,
                      const PublisherPullCallbacks& cbs)
     : stream_idx_(stream_idx),
       in_codec_(in_codec),
@@ -49,6 +50,7 @@ Publisher::Publisher(int32_t stream_idx,
       video_device_path_(video_device_path),
       video_device_index_(video_device_index >= 0 ? video_device_index : 0),
       degradation_pref_override_(std::move(degradation_pref_override)),
+      media_opts_(std::move(media_opts)),
       cbs_(cbs) {}
 
 Publisher::~Publisher() {
@@ -72,19 +74,49 @@ bool Publisher::Start() {
     cfg.common.target_bitrate_kbps           = target_kbps_;
     cfg.common.min_bitrate_kbps              = min_kbps_;
     cfg.common.max_bitrate_kbps              = max_kbps_;
-    cfg.common.video_codec                   = video_codec_;
-    if (min_kbps_ == max_kbps_) {
-        cfg.common.bitrate_mode = "cbr";
+    cfg.common.video_codec = video_codec_;
+    cfg.common.bitrate_mode = "vbr";
+    if (media_opts_.bitrate_mode.has_value()) {
+        const bool want_cbr = (*media_opts_.bitrate_mode == RFLOW_BITRATE_MODE_CBR);
+        cfg.common.bitrate_mode = want_cbr ? "cbr" : "vbr";
+        if (want_cbr) {
+            cfg.common.min_bitrate_kbps = cfg.common.target_bitrate_kbps;
+            cfg.common.max_bitrate_kbps = cfg.common.target_bitrate_kbps;
+        }
+    } else if (min_kbps_ == max_kbps_) {
+        cfg.common.bitrate_mode     = "cbr";
+        cfg.common.min_bitrate_kbps = cfg.common.target_bitrate_kbps;
+        cfg.common.max_bitrate_kbps = cfg.common.target_bitrate_kbps;
     }
     if (degradation_pref_override_) {
         cfg.common.degradation_preference = LowerCopy(*degradation_pref_override_);
-    } else {
-        const std::string deg =
-            rflow::core::runtime::ReadString("RFLOW_SVC_DEGRADATION_PREFERENCE");
-        cfg.common.degradation_preference = deg.empty() ? "maintain_framerate" : deg;
     }
 
-    // Rockchip MPP 硬件编解码：根据编译宏默认打开；运行时再由 WEBRTC_MPP_* 等环境变量二次控制。
+    if (media_opts_.h264_profile) cfg.common.h264_profile = LowerCopy(*media_opts_.h264_profile);
+    if (media_opts_.h264_level) cfg.common.h264_level = LowerCopy(*media_opts_.h264_level);
+    if (media_opts_.keyframe_gop_frames.has_value()) {
+        cfg.common.keyframe_interval = *media_opts_.keyframe_gop_frames;
+    }
+    if (media_opts_.ice_prioritize_likely_pairs.has_value()) {
+        cfg.common.ice_prioritize_likely_pairs = *media_opts_.ice_prioritize_likely_pairs;
+    }
+    if (media_opts_.video_network_priority) {
+        cfg.common.video_network_priority = LowerCopy(*media_opts_.video_network_priority);
+    }
+    if (media_opts_.video_encoding_max_framerate.has_value()) {
+        cfg.common.video_encoding_max_framerate = *media_opts_.video_encoding_max_framerate;
+    }
+    if (media_opts_.capture_warmup_sec.has_value()) {
+        cfg.common.capture_warmup_sec = *media_opts_.capture_warmup_sec;
+    }
+    if (media_opts_.capture_gate_min_frames.has_value()) {
+        cfg.common.capture_gate_min_frames = *media_opts_.capture_gate_min_frames;
+    }
+    if (media_opts_.capture_gate_max_wait_sec.has_value()) {
+        cfg.common.capture_gate_max_wait_sec = *media_opts_.capture_gate_max_wait_sec;
+    }
+
+    // Rockchip MPP 硬件编解码：根据编译宏默认打开；策略由 SDK 配置与内部探测决定。
     cfg.backend.use_rockchip_mpp_h264 = true;
 
     streamer_ = std::make_unique<PushStreamer>(cfg);

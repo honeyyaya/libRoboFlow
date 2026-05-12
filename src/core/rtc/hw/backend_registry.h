@@ -24,12 +24,13 @@ enum class VideoCodecBackend {
 struct VideoBackendPreferences {
   VideoCodecBackend encoder_backend{VideoCodecBackend::kBuiltin};
   VideoCodecBackend decoder_backend{VideoCodecBackend::kBuiltin};
+  /// Rockchip MPP H.264：true 时 rc:mode=CBR，否则 VBR（由 PushStreamer 据 bitrate_mode 设置）
+  bool rockchip_h264_encoder_mpp_rc_cbr{false};
 };
 
 /// 一个 video backend 的全部声明式信息：
 ///   - 用 lambda 提供工厂构造和能力获取，registry 不需要直接 #include 任何 platform 头
-///   - encoder_disabled_at_runtime / decoder_disabled_at_runtime 用于按环境变量
-///     做 runtime 关停（典型如 WEBRTC_DISABLE_MPP_H264*）
+///   - encoder_disabled_at_runtime / decoder_disabled_at_runtime 预留给自定义 backend 做 runtime 关停
 struct VideoBackendDescriptor {
   VideoCodecBackend backend{VideoCodecBackend::kBuiltin};
   std::string       name;

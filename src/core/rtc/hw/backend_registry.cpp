@@ -90,15 +90,9 @@ VideoBackendDescriptor MakeRockchipMppDescriptor() {
   VideoBackendDescriptor d;
   d.backend = VideoCodecBackend::kRockchipMpp;
   d.name    = "rockchip_mpp";
-  d.create_encoder_factory = [] { return rflow::rtc::hw::rockchip_mpp::CreateVideoEncoderFactory(); };
+  d.create_encoder_factory = [] { return rflow::rtc::hw::rockchip_mpp::CreateVideoEncoderFactory(false); };
   d.create_decoder_factory = [] { return rflow::rtc::hw::rockchip_mpp::CreateVideoDecoderFactory(); };
   d.get_capabilities       = [] { return rflow::rtc::hw::rockchip_mpp::GetBackendCapabilities(); };
-  d.encoder_disabled_at_runtime = [] {
-    return rflow::core::runtime::ReadBool("WEBRTC_DISABLE_MPP_H264");
-  };
-  d.decoder_disabled_at_runtime = [] {
-    return rflow::core::runtime::ReadBool("WEBRTC_DISABLE_MPP_H264_DECODE");
-  };
   return d;
 }
 #endif
@@ -163,6 +157,17 @@ std::unique_ptr<webrtc::VideoEncoderFactory> CreatePreferredVideoEncoderFactory(
     const VideoBackendPreferences& prefs) {
   EnsureBackendsRegistered();
   if (prefs.encoder_backend != VideoCodecBackend::kBuiltin) {
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    if (prefs.encoder_backend == VideoCodecBackend::kRockchipMpp) {
+      if (const auto* d = GetRegistryImpl().Find(VideoCodecBackend::kRockchipMpp)) {
+        const bool runtime_off = d->encoder_disabled_at_runtime && d->encoder_disabled_at_runtime();
+        if (!runtime_off) {
+          return rflow::rtc::hw::rockchip_mpp::CreateVideoEncoderFactory(
+              prefs.rockchip_h264_encoder_mpp_rc_cbr);
+        }
+      }
+    }
+#endif
     if (const auto* d = GetRegistryImpl().Find(prefs.encoder_backend)) {
       const bool runtime_off = d->encoder_disabled_at_runtime && d->encoder_disabled_at_runtime();
       if (!runtime_off && d->create_encoder_factory) {

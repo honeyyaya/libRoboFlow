@@ -39,6 +39,10 @@
 #include "rtc_base/ssl_adapter.h"
 #include "rtc_base/thread.h"
 
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+#include "platform/rockchip/mpp_hardware_probe.h"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -106,7 +110,7 @@ public:
     };
 
     bool Initialize() {
-        RFLOW_LOG_TAG_I("PushStreamer", "Initializing WebRTC (native API)...");
+        RFLOW_LOG_TAG_I("PushStreamer", "Initializing RTC media stack...");
         rflow::rtc::EnsureWebrtcFieldTrialsInitialized();
         if (!webrtc::InitializeSSL()) {
             RFLOW_LOG_TAG_E("PushStreamer", "InitializeSSL failed");
@@ -118,6 +122,17 @@ public:
         media_opts.encoder_backend = config_.backend.use_rockchip_mpp_h264
                                          ? rflow::rtc::VideoCodecBackendPreference::kRockchipMpp
                                          : rflow::rtc::VideoCodecBackendPreference::kBuiltin;
+        {
+            std::string bm = config_.common.bitrate_mode;
+            for (auto& ch : bm) {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            media_opts.rockchip_h264_encoder_mpp_rc_cbr = (bm == "cbr");
+        }
+        if (config_.backend.use_rockchip_mpp_h264) {
+            RFLOW_LOG_TAG_I("PushStreamer", "Rockchip MPP H.264 encoder rc:mode=%s",
+                            media_opts.rockchip_h264_encoder_mpp_rc_cbr ? "CBR" : "VBR");
+        }
         rflow::rtc::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
         rflow::rtc::EnsureDedicatedPeerConnectionSignalingThread(deps, &owned_signaling_thread_);
 
@@ -387,7 +402,7 @@ public:
                         "degradation_preference=%s (maintain_framerate: 弱网时优先保帧、倾向降分辨率)", deg);
                 }
                 if (LatencyTraceEnabled()) {
-                    RFLOW_LOG_TAG_I("Latency", "WebRTC degradation_preference trace ok");
+                    RFLOW_LOG_TAG_I("Latency", "RTC degradation_preference trace ok");
                 }
             }
             break;
@@ -396,7 +411,7 @@ public:
 
     void MaybeStartOutboundStatsLoop() {
         const int interval_sec =
-            rflow::core::runtime::ReadInt("WEBRTC_PUSH_OUTBOUND_STATS_INTERVAL_SEC");
+            rflow::core::runtime::ReadInt("RFLOW_PUSH_OUTBOUND_STATS_INTERVAL_SEC");
         if (interval_sec <= 0 || outbound_stats_started_.exchange(true, std::memory_order_acq_rel)) {
             return;
         }
@@ -585,17 +600,17 @@ public:
 
         bool mpp_mjpeg_decode = config_.backend.use_rockchip_mpp_mjpeg_decode;
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-        // 默认值取决于 backend cfg；env 显式覆盖（命名空间走 runtime_knobs，alias 兼容老命名）。
-        const bool allow_dual_mpp =
-            (std::getenv("WEBRTC_DUAL_MPP_MJPEG_H264") != nullptr)
-                ? rflow::core::runtime::ReadBool("WEBRTC_DUAL_MPP_MJPEG_H264")
-                : config_.backend.use_rockchip_dual_mpp_mjpeg_h264;
+        // 同时启用 MPP MJPEG + MPP H264 时：运行时探测 MJPEG 解+H264 编会话能否并存，能则自动双硬。
+        bool allow_dual_mpp = config_.backend.use_rockchip_dual_mpp_mjpeg_h264;
+        if (mpp_mjpeg_decode && config_.backend.use_rockchip_mpp_h264) {
+            allow_dual_mpp = rflow::rtc::hw::rockchip_mpp::ProbeRockchipConcurrentMjpegDecAndH264Enc();
+        }
         if (mpp_mjpeg_decode && config_.backend.use_rockchip_mpp_h264 && !allow_dual_mpp) {
             mpp_mjpeg_decode = false;
             RFLOW_LOG_TAG_I(
                 "PushStreamer",
                 "MPP MJPEG decode off while MPP H.264 encode on (use libyuv for MJPEG). "
-                "Set USE_DUAL_MPP_MJPEG_H264=1 or WEBRTC_DUAL_MPP_MJPEG_H264=1 to enable both.");
+                "Concurrent MPP probe failed or dual MPP is disabled by backend config.");
         } else if (mpp_mjpeg_decode && config_.backend.use_rockchip_mpp_h264 && allow_dual_mpp) {
             RFLOW_LOG_TAG_I(
                 "PushStreamer", "Dual MPP: MJPEG hardware decode + H.264 hardware encode (experimental).");
@@ -639,7 +654,7 @@ public:
                 if (cam_fps != config_.common.video_fps) {
                     RFLOW_LOG_TAG_I(
                         "PushStreamer",
-                        "Using camera actual frame rate %d fps (config FPS=%d was request only; encoding/WebRTC "
+                        "Using camera actual frame rate %d fps (config FPS=%d was request only; encoding/RTC "
                         "caps follow device)",
                         cam_fps, config_.common.video_fps);
                 }
@@ -653,8 +668,9 @@ public:
             if (camera_impl_->GetNegotiatedCaptureSize(&nw, &nh) &&
                 (nw != config_.common.video_width || nh != config_.common.video_height)) {
                 RFLOW_LOG_TAG_I(
-                    "PushStreamer", "V4L2 negotiated %dx%d, config requests %dx%d — set WIDTH/HEIGHT in streams.conf "
-                                    "to match to reduce capture/encode scaling.",
+                    "PushStreamer",
+                    "V4L2 negotiated %dx%d, config requests %dx%d — align capture size (stream_param / "
+                    "PushStreamer WIDTH×HEIGHT) to reduce capture/encode scaling.",
                     nw, nh, config_.common.video_width, config_.common.video_height);
             }
         }
@@ -885,7 +901,7 @@ public:
                                 }
                                 TraceSigTiming("SetLocalDescription OK peer=" +
                                                (peer_id_ptr->empty() ? std::string("default") : *peer_id_ptr));
-                                const bool dump_offer = rflow::core::runtime::ReadBool("WEBRTC_DUMP_OFFER");
+                                const bool dump_offer = rflow::core::runtime::ReadBool("RFLOW_DUMP_OFFER");
                                 if (config_.common.test_encode_mode && peer_id_ptr->empty()) {
                                     if (dump_offer) {
                                         RFLOW_LOG_TAG_I("PushStreamer", "\n--- Local offer SDP ---\n%s\n--- End ---",
@@ -1006,8 +1022,8 @@ public:
     }
 
     void DoLoopbackExchange(const std::string& offer_type, const std::string& offer_sdp) {
-        if (rflow::core::runtime::ReadBool("WEBRTC_SKIP_LOOPBACK_RECV")) {
-            RFLOW_LOG_TAG_I("PushStreamer", "Loopback skipped (WEBRTC_SKIP_LOOPBACK_RECV=1)");
+        if (rflow::core::runtime::ReadBool("RFLOW_SKIP_LOOPBACK_RECV")) {
+            RFLOW_LOG_TAG_I("PushStreamer", "Loopback skipped (RFLOW_SKIP_LOOPBACK_RECV=1)");
             return;
         }
         RFLOW_LOG_TAG_I("PushStreamer", "Loopback: creating receiver PC...");

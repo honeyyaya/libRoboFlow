@@ -30,8 +30,9 @@ bool IsH264FormatName(const std::string& name) {
 
 class MppH264PrimaryEncoderFactory final : public webrtc::VideoEncoderFactory {
 public:
-    explicit MppH264PrimaryEncoderFactory(webrtc::InternalEncoderFactory* query_delegate)
-        : query_delegate_(query_delegate) {}
+    explicit MppH264PrimaryEncoderFactory(webrtc::InternalEncoderFactory* query_delegate, bool mpp_rc_cbr)
+        : query_delegate_(query_delegate),
+          mpp_rc_cbr_(mpp_rc_cbr) {}
 
     std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override {
         return webrtc::SupportedH264Codecs();
@@ -45,17 +46,19 @@ public:
     std::unique_ptr<webrtc::VideoEncoder> Create(const webrtc::Environment& env,
                                                  const webrtc::SdpVideoFormat& format) override {
         webrtc::H264EncoderSettings settings = webrtc::H264EncoderSettings::Parse(format);
-        return std::make_unique<RkMppH264Encoder>(env, settings);
+        return std::make_unique<RkMppH264Encoder>(env, settings, mpp_rc_cbr_);
     }
 
 private:
     webrtc::InternalEncoderFactory* query_delegate_;
+    bool mpp_rc_cbr_;
 };
 
 class PreferredVideoEncoderFactory final : public webrtc::VideoEncoderFactory {
 public:
-    PreferredVideoEncoderFactory()
-        : mpp_h264_primary_(&internal_fallback_), builtin_(webrtc::CreateBuiltinVideoEncoderFactory()) {}
+    explicit PreferredVideoEncoderFactory(bool mpp_rc_cbr)
+        : mpp_h264_primary_(&internal_fallback_, mpp_rc_cbr),
+          builtin_(webrtc::CreateBuiltinVideoEncoderFactory()) {}
 
     std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override { return builtin_->GetSupportedFormats(); }
 
@@ -80,8 +83,8 @@ private:
 
 }  // namespace
 
-std::unique_ptr<webrtc::VideoEncoderFactory> CreateVideoEncoderFactory() {
-    return std::make_unique<PreferredVideoEncoderFactory>();
+std::unique_ptr<webrtc::VideoEncoderFactory> CreateVideoEncoderFactory(bool mpp_rc_cbr) {
+    return std::make_unique<PreferredVideoEncoderFactory>(mpp_rc_cbr);
 }
 
 }  // namespace rflow::rtc::hw::rockchip_mpp

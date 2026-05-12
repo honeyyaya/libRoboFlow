@@ -88,7 +88,7 @@ public:
     }
 
     bool Initialize() {
-        RFLOW_LOG_TAG_I("PullSubscriber", "Initializing WebRTC (native API)...");
+        RFLOW_LOG_TAG_I("PullSubscriber", "Initializing RTC media stack...");
         stats_.t_initialize_begin_us = SignalingNowUs();
         rflow::rtc::EnsureWebrtcFieldTrialsInitialized(); 
         if (!webrtc::InitializeSSL()) {
@@ -215,7 +215,7 @@ public:
                         return;
                     }
                     TraceSigTiming("CreateAnswer success sdp_len=" + std::to_string(sdp.size()));
-                    if (rflow::core::runtime::ReadBool("WEBRTC_DUMP_LOCAL_ANSWER")) {
+                    if (rflow::core::runtime::ReadBool("RFLOW_DUMP_LOCAL_ANSWER")) {
                         RFLOW_LOG_TAG_I("PullSubscriber", "\n--- Local answer SDP ---\n%s\n--- End ---", sdp.c_str());
                     }
                     auto set_local = rflow::core::rtc::MakeSetLocalDescObserver(
@@ -538,7 +538,7 @@ void PullSubscriber::Play() {
                                          const std::string& sdp) {
         RFLOW_LOG_TAG_I("PullSubscriber", "Received offer from=%s (type=%s, len=%zu)", peer_id.c_str(),
                         type.c_str(), sdp.size());
-        if (rflow::core::runtime::ReadBool("WEBRTC_DUMP_REMOTE_OFFER")) {
+        if (rflow::core::runtime::ReadBool("RFLOW_DUMP_REMOTE_OFFER")) {
             RFLOW_LOG_TAG_I("PullSubscriber", "\n--- Remote offer SDP ---\n%s\n--- End ---", sdp.c_str());
         }
         impl_->SetRemoteDescription(type, sdp);
@@ -558,7 +558,7 @@ void PullSubscriber::Play() {
         impl_->signaling_->Stop();
         impl_->Shutdown();
         if (on_error_) {
-            on_error_("WebRTC init failed");
+            on_error_("RTC init failed");
         }
         return;
     }

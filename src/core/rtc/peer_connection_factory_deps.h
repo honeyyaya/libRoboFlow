@@ -25,6 +25,8 @@ enum class VideoCodecBackendPreference {
 struct PeerConnectionFactoryMediaOptions {
     VideoCodecBackendPreference encoder_backend{VideoCodecBackendPreference::kBuiltin};
     VideoCodecBackendPreference decoder_backend{VideoCodecBackendPreference::kBuiltin};
+    /// Rockchip MPP H.264：与 PushStreamerCommonConfig::bitrate_mode=cbr 对齐，设 rc:mode=CBR
+    bool rockchip_h264_encoder_mpp_rc_cbr{false};
 };
 
 void ConfigurePeerConnectionFactoryDependencies(

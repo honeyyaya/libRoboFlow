@@ -34,7 +34,7 @@ int64_t SignalingNowUs();
 // 仅在 SignalingTimingTraceEnabled() 时输出，前缀 [SIG_TIMING][push]。
 void TraceSigTiming(const std::string& msg);
 
-// WEBRTC_LATENCY_TRACE=1 时打开端到端编码/网络耗时 trace。
+// RFLOW_LATENCY_TRACE=1 时打开端到端编码/网络耗时 trace。
 bool LatencyTraceEnabled();
 
 // ---- shutdown helpers -----------------------------------------------------

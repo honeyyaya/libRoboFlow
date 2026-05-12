@@ -36,6 +36,21 @@ struct PublisherPullCallbacks {
     void*                           userdata{nullptr};
 };
 
+/// create_stream → PushStreamer 的补充媒体项（与 stream_param / PushStreamerCommonConfig 对齐）
+struct PublisherMediaOptions {
+    std::optional<std::string> h264_profile;
+    std::optional<std::string> h264_level;
+    std::optional<int>         keyframe_gop_frames;
+    std::optional<bool>        ice_prioritize_likely_pairs;
+    std::optional<std::string> video_network_priority;
+    std::optional<int>         video_encoding_max_framerate;
+    std::optional<int>         capture_warmup_sec;
+    std::optional<int>         capture_gate_min_frames;
+    std::optional<int>         capture_gate_max_wait_sec;
+    /// BITRATE_MODE（stream_param set_bitrate_mode）；若不设置则用 rc_mode 中的 CBR/VBR，再否则 publisher 侧 min==max → cbr
+    std::optional<rflow_bitrate_mode_t> bitrate_mode;
+};
+
 class Publisher {
 public:
     Publisher(int32_t stream_idx,
@@ -50,6 +65,7 @@ public:
               const std::string& video_device_path,
               int video_device_index,
               std::optional<std::string> degradation_pref_override,
+              PublisherMediaOptions          media_opts,
               const PublisherPullCallbacks& cbs);
     ~Publisher();
 
@@ -93,6 +109,8 @@ private:
     std::string   video_device_path_;
     int           video_device_index_{0};
     std::optional<std::string> degradation_pref_override_;
+    PublisherMediaOptions      media_opts_{};
+
     PublisherPullCallbacks cbs_{};
 
     std::unique_ptr<PushStreamer>    streamer_;

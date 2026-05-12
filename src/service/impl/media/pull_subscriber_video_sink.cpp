@@ -24,7 +24,7 @@ VideoSink::VideoSink(Callback cb, bool skip_argb_conversion, StatsCallback stats
       on_frame_stats_(std::move(stats_cb)) {}
 
 void VideoSink::OnFrame(const webrtc::VideoFrame& frame) {
-    const bool e2e_trace = rflow::core::runtime::ReadBool("WEBRTC_E2E_LATENCY_TRACE");
+    const bool e2e_trace = rflow::core::runtime::ReadBool("RFLOW_E2E_LATENCY_TRACE");
     const int64_t t_sink_enter_us = e2e_trace ? webrtc::TimeMicros() : 0;
     const int64_t t_now_us = webrtc::TimeMicros();
     const int64_t wall_sink_utc_ms = e2e_trace ? webrtc::TimeUTCMillis() : int64_t{0};

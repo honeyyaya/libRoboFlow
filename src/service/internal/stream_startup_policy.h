@@ -4,6 +4,8 @@
 #include "handles.h"
 #include "state.h"
 
+#include "rflow/Service/librflow_service_api.h"
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,8 +26,18 @@ struct ResolvedPublisherStartup {
     std::string signal_url;
     std::string device_id;
     std::string stream_id;
-    /* 由 stream_param 显式设置时非空，覆盖 RFLOW_SVC_DEGRADATION_PREFERENCE */
+    /* 由 stream_param 显式设置时非空，覆盖 SDK 默认 degradation_preference */
     std::optional<std::string> degradation_pref_explicit;
+    std::optional<std::string> h264_profile;
+    std::optional<std::string> h264_level;
+    std::optional<int>         keyframe_gop;
+    std::optional<bool>        ice_prioritize_likely_pairs;
+    std::optional<std::string> video_network_priority;
+    std::optional<int>         video_encoding_max_framerate;
+    std::optional<int>         capture_warmup_sec;
+    std::optional<int>         capture_gate_min_frames;
+    std::optional<int>         capture_gate_max_wait_sec;
+    std::optional<rflow_bitrate_mode_t> bitrate_mode;
 };
 
 ResolvedPublisherStartup ResolvePublisherStartup(const librflow_svc_stream_s& stream,

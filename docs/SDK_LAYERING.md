@@ -21,7 +21,7 @@ CMake 上对库目标的 **PRIVATE** include 收窄为：`include`、`src/common
 ## 与名称易混文件区分
 
 - **`src/core/runtime/runtime_knobs.*`**：`RFLOW_*` / `WEBRTC_*` 等运行时环境变量的 **集中登记表**（全仓共用）。
-- **`src/service/internal/service_default_params.*`**：仅与服务侧默认推流参数（如 `RFLOW_SVC_DEFAULT_FPS` 等）相关的 **薄封装**，从 core `runtime_knobs` 读值；**不要把二者混名**。
+- **`src/service/internal/service_default_params.*`**：服务侧默认推流参数的 **薄封装**；默认值保持在 SDK 内部，业务覆盖应走公开 API。
 
 ## 链接与 ABI 导出
 

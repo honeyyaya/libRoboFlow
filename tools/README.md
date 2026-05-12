@@ -11,7 +11,7 @@
 打 trace 日志的开关由环境变量控制（见 `docs/RUNTIME_KNOBS.md`）：
 
 ```bash
-export WEBRTC_E2E_LATENCY_TRACE=1
+export RFLOW_E2E_LATENCY_TRACE=1
 ./build/apps/push_demo_sdk ... 2>push.log &
 ./build/apps/pull_demo_sdk ... 2>pull.log
 python3 tools/parse_e2e_latency.py push.log pull.log

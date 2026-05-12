@@ -13,7 +13,10 @@
  *   camera        = Linux 下优先 RFLOW_PUSH_DEMO_CAMERA，其次 /dev/video0；其他平台默认索引 0
  *
  * degradation_preference（弱网降质）：示例中显式调用 maintain_framerate；亦可省略以使用
- * RFLOW_SVC_DEGRADATION_PREFERENCE 环境变量（缺省同 maintain_framerate）。
+ * SDK 默认 maintain_framerate。
+ * H264_PROFILE / H264_LEVEL / KEYFRAME_INTERVAL / ICE_PRIORITIZE_LIKELY_PAIRS /
+ * VIDEO_NETWORK_PRIORITY / BITRATE_MODE（librflow_svc_stream_param_set_bitrate_mode）
+ * 等亦见下方 stream_param 显式设置（与 SDK 分辨率/帧率等语义对齐）。
  *
  * 说明:
  *   本 demo 只调用 SDK，采集/编码/推流全部由 SDK 内部完成。
@@ -117,7 +120,13 @@ int main(int argc, char** argv) {
     librflow_svc_stream_param_set_out_size(sp, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     librflow_svc_stream_param_set_fps(sp, static_cast<uint32_t>(fps));
     librflow_svc_stream_param_set_bitrate(sp, 1500, 2500);
+    librflow_svc_stream_param_set_bitrate_mode(sp, RFLOW_BITRATE_MODE_VBR);
     librflow_svc_stream_param_set_degradation_preference(sp, RFLOW_DEGRADATION_MAINTAIN_FRAMERATE);
+    librflow_svc_stream_param_set_h264_profile(sp, "main");
+    librflow_svc_stream_param_set_h264_level(sp, "4.2");
+    librflow_svc_stream_param_set_gop(sp, 120);
+    librflow_svc_stream_param_set_ice_prioritize_likely_pairs(sp, true);
+    librflow_svc_stream_param_set_video_network_priority(sp, RFLOW_SVC_NETWORK_PRIORITY_HIGH);
 #if defined(__linux__)
     librflow_svc_stream_param_set_video_device_path(sp, camera.c_str());
 #else

@@ -75,6 +75,7 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
             platform/rockchip/backend_capabilities.cpp
             platform/rockchip/h264_decoder.cpp
             platform/rockchip/h264_encoder.cpp
+            platform/rockchip/mpp_hardware_probe.cpp
             platform/rockchip/mjpeg_decoder.cpp
             platform/rockchip/native_dec_frame_buffer.cpp
             platform/rockchip/video_decoder_factory.cpp

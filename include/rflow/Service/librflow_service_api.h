@@ -56,12 +56,26 @@ typedef enum {
     RFLOW_BIND_FAILED    = 2,
 } rflow_bind_state_t;
 
-/* WebRTC 发送端弱网降质策略，与 streams.conf DEGRADATION_PREFERENCE / RFLOW_SVC_DEGRADATION_PREFERENCE 一致 */
+/* WebRTC 发送端弱网降质策略；未设置时 SDK 默认 maintain_framerate */
 typedef enum {
     RFLOW_DEGRADATION_MAINTAIN_FRAMERATE  = 0, /* 倾向保帧率、降分辨率 */
     RFLOW_DEGRADATION_MAINTAIN_RESOLUTION = 1, /* 倾向保分辨率、降帧率 */
     RFLOW_DEGRADATION_BALANCED            = 2,
 } rflow_degradation_preference_t;
+
+/* RTP 编码器 DSCP/network_priority（与 VIDEO_NETWORK_PRIORITY 及 stream_param 一致） */
+typedef enum {
+    RFLOW_SVC_NETWORK_PRIORITY_VERY_LOW = 0,
+    RFLOW_SVC_NETWORK_PRIORITY_LOW      = 1,
+    RFLOW_SVC_NETWORK_PRIORITY_MEDIUM   = 2,
+    RFLOW_SVC_NETWORK_PRIORITY_HIGH     = 3,
+} rflow_svc_network_priority_t;
+
+/* BITRATE_MODE：vbr | cbr（WebRTC RTP 发送码率语义；独立于 rflow_rc_mode_t 的 CQP 等编码器常量码率模型） */
+typedef enum {
+    RFLOW_BITRATE_MODE_VBR = 0,
+    RFLOW_BITRATE_MODE_CBR = 1,
+} rflow_bitrate_mode_t;
 
 /******************************************************************************
  *                          Opaque Handles — Service 专属
@@ -191,10 +205,14 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_out_size (librflow
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_fps      (librflow_svc_stream_param_t p, uint32_t fps);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_gop      (librflow_svc_stream_param_t p, uint32_t gop_size);
 
-/* 码率控制 */
+/* 码率控制：编码器侧 RC（含 CQP 等）；若仅需 RTP 侧 BITRATE_MODE（仅 vbr/cbr），推荐用 set_bitrate_mode */
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_rc_mode  (librflow_svc_stream_param_t p, rflow_rc_mode_t rc);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_qp       (librflow_svc_stream_param_t p, uint32_t qp);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_bitrate  (librflow_svc_stream_param_t p, uint32_t bitrate_kbps, uint32_t max_bitrate_kbps);
+
+/* BITRATE_MODE（stream_param）；未设置时仍可根据 min==max（目标/上下限相等）推导 cbr（向后兼容） */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_bitrate_mode(librflow_svc_stream_param_t p,
+                                                                           rflow_bitrate_mode_t mode);
 
 /* 动态码率：启用时按 [min, max] 动态调整 */
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_dynamic_bitrate(librflow_svc_stream_param_t p,
@@ -211,9 +229,27 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_enable_transcode(l
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_video_device_path (librflow_svc_stream_param_t p, const char *device_path);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_video_device_index(librflow_svc_stream_param_t p, uint32_t device_index);
 
-/* 显式设置 RTP encoding degradation_preference；未设置时仍走 RFLOW_SVC_DEGRADATION_PREFERENCE（缺省 maintain_framerate） */
+/* 显式设置 RTP encoding degradation_preference；未设置时使用 SDK 默认 maintain_framerate */
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_degradation_preference(librflow_svc_stream_param_t          p,
                                                                                     rflow_degradation_preference_t       pref);
+
+/*
+ * PushStreamerCommonConfig 常用项（亦可通过 stream_param / 运行期 knob 对齐）：
+ * profile/level ≤127 字节；encoding_max_fps=0 表示与采集帧率一致（与 VIDEO_ENCODING_MAX_FPS=0 同）。
+ */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_h264_profile(librflow_svc_stream_param_t p, const char* profile);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_h264_level  (librflow_svc_stream_param_t p, const char* level);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_ice_prioritize_likely_pairs(librflow_svc_stream_param_t p,
+                                                                                         bool enabled);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_video_network_priority(librflow_svc_stream_param_t p,
+                                                                                    rflow_svc_network_priority_t priority);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_video_encoding_max_fps(librflow_svc_stream_param_t p,
+                                                                                   uint32_t fps);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_capture_warmup_sec(librflow_svc_stream_param_t p,
+                                                                                uint32_t sec);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_capture_gate(librflow_svc_stream_param_t p,
+                                                                          uint32_t min_frames_before_offer,
+                                                                          uint32_t max_wait_sec);
 
 /*
  * Getter：读回当前设置值。统一返回 rflow_err_t，以消除"未设置"与"显式设为 0 /
@@ -235,6 +271,9 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_qp        (librflo
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_bitrate   (librflow_svc_stream_param_t p,
                                                                          uint32_t *out_bitrate_kbps,
                                                                          uint32_t *out_max_bitrate_kbps);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_bitrate_mode(librflow_svc_stream_param_t p,
+                                                                            rflow_bitrate_mode_t* out_mode);
+
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_dynamic_bitrate(librflow_svc_stream_param_t p,
                                                                               bool     *out_enable,
                                                                               uint32_t *out_lowest_kbps,
@@ -247,6 +286,23 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_video_device_index
                                                                                  uint32_t *out_device_index);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_degradation_preference(librflow_svc_stream_param_t    p,
                                                                                      rflow_degradation_preference_t *out_pref);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_h264_profile(librflow_svc_stream_param_t p,
+                                                                          char *buf, uint32_t buf_len,
+                                                                          uint32_t *out_needed);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_h264_level  (librflow_svc_stream_param_t p,
+                                                                          char *buf, uint32_t buf_len,
+                                                                          uint32_t *out_needed);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_ice_prioritize_likely_pairs(librflow_svc_stream_param_t p,
+                                                                                         bool *out_enabled);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_video_network_priority(librflow_svc_stream_param_t p,
+                                                                                     rflow_svc_network_priority_t *out_priority);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_video_encoding_max_fps(librflow_svc_stream_param_t p,
+                                                                                    uint32_t *out_fps);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_capture_warmup_sec(librflow_svc_stream_param_t p,
+                                                                                uint32_t *out_sec);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_capture_gate(librflow_svc_stream_param_t p,
+                                                                          uint32_t *out_min_frames,
+                                                                          uint32_t *out_max_wait_sec);
 
 /******************************************************************************
  *                          StreamCb（流本地观测回调，可选）

@@ -49,6 +49,7 @@ void ConfigurePeerConnectionFactoryDependencies(
                 media_options->encoder_backend == VideoCodecBackendPreference::kRockchipMpp
                     ? rflow::rtc::hw::VideoCodecBackend::kRockchipMpp
                     : rflow::rtc::hw::VideoCodecBackend::kBuiltin;
+            prefs.rockchip_h264_encoder_mpp_rc_cbr = media_options->rockchip_h264_encoder_mpp_rc_cbr;
         }
         deps.video_encoder_factory = rflow::rtc::hw::CreatePreferredVideoEncoderFactory(prefs);
     }

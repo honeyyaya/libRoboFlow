@@ -42,9 +42,9 @@ struct V4l2MjpegPipelineOptions {
     int v4l2_poll_timeout_ms = 50;
     /// 为 true 时不使用解码工作线程，MJPEG 在采集线程内解码（低延迟，采集易受解码耗时影响）。
     bool mjpeg_decode_inline = false;
-    /// 为 true 时默认启用 V4L2 MJPEG → MPP EXT_DMA（环境变量 WEBRTC_MJPEG_V4L2_DMABUF 未设置时生效；设置了则以环境为准）。
+    /// 为 true 时启用 V4L2 MJPEG -> MPP EXT_DMA。
     bool mjpeg_v4l2_ext_dma = false;
-    /// 为 true 时默认启用 RGA 拷贝路径（环境变量 WEBRTC_MJPEG_RGA_TO_MPP 未设置时生效）。
+    /// 为 true 时启用 RGA 拷贝路径。
     bool mjpeg_rga_to_mpp = false;
 };
 /// Connects VideoCaptureModule output to AdaptedVideoTrackSource for CreateVideoTrack().

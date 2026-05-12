@@ -29,21 +29,8 @@ namespace rflow::rtc::hw::rockchip_mpp {
 
 namespace {
 
-static bool LowLatencyEnv() {
-    const char* e = std::getenv("WEBRTC_MPP_H264_DEC_LOW_LATENCY");
-    return e && (e[0] == '1' || e[0] == 'y' || e[0] == 'Y');
-}
-
 int DecodePollTimeoutMs() {
-    // Low-latency mode defaults to 1ms to reduce scheduling quantization delay.
-    int def = LowLatencyEnv() ? 1 : 5;
-    if (const char* e = std::getenv("WEBRTC_MPP_H264_DEC_POLL_TIMEOUT_MS")) {
-        const int v = std::atoi(e);
-        if (v >= 0 && v <= 20) {
-            return v;
-        }
-    }
-    return def;
+    return 5;
 }
 
 bool MediaTimingTraceEnabled() {
@@ -117,29 +104,15 @@ bool H264Decoder::EnsureMppInitialized() {
     mpp_ctx_ = ctx;
     mpi_ = mpi;
 
-    if (LowLatencyEnv()) {
-        RK_U32 fast = 1;
-        if (mpi->control(ctx, MPP_DEC_SET_PARSER_FAST_MODE, &fast) != MPP_OK) {
-            RTC_LOG(LS_WARNING) << "[RkMppH264Dec] MPP_DEC_SET_PARSER_FAST_MODE failed";
-        }
-    }
-
     if (mpp_init(ctx, MPP_CTX_DEC, MPP_VIDEO_CodingAVC) != MPP_OK) {
         RTC_LOG(LS_ERROR) << "[RkMppH264Dec] mpp_init(DEC, AVC) failed";
         DestroyMpp();
         return false;
     }
 
-    if (LowLatencyEnv()) {
-        RK_U32 imm = 1;
-        if (mpi->control(ctx, MPP_DEC_SET_IMMEDIATE_OUT, &imm) != MPP_OK) {
-            RTC_LOG(LS_WARNING) << "[RkMppH264Dec] MPP_DEC_SET_IMMEDIATE_OUT failed";
-        }
-    }
-
     if (!logged_init_) {
         logged_init_ = true;
-        RFLOW_LOG_TAG_I("RkMppH264Dec", "Initialized (hardware) low_latency=%d", LowLatencyEnv() ? 1 : 0);
+        RFLOW_LOG_TAG_I("RkMppH264Dec", "Initialized (hardware)");
     }
     return true;
 }

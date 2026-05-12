@@ -38,6 +38,7 @@
 #include <sstream>
 #include <cstdlib>
 #include <atomic>
+#include <algorithm>
 #endif
 
 namespace rflow::service::impl {
@@ -45,7 +46,7 @@ namespace rflow::service::impl {
 #if defined(WEBRTC_LINUX) && defined(__linux__)
 namespace {
 bool LatencyTraceEnabled() {
-    static const bool enabled = rflow::common::util::TraceFlagEnabled("WEBRTC_LATENCY_TRACE");
+    static const bool enabled = rflow::common::util::TraceFlagEnabled("RFLOW_LATENCY_TRACE");
     return enabled;
 }
 
@@ -94,7 +95,7 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
 int64_t DecodeQueueStaleDropBudgetUs() {
     static const int64_t budget_us =
         static_cast<int64_t>(
-            rflow::common::util::ReadEnvIntInRange("WEBRTC_MJPEG_DECODE_QUEUE_MAX_WAIT_MS", 25, 0, 5000)) *
+            rflow::common::util::ReadEnvIntInRange("RFLOW_MJPEG_DECODE_QUEUE_MAX_WAIT_MS", 25, 0, 5000)) *
         1000;
     return budget_us;
 }
@@ -109,6 +110,41 @@ void LogMjpegDecodeTiming(const char* tag, int64_t before_us, int64_t after_us) 
     RFLOW_LOG_TAG_I("MJPEG_DECODE", "[%s] frame#%u before_us=%lld after_us=%lld duration_ms=%f", tag,
                     static_cast<unsigned>(n), static_cast<long long>(before_us), static_cast<long long>(after_us), ms);
 
+}
+
+// V4L2 帧间隔：interval = numerator/denominator 秒；fps = denominator/numerator。
+// 判断是否可达 min_fps（含）：denominator >= min_fps * numerator。
+bool IntervalRatioAtLeastFps(const struct v4l2_fract& interval, int min_fps) {
+    if (interval.numerator == 0 || min_fps <= 0) {
+        return false;
+    }
+    return static_cast<uint64_t>(interval.denominator) >=
+           static_cast<uint64_t>(min_fps) * static_cast<uint64_t>(interval.numerator);
+}
+
+// VIDIOC_ENUM_FRAMEINTERVALS：判断 pixfmt@WxH 是否报告存在 ≥ min_fps 的帧率档位。
+bool PixelFormatSupportsMinCaptureFps(int fd, uint32_t pixfmt, int w, int h, int min_fps) {
+    if (fd < 0 || w <= 0 || h <= 0 || min_fps <= 0) {
+        return false;
+    }
+    struct v4l2_frmivalenum fie {};
+    fie.pixel_format = pixfmt;
+    fie.width        = static_cast<__u32>(w);
+    fie.height       = static_cast<__u32>(h);
+    for (fie.index = 0;; ++fie.index) {
+        if (ioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &fie) != 0) {
+            return false;
+        }
+        if (fie.type == V4L2_FRMIVAL_TYPE_DISCRETE) {
+            if (IntervalRatioAtLeastFps(fie.discrete, min_fps)) {
+                return true;
+            }
+        } else if (fie.type == V4L2_FRMIVAL_TYPE_STEPWISE || fie.type == V4L2_FRMIVAL_TYPE_CONTINUOUS) {
+            return IntervalRatioAtLeastFps(fie.stepwise.min, min_fps);
+        } else {
+            return false;
+        }
+    }
 }
 
 }  // anonymous namespace inside WEBRTC_LINUX
@@ -244,47 +280,13 @@ void CameraVideoTrackSource::ApplyMjpegPipelineOptions(const V4l2MjpegPipelineOp
     v4l2_ext_dma_config_ = o.mjpeg_v4l2_ext_dma;
     mjpeg_rga_config_ = o.mjpeg_rga_to_mpp;
 #endif
-    if (const char* e = std::getenv("WEBRTC_MJPEG_DECODE_INLINE")) {
+    if (const char* e = std::getenv("RFLOW_MJPEG_DECODE_INLINE")) {
         const char c = e[0];
         if (c == '1' || c == 'y' || c == 'Y' || c == 't' || c == 'T') {
             mjpeg_decode_inline_ = true;
         }
         if (c == '0' || c == 'n' || c == 'N' || c == 'f' || c == 'F') {
             mjpeg_decode_inline_ = false;
-        }
-    }
-
-    if (const char* e = std::getenv("WEBRTC_MJPEG_QUEUE_LATEST_ONLY")) {
-        const char c = e[0];
-        if (c == '1' || c == 'y' || c == 'Y' || c == 't' || c == 'T') {
-            mjpeg_queue_latest_only_ = true;
-        }
-        if (c == '0' || c == 'n' || c == 'N' || c == 'f' || c == 'F') {
-            mjpeg_queue_latest_only_ = false;
-        }
-    }
-    if (const char* e = std::getenv("WEBRTC_MJPEG_QUEUE_MAX")) {
-        const int v = std::atoi(e);
-        if (v >= 1 && v <= 32) {
-            mjpeg_queue_max_ = static_cast<size_t>(v);
-        }
-    }
-    if (const char* e = std::getenv("WEBRTC_NV12_POOL_SLOTS")) {
-        const int v = std::atoi(e);
-        if (v >= 4 && v <= 16) {
-            nv12_pool_slots_ = v;
-        }
-    }
-    if (const char* e = std::getenv("WEBRTC_V4L2_BUFFER_COUNT")) {
-        const int v = std::atoi(e);
-        if (v >= 2 && v <= 32) {
-            v4l2_buffer_count_ = v;
-        }
-    }
-    if (const char* e = std::getenv("WEBRTC_V4L2_POLL_TIMEOUT_MS")) {
-        const int v = std::atoi(e);
-        if (v >= 1 && v <= 2000) {
-            v4l2_poll_timeout_ms_ = v;
         }
     }
 
@@ -440,7 +442,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
     const uint32_t yuyv = V4L2_PIX_FMT_YUYV;
     const uint32_t mjpeg = V4L2_PIX_FMT_MJPEG;
 
-    // 与 streams.conf 的 WIDTH/HEIGHT 一致：先 S_FMT 请求目标分辨率，禁止一上来 G_FMT 沿用 1080p 导致与配置不符。
+    // 与推流请求的 WIDTH/HEIGHT 一致：先 S_FMT 请求目标分辨率，禁止一上来 G_FMT 沿用 1080p 导致与配置不符。
     auto try_sfmt_exact = [&](uint32_t pixfmt, int w, int h) -> bool {
         if (!try_sfmt(pixfmt, w, h)) {
             return false;
@@ -448,19 +450,18 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
         return direct_cap_w_ == w && direct_cap_h_ == h;
     };
 
-    // 同分辨率：默认优先 YUYV，避免 MJPEG 软解；开启 MPP MJPEG 硬解时优先 MJPEG（多数 UVC 在 720p 等档位上
-    // MJPEG 帧率远高于 YUYV，原先先 YUYV 会锁在 10fps 且永远测不到硬解路径）。
-    bool prefer_mjpeg_pixfmt = false;
-#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-    prefer_mjpeg_pixfmt = prefer_mpp_mjpeg_decode_;
-#endif
-    // Manual override for camera capability testing (e.g. forcing 720p60 MJPEG on UVC devices).
-    if (const char* e = std::getenv("WEBRTC_PREFER_MJPEG_PIXFMT")) {
-        if (e[0] == '1' || e[0] == 'y' || e[0] == 'Y' || e[0] == 't' || e[0] == 'T') {
-            prefer_mjpeg_pixfmt = true;
-        } else if (e[0] == '0' || e[0] == 'n' || e[0] == 'N' || e[0] == 'f' || e[0] == 'F') {
-            prefer_mjpeg_pixfmt = false;
-        }
+    // 同分辨率：ENUM_FRAMEINTERVALS 若报告 YUYV@WxH 存在 ≥ fps_need 的档位（≥30 且不低于请求的 fps），则优先 YUYV；
+    // 否则优先 MJPEG。枚举失败视为 YUYV 不足帧率 → 先试 MJPEG。
+    const int  fps_need          = std::max(30, fps > 0 ? fps : 30);
+    const bool yuyv_fast_enough = PixelFormatSupportsMinCaptureFps(direct_fd_, yuyv, width, height, fps_need);
+    bool prefer_mjpeg_pixfmt    = !yuyv_fast_enough;
+    if (yuyv_fast_enough) {
+        RFLOW_LOG_TAG_I("CameraV4L2", "prefer YUYV first at %dx%d (driver reports ≥%dfps)", width, height, fps_need);
+    } else {
+        RFLOW_LOG_TAG_I(
+            "CameraV4L2",
+            "prefer MJPEG first at %dx%d (YUYV not reported ≥%dfps via ENUM_FRAMEINTERVALS)", width, height,
+            fps_need);
     }
     bool fmt_ok = prefer_mjpeg_pixfmt
                       ? (try_sfmt_exact(mjpeg, width, height) || try_sfmt_exact(yuyv, width, height))
@@ -590,7 +591,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
                 RFLOW_LOG_TAG_I("CameraV4L2", "VIDIOC_EXPBUF: %u dma-buf fd(s) → MPP JPEG EXT_DMA import", nbuf);
             } else {
                 RFLOW_LOG_TAG_I("CameraV4L2",
-                                "VIDIOC_EXPBUF: %u dma-buf fd(s) → RGA copy to MPP input (WEBRTC_MJPEG_RGA_TO_MPP)",
+                                "VIDIOC_EXPBUF: %u dma-buf fd(s) -> RGA copy to MPP input",
                                 nbuf);
             }
         } else if (exp_ok > 0) {
@@ -716,7 +717,7 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
     if (!src || bytesused == 0) {
         return;
     }
-    // 供 WEBRTC_MJPEG_TO_H264_TRACE：与编码器内 TimeMicros 差值 = 从进入本函数（MJPEG 已在 mmap）到 H264 输出的大致链路耗时（含解码、VSE 排队、编码）。
+    // 供 RFLOW_MJPEG_TO_H264_TRACE：与编码器内 TimeMicros 差值 = 从进入本函数（MJPEG 已在 mmap）到 H264 输出的大致链路耗时（含解码、VSE 排队、编码）。
     const int64_t pipeline_t0_us = webrtc::TimeMicros();
     const int w = direct_cap_w_;
     const int h = direct_cap_h_;

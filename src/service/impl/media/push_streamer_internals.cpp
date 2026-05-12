@@ -39,7 +39,7 @@ void TraceSigTiming(const std::string& msg) {
 
 bool LatencyTraceEnabled() {
     static const bool enabled =
-        rflow::common::util::TraceFlagEnabled("WEBRTC_LATENCY_TRACE");
+        rflow::common::util::TraceFlagEnabled("RFLOW_LATENCY_TRACE");
     return enabled;
 }
 
@@ -71,7 +71,7 @@ void StopWebrtcThreadWithDeadline(webrtc::Thread* thread, int timeout_sec) {
     std::future<void> done = task.get_future();
     std::thread worker(std::move(task));
     if (done.wait_for(std::chrono::seconds(timeout_sec)) != std::future_status::ready) {
-        RFLOW_LOG_TAG_W("PushStreamer", "webrtc signaling Thread::Stop exceeded %ds; continuing shutdown",
+        RFLOW_LOG_TAG_W("PushStreamer", "RTC signaling Thread::Stop exceeded %ds; continuing shutdown",
                         timeout_sec);
         worker.detach();
         return;
