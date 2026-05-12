@@ -8,7 +8,7 @@
  * 默认:
  *   signaling_url = 127.0.0.1:8765
  *   device_id     = demo_device
- *   分辨率/帧率   = 640x360 @ 30
+ *   分辨率/帧率   = 1280x720 @ 60
  *   stream_idx    = 0
  *   camera        = Linux 下优先 RFLOW_PUSH_DEMO_CAMERA，其次 /dev/video0；其他平台默认索引 0
  *
@@ -57,9 +57,9 @@ void OnStreamState(librflow_svc_stream_handle_t /*h*/, rflow_stream_state_t stat
 int main(int argc, char** argv) {
     std::string signaling_url = "127.0.0.1:8765";
     std::string device_id     = "demo_device";
-    int width                 = 640;
-    int height                = 360;
-    int fps                   = 30;
+    int width                 = 1280;
+    int height                = 720;
+    int fps                   = 60;
     rflow_stream_index_t stream_idx = 0;
     std::string camera;
 
