@@ -54,8 +54,8 @@ constexpr KnobSpec kKnobTable[] = {
     {"RFLOW_DECODE_QUEUE_GUARD_CAP", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 6, 4, 12, "",
      "Max decode-queue size when RFLOW_ENABLE_DECODE_QUEUE_GUARD applies."},
     {"RFLOW_ENABLE_FLEXFEC", nullptr, KnobGroup::kRtcFactory, KnobKind::kBool, 1, 0, 1, "",
-     "RTP FlexFEC (WebRTC FlexFEC-03) when librflow_global_config_set_enable_flexfec is unset; "
-     "explicit GlobalConfig overrides this knob."},
+     "RTP FlexFEC (FlexFEC-03): effective when librflow_global_config.flexfec stays "
+     "RFLOW_GLOBAL_FLEXFEC_DEFAULT; set_flexfec(ON/OFF) overrides this knob."},
     {"RFLOW_FIELD_TRIALS_APPEND", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
      "Extra WebRTC FieldTrials string (experimental/runtime flags)."},
     {"RFLOW_SYNC_GETSTATS_TIMEOUT_MS", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 1500, 200, 60000,

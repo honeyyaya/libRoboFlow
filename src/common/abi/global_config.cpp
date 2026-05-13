@@ -79,33 +79,24 @@ rflow_err_t librflow_global_config_set_region(librflow_global_config_t config_ob
     return RFLOW_OK;
 }
 
-rflow_err_t librflow_global_config_set_enable_flexfec(librflow_global_config_t config_obj,
-                                                      bool enabled) {
+rflow_err_t librflow_global_config_set_flexfec(librflow_global_config_t config_obj,
+                                               rflow_global_flexfec_t mode) {
     RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicGlobalConfig);
-    config_obj->has_enable_flexfec = true;
-    config_obj->enable_flexfec     = enabled;
+    if (mode != RFLOW_GLOBAL_FLEXFEC_DEFAULT && mode != RFLOW_GLOBAL_FLEXFEC_OFF &&
+        mode != RFLOW_GLOBAL_FLEXFEC_ON) {
+        return RFLOW_ERR_PARAM;
+    }
+    config_obj->flexfec = mode;
     return RFLOW_OK;
 }
 
-void librflow_global_config_reset_enable_flexfec(librflow_global_config_t config_obj) {
-    if (!config_obj || config_obj->magic != rflow::kMagicGlobalConfig) {
-        return;
-    }
-    config_obj->has_enable_flexfec = false;
-    config_obj->enable_flexfec     = true;
-}
-
-rflow_err_t librflow_global_config_get_enable_flexfec(librflow_global_config_t config_obj,
-                                                      bool *out_explicit,
-                                                      bool *out_enabled) {
+rflow_err_t librflow_global_config_get_flexfec(librflow_global_config_t config_obj,
+                                               rflow_global_flexfec_t *out_mode) {
     RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicGlobalConfig);
-    if (!out_explicit) {
+    if (!out_mode) {
         return RFLOW_ERR_PARAM;
     }
-    *out_explicit = config_obj->has_enable_flexfec;
-    if (out_enabled && config_obj->has_enable_flexfec) {
-        *out_enabled = config_obj->enable_flexfec;
-    }
+    *out_mode = config_obj->flexfec;
     return RFLOW_OK;
 }
 

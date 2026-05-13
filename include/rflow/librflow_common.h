@@ -258,6 +258,13 @@ typedef enum {
     RFLOW_REGION_OVERSEAS = 1,
 } rflow_region_t;
 
+/** GlobalConfig RTP FlexFEC (FlexFEC-03): API overrides env unless DEFAULT. */
+typedef enum {
+    RFLOW_GLOBAL_FLEXFEC_DEFAULT = 0, /**< RFLOW_ENABLE_FLEXFEC (default on). */
+    RFLOW_GLOBAL_FLEXFEC_OFF     = 1, /**< Force off regardless of env. */
+    RFLOW_GLOBAL_FLEXFEC_ON      = 2, /**< Force on regardless of env. */
+} rflow_global_flexfec_t;
+
 /******************************************************************************
  *                        Opaque Handles — 共享配置 / 数据对象
  ******************************************************************************/
@@ -401,22 +408,14 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_config_path(librflow_
 LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_region     (librflow_global_config_t cfg, rflow_region_t region);
 
 /**
- * RTP FlexFEC（WebRTC FlexFEC-03）：是否在 SDP/发送侧协商并启用 FEC。
- * - 须在 librflow_svc_set_global_config / librflow_set_global_config 之前对所创建对象调用；
- *   与 *_set_global_config 组合后在下一次 PeerConnectionFactory 拉起 Field Trials 时生效。
- * - 若在首次 RTC 初始化之后调用，可能不会再生效（底层 Field Trial 常为进程单次初始化）。
+ * RTP FlexFEC (WebRTC FlexFEC-03). Call before librflow_*_set_global_config.
+ * RFLOW_GLOBAL_FLEXFEC_DEFAULT: follow RFLOW_ENABLE_FLEXFEC. ON/OFF: API wins over env.
+ * Field trials apply at first PeerConnection factory init only.
  */
-LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_enable_flexfec(librflow_global_config_t cfg, bool enable);
-/** 取消显式 FlexFEC 设置，恢复为与同进程 RFLOW_ENABLE_FLEXFEC（默认开）一致。 */
-LIBRFLOW_API_EXPORT void librflow_global_config_reset_enable_flexfec(librflow_global_config_t cfg);
-/**
- * FlexFEC：读当前 global_config 中的显式状态。
- * out_enabled 仅在显式调用过 librflow_global_config_set_enable_flexfec 时写入；
- * 未显式时以环境 RFLOW_ENABLE_FLEXFEC（默认开）为准，此时勿读 out_enabled。
- */
-LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_get_enable_flexfec(librflow_global_config_t cfg,
-                                                                          bool *out_explicit,
-                                                                          bool *out_enabled);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_flexfec(librflow_global_config_t cfg,
+                                                                   rflow_global_flexfec_t mode);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_get_flexfec(librflow_global_config_t cfg,
+                                                                   rflow_global_flexfec_t *out_mode);
 /******************************************************************************
  *                           Video Frame Getter / 生命周期（共享）
  ******************************************************************************/

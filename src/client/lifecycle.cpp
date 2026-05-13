@@ -55,8 +55,9 @@ rflow_err_t librflow_set_global_config(librflow_global_config_t cfg) {
     }
 
     rflow::common::base::CopyGlobalConfig(s.global_config, *cfg);
-    rflow::rtc::NotifyFlexfecTrialFromSdkConfig(s.global_config.has_enable_flexfec,
-                                                 s.global_config.enable_flexfec);
+    const bool flexfec_explicit = (s.global_config.flexfec != RFLOW_GLOBAL_FLEXFEC_DEFAULT);
+    const bool flexfec_enabled  = (s.global_config.flexfec == RFLOW_GLOBAL_FLEXFEC_ON);
+    rflow::rtc::NotifyFlexfecTrialFromSdkConfig(flexfec_explicit, flexfec_enabled);
     rflow::common::base::ApplyLogConfigIfPresent(s.global_config);
     return RFLOW_OK;
 }

@@ -12,9 +12,10 @@
  *   stream_idx    = 0
  *   camera        = Linux 下优先 RFLOW_PUSH_DEMO_CAMERA，其次 /dev/video0；其他平台默认索引 0
  *
- * 联调 RTP FlexFEC（GlobalConfig）：可选环境 RFLOW_PUSH_DEMO_FLEXFEC_SDK
- *     enable|disable|1|0 会调用 librflow_global_config_set_enable_flexfec，覆盖 RFLOW_ENABLE_FLEXFEC；
- *     未设置则不调 FlexFEC ABI（与同进程 RFLOW_ENABLE_FLEXFEC 一致）。
+ * 联调 RTP FlexFEC（GlobalConfig）：可选 RFLOW_PUSH_DEMO_FLEXFEC_SDK
+ *     enable|disable|1|0 → librflow_global_config_set_flexfec(ON/OFF)；
+ *     env|default → RFLOW_GLOBAL_FLEXFEC_DEFAULT（与同进程 RFLOW_ENABLE_FLEXFEC 一致）。
+ *     未设置则不调用 set_flexfec。
  *
  * degradation_preference（弱网降质）：示例中显式调用 maintain_framerate；亦可省略以使用
  * SDK 默认 maintain_framerate。
@@ -87,12 +88,14 @@ int main(int argc, char** argv) {
     auto gcfg = librflow_global_config_create();
     librflow_global_config_set_signal(gcfg, sig_cfg);
 #if defined(__linux__)
-    /* 仅用 demo 编排 FlexFEC ABI 生效性验证；产品上请直接调用 set_enable_flexfec。 */
+    /* Demo-only FlexFEC ABI smoke; prod: librflow_global_config_set_flexfec + set_global_config. */
     if (const char* fec_demo = std::getenv("RFLOW_PUSH_DEMO_FLEXFEC_SDK")) {
         if (!std::strcmp(fec_demo, "1") || !std::strcmp(fec_demo, "enable")) {
-            librflow_global_config_set_enable_flexfec(gcfg, true);
+            librflow_global_config_set_flexfec(gcfg, RFLOW_GLOBAL_FLEXFEC_ON);
         } else if (!std::strcmp(fec_demo, "0") || !std::strcmp(fec_demo, "disable")) {
-            librflow_global_config_set_enable_flexfec(gcfg, false);
+            librflow_global_config_set_flexfec(gcfg, RFLOW_GLOBAL_FLEXFEC_OFF);
+        } else if (!std::strcmp(fec_demo, "env") || !std::strcmp(fec_demo, "default")) {
+            librflow_global_config_set_flexfec(gcfg, RFLOW_GLOBAL_FLEXFEC_DEFAULT);
         }
     }
 #endif

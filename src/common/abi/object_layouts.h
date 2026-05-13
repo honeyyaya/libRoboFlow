@@ -47,10 +47,7 @@ struct librflow_global_config_s {
     std::string config_path;
     rflow_region_t region;
 
-    /// 若置位，则 RTP FlexFEC(WebRTC FlexFEC-03) 是否启用以 enable_flexfec 为准，
-    /// 忽略环境 RFLOW_ENABLE_FLEXFEC（仍会在未显式调用 API 时使用该旋钮默认值）。
-    bool has_enable_flexfec{false};
-    bool enable_flexfec{true};
+    rflow_global_flexfec_t flexfec{RFLOW_GLOBAL_FLEXFEC_DEFAULT};
 };
 
 #endif  // __RFLOW_COMMON_ABI_OBJECT_LAYOUTS_H__
