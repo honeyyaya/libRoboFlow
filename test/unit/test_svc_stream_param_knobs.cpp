@@ -176,6 +176,40 @@ TEST(SvcStreamParamNetworkPriority, InvalidRejected) {
     librflow_svc_stream_param_destroy(p);
 }
 
+TEST(StreamStartupDegradationPreference, MaintainFramerateResolvesToLiteral) {
+    librflow_svc_stream_param_t param = librflow_svc_stream_param_create();
+    ASSERT_NE(param, nullptr);
+    EXPECT_EQ(librflow_svc_stream_param_set_degradation_preference(param, RFLOW_DEGRADATION_MAINTAIN_FRAMERATE),
+              RFLOW_OK);
+
+    librflow_svc_stream_s stream{};
+    stream.param = *param;
+
+    rflow::service::State state{};
+    const auto resolved = rflow::service::internal::ResolvePublisherStartup(stream, state, 0);
+    ASSERT_TRUE(resolved.degradation_pref_explicit.has_value());
+    EXPECT_EQ(*resolved.degradation_pref_explicit, "maintain_framerate");
+
+    librflow_svc_stream_param_destroy(param);
+}
+
+TEST(StreamStartupDegradationPreference, MaintainResolutionResolvesToLiteral) {
+    librflow_svc_stream_param_t param = librflow_svc_stream_param_create();
+    ASSERT_NE(param, nullptr);
+    EXPECT_EQ(librflow_svc_stream_param_set_degradation_preference(param, RFLOW_DEGRADATION_MAINTAIN_RESOLUTION),
+              RFLOW_OK);
+
+    librflow_svc_stream_s stream{};
+    stream.param = *param;
+
+    rflow::service::State state{};
+    const auto resolved = rflow::service::internal::ResolvePublisherStartup(stream, state, 0);
+    ASSERT_TRUE(resolved.degradation_pref_explicit.has_value());
+    EXPECT_EQ(*resolved.degradation_pref_explicit, "maintain_resolution");
+
+    librflow_svc_stream_param_destroy(param);
+}
+
 TEST(StreamStartupDegradationPreference, ApiThenResolvePropagatesStrings) {
     librflow_svc_stream_param_t param = librflow_svc_stream_param_create();
     ASSERT_NE(param, nullptr);
