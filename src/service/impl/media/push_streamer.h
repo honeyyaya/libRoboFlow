@@ -117,6 +117,8 @@ public:
     void AddRemoteIceCandidateForPeer(const std::string& peer_id, const std::string& mid,
                                       int mline_index, const std::string& candidate);
     void CreateOfferForPeer(const std::string& peer_id);
+    /// 订阅者离开时关闭并移除对应 PeerConnection，避免旧发送链/编码器残留。
+    void ClosePeerForSubscriber(const std::string& peer_id);
 
     /// 回调设置
     void SetOnSdpCallback(OnSdpCallback cb);

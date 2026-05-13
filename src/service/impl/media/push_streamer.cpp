@@ -868,6 +868,35 @@ public:
         return true;
     }
 
+    void ClosePeerForSubscriber(const std::string& peer_id) {
+        if (peer_id.empty()) {
+            return;
+        }
+        webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc;
+        std::unique_ptr<ExtraPeerObserver> observer;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = peer_connections_.find(peer_id);
+            if (it == peer_connections_.end()) {
+                return;
+            }
+            pc = it->second;
+            peer_connections_.erase(it);
+
+            auto obs_it = extra_peer_observers_.find(peer_id);
+            if (obs_it != extra_peer_observers_.end()) {
+                observer = std::move(obs_it->second);
+                extra_peer_observers_.erase(obs_it);
+            }
+        }
+        RFLOW_LOG_TAG_I("PushStreamer", "Subscriber PeerConnection closing: %s", peer_id.c_str());
+        if (pc) {
+            ClosePeerConnectionWithDeadline(pc, "subscriber leave", 8);
+        }
+        observer.reset();
+        RFLOW_LOG_TAG_I("PushStreamer", "Subscriber PeerConnection closed: %s", peer_id.c_str());
+    }
+
     void CreateOfferOnConnection(const std::string& peer_id,
                                  webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc) {
         if (!pc) {
@@ -1330,6 +1359,10 @@ void PushStreamer::AddRemoteIceCandidateForPeer(const std::string& peer_id, cons
 
 void PushStreamer::CreateOfferForPeer(const std::string& peer_id) {
     impl_->CreateOfferForPeer(peer_id);
+}
+
+void PushStreamer::ClosePeerForSubscriber(const std::string& peer_id) {
+    impl_->ClosePeerForSubscriber(peer_id);
 }
 
 void PushStreamer::SetOnSdpCallback(OnSdpCallback cb) {

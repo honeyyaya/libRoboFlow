@@ -140,7 +140,10 @@ bool Publisher::Start() {
             cbs_.on_pull_request(stream_idx_, cbs_.userdata);
         }
     });
-    signaling_->SetOnSubscriberLeave([this](const std::string& /*peer_id*/) {
+    signaling_->SetOnSubscriberLeave([this](const std::string& peer_id) {
+        if (streamer_) {
+            streamer_->ClosePeerForSubscriber(peer_id);
+        }
         if (cbs_.on_pull_release) {
             cbs_.on_pull_release(stream_idx_, cbs_.userdata);
         }

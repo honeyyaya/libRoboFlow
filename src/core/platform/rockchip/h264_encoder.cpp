@@ -1381,8 +1381,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         if (ret != MPP_OK) {
             RTC_LOG(LS_ERROR) << "[RkMppH264] encode_put_frame ret=" << ret;
             RFLOW_LOG_TAG_E("RkMppH264Err", "encode_put_frame ret=%d", static_cast<int>(ret));
-            release_held_input();
-            return WEBRTC_VIDEO_CODEC_ERROR;
+            return recover_or_error("encode_put_frame", ret);
         }
         if (debug_enabled_ && encode_probe_idx <= 3) {
             MppPacket probe_extra = nullptr;
