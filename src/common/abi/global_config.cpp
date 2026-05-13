@@ -79,4 +79,34 @@ rflow_err_t librflow_global_config_set_region(librflow_global_config_t config_ob
     return RFLOW_OK;
 }
 
+rflow_err_t librflow_global_config_set_enable_flexfec(librflow_global_config_t config_obj,
+                                                      bool enabled) {
+    RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicGlobalConfig);
+    config_obj->has_enable_flexfec = true;
+    config_obj->enable_flexfec     = enabled;
+    return RFLOW_OK;
+}
+
+void librflow_global_config_reset_enable_flexfec(librflow_global_config_t config_obj) {
+    if (!config_obj || config_obj->magic != rflow::kMagicGlobalConfig) {
+        return;
+    }
+    config_obj->has_enable_flexfec = false;
+    config_obj->enable_flexfec     = true;
+}
+
+rflow_err_t librflow_global_config_get_enable_flexfec(librflow_global_config_t config_obj,
+                                                      bool *out_explicit,
+                                                      bool *out_enabled) {
+    RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicGlobalConfig);
+    if (!out_explicit) {
+        return RFLOW_ERR_PARAM;
+    }
+    *out_explicit = config_obj->has_enable_flexfec;
+    if (out_enabled && config_obj->has_enable_flexfec) {
+        *out_enabled = config_obj->enable_flexfec;
+    }
+    return RFLOW_OK;
+}
+
 }  // extern "C"

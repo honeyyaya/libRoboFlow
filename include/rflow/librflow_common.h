@@ -400,6 +400,23 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_license    (librflow_
 LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_config_path(librflow_global_config_t cfg, const char *path);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_region     (librflow_global_config_t cfg, rflow_region_t region);
 
+/**
+ * RTP FlexFEC（WebRTC FlexFEC-03）：是否在 SDP/发送侧协商并启用 FEC。
+ * - 须在 librflow_svc_set_global_config / librflow_set_global_config 之前对所创建对象调用；
+ *   与 *_set_global_config 组合后在下一次 PeerConnectionFactory 拉起 Field Trials 时生效。
+ * - 若在首次 RTC 初始化之后调用，可能不会再生效（底层 Field Trial 常为进程单次初始化）。
+ */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_enable_flexfec(librflow_global_config_t cfg, bool enable);
+/** 取消显式 FlexFEC 设置，恢复为与同进程 RFLOW_ENABLE_FLEXFEC（默认开）一致。 */
+LIBRFLOW_API_EXPORT void librflow_global_config_reset_enable_flexfec(librflow_global_config_t cfg);
+/**
+ * FlexFEC：读当前 global_config 中的显式状态。
+ * out_enabled 仅在显式调用过 librflow_global_config_set_enable_flexfec 时写入；
+ * 未显式时以环境 RFLOW_ENABLE_FLEXFEC（默认开）为准，此时勿读 out_enabled。
+ */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_get_enable_flexfec(librflow_global_config_t cfg,
+                                                                          bool *out_explicit,
+                                                                          bool *out_enabled);
 /******************************************************************************
  *                           Video Frame Getter / 生命周期（共享）
  ******************************************************************************/

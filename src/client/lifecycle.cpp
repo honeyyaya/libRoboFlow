@@ -14,6 +14,7 @@
 #include "base/global_config_ops.h"
 #include "public/last_error_api.h"
 #include "public/logger_api.h"
+#include "rtc/rtc_factory_common.h"
 
 #include "internal/infrastructure.h"
 
@@ -54,6 +55,8 @@ rflow_err_t librflow_set_global_config(librflow_global_config_t cfg) {
     }
 
     rflow::common::base::CopyGlobalConfig(s.global_config, *cfg);
+    rflow::rtc::NotifyFlexfecTrialFromSdkConfig(s.global_config.has_enable_flexfec,
+                                                 s.global_config.enable_flexfec);
     rflow::common::base::ApplyLogConfigIfPresent(s.global_config);
     return RFLOW_OK;
 }
@@ -83,6 +86,7 @@ rflow_err_t librflow_uninit(void) {
 
     s.streams.clear();
     rflow::client::shutdown_infrastructure();
+    rflow::rtc::ResetFlexfecTrialSdkOverride();
 
     s.lifecycle = rflow::client::LifecycleState::kUninit;
     RFLOW_LOGI("librflow_uninit OK");

@@ -54,7 +54,8 @@ constexpr KnobSpec kKnobTable[] = {
     {"RFLOW_DECODE_QUEUE_GUARD_CAP", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 6, 4, 12, "",
      "decode queue guard 容量"},
     {"RFLOW_ENABLE_FLEXFEC", nullptr, KnobGroup::kRtcFactory, KnobKind::kBool, 1, 0, 1, "",
-     "启用 FlexFEC 前向纠错（默认开；设 0/n/f 关闭）"},
+     "FlexFEC(WebRTC FlexFEC-03)：未调用 librflow_global_config_set_enable_flexfec 时沿用本开关；" \
+     "若在 set_global_config 中显式设置则以其为准。"},
     {"RFLOW_FIELD_TRIALS_APPEND", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
      "RTC FieldTrials 字符串附加项（实验功能开关）"},
     {"RFLOW_SYNC_GETSTATS_TIMEOUT_MS", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 1500, 200, 60000,

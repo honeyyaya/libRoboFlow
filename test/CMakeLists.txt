@@ -56,6 +56,11 @@ add_rflow_unit_test(test_lifecycle_fsm
 add_rflow_unit_test(test_object_access
     SOURCES unit/test_object_access.cpp)
 
+add_rflow_unit_test(test_global_config_flexfec
+    SOURCES
+        unit/test_global_config_flexfec.cpp
+        ${CMAKE_SOURCE_DIR}/src/common/abi/global_config.cpp)
+
 # -------------------------------------------------------------------- core/signal
 # protocol.cpp 是纯 std 实现，直接编进单测目标即可（避免拽 rflow_core OBJECT lib）
 add_rflow_unit_test(test_signal_protocol
