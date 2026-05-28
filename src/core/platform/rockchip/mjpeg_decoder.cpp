@@ -45,7 +45,7 @@ namespace rflow::rtc::hw::rockchip_mpp {
 namespace {
 
 static bool MjpegDecTraceEnabled() {
-    static const char* k = std::getenv("WEBRTC_MJPEG_DEC_TRACE");
+    static const char* k = std::getenv("RFLOW_MJPEG_DEC_TRACE");
     return k && k[0] != '0';
 }
 
@@ -54,7 +54,7 @@ static bool LatencyTraceEnabled() {
     if (cached >= 0) {
         return cached != 0;
     }
-    const char* e = std::getenv("WEBRTC_LATENCY_TRACE");
+    const char* e = std::getenv("RFLOW_LATENCY_TRACE");
     cached = (e && e[0] == '1') ? 1 : 0;
     return cached != 0;
 }
@@ -64,7 +64,7 @@ static bool MjpegDecLowLatency() {
     if (cached >= 0) {
         return cached != 0;
     }
-    const char* e = std::getenv("WEBRTC_MJPEG_DEC_LOW_LATENCY");
+    const char* e = std::getenv("RFLOW_MJPEG_DEC_LOW_LATENCY");
     cached = (e && (e[0] == '1' || e[0] == 'y' || e[0] == 'Y')) ? 1 : 0;
     return cached != 0;
 }
@@ -80,19 +80,18 @@ static int MjpegPollSleepUs() {
 #if defined(RFLOW_HAVE_LIBRGA)
 
 static bool RgaDisableAfterFailEnabled() {
-    const char* e = std::getenv("WEBRTC_MJPEG_RGA_DISABLE_AFTER_FAIL");
-    return e && (e[0] == '1' || e[0] == 'y' || e[0] == 'Y');
+    return true;
 }
 
 /// Maximum allowed aspect ratio used for RGA Y400 copy rectangle.
 /// Both (w / h) and (h / w) must be <= this value.
-/// Can be tightened via WEBRTC_MJPEG_RGA_MAX_ASPECT, for example 16.
+/// Can be tightened via RFLOW_MJPEG_RGA_MAX_ASPECT, for example 16.
 static int RgaY400MaxAspectRatio() {
     static int cached = -1;
     if (cached >= 0) {
         return cached;
     }
-    const char* e = std::getenv("WEBRTC_MJPEG_RGA_MAX_ASPECT");
+    const char* e = std::getenv("RFLOW_MJPEG_RGA_MAX_ASPECT");
     if (e && e[0] != '\0') {
         const long v = std::strtol(e, nullptr, 10);
         if (v >= 2 && v <= 256) {
@@ -110,7 +109,7 @@ static int RgaY400MaxAspectRatio() {
 /// We treat jpeg_len bytes as a 2D fake-gray rectangle only to satisfy RGA rectangle API.
 /// Old approach could pick extreme strips (e.g. 4096x64) and trigger EINVAL on some BSPs.
 /// So we choose a valid pair with aspect ratio closest to 1, still bounded by
-/// WEBRTC_MJPEG_RGA_MAX_ASPECT.
+/// RFLOW_MJPEG_RGA_MAX_ASPECT.
 static bool RgaPickY400Rect(size_t cap, size_t need, int* out_w, int* out_h) {
     if (need == 0 || need > cap || !out_w || !out_h) {
         return false;
@@ -339,9 +338,6 @@ static bool CopyMppSemiPlanarToNv12(RK_U32 fmt,
 }  // namespace
 
 bool RkMppMjpegDecoder::WantExtDmabufImport() const {
-    if (const char* e = std::getenv("WEBRTC_MJPEG_V4L2_DMABUF")) {
-        return e[0] != '0';
-    }
     return pipeline_v4l2_ext_dma_;
 }
 
@@ -349,9 +345,6 @@ bool RkMppMjpegDecoder::WantRgaToMpp() const {
 #if !defined(RFLOW_HAVE_LIBRGA)
     return false;
 #else
-    if (const char* e = std::getenv("WEBRTC_MJPEG_RGA_TO_MPP")) {
-        return e[0] != '0';
-    }
     return pipeline_rga_to_mpp_;
 #endif
 }
@@ -567,7 +560,7 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
                     session_skip_rga_ = true;
                     if (LatencyTraceEnabled() || MjpegDecTraceEnabled()) {
                         RFLOW_LOG_TAG_W("RkMppMjpeg",
-                                        "RGA disabled for rest of session (WEBRTC_MJPEG_RGA_DISABLE_AFTER_FAIL=1)");
+                                        "RGA disabled for rest of session after first failure");
                     }
                 }
                 if (MjpegDecTraceEnabled()) {

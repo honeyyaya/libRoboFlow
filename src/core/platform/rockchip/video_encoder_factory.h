@@ -10,7 +10,8 @@ class VideoEncoderFactory;
 namespace rflow::rtc::hw::rockchip_mpp {
 
 /// H.264 优先走 Rockchip MPP 硬件编码，失败时由 libwebrtc 内置 OpenH264 回退。
-std::unique_ptr<webrtc::VideoEncoderFactory> CreateVideoEncoderFactory();
+/// @param mpp_rc_cbr true 时 MPP rc:mode=CBR，否则 VBR。
+std::unique_ptr<webrtc::VideoEncoderFactory> CreateVideoEncoderFactory(bool mpp_rc_cbr = false);
 
 }  // namespace rflow::rtc::hw::rockchip_mpp
 

@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "api/task_queue/default_task_queue_factory.h"
@@ -13,6 +14,22 @@ namespace rflow::rtc {
 namespace {
 
 namespace knob = rflow::core::runtime;
+
+std::mutex g_flexfec_trial_mu;
+// nullopt ⇒ 不使用 SDK 固定值；仍读 RFLOW_ENABLE_FLEXFEC。
+std::optional<bool> g_flexfec_explicit;
+
+bool FlexfecTrialEnabledEffective() {
+    std::optional<bool> local_copy;
+    {
+        std::lock_guard<std::mutex> lk(g_flexfec_trial_mu);
+        local_copy = g_flexfec_explicit;
+    }
+    if (local_copy.has_value()) {
+        return *local_copy;
+    }
+    return knob::ReadBool("RFLOW_ENABLE_FLEXFEC");
+}
 
 std::once_flag g_field_trials_once;
 std::string    g_field_trials_storage;
@@ -45,7 +62,7 @@ void EnsureWebrtcFieldTrialsInitialized() {
             "WebRTC-Pacer-KeyframeFlushing/Enabled/"
             "WebRTC-Pacer-FastRetransmissions/Enabled/";
 
-        if (knob::ReadBool("RFLOW_ENABLE_FLEXFEC")) {
+        if (FlexfecTrialEnabledEffective()) {
             g_field_trials_storage +=
                 "WebRTC-FlexFEC-03-Advertised/Enabled/"
                 "WebRTC-FlexFEC-03/Enabled/";
@@ -66,6 +83,20 @@ webrtc::scoped_refptr<webrtc::AudioDeviceModule> CreateDummyAudioDeviceModule() 
         webrtc::AudioDeviceModule::Create(webrtc::AudioDeviceModule::kDummyAudio,
                                           task_queue_factory.get());
     return adm;
+}
+
+void NotifyFlexfecTrialFromSdkConfig(bool explicitly_set, bool enabled) {
+    std::lock_guard<std::mutex> lk(g_flexfec_trial_mu);
+    if (explicitly_set) {
+        g_flexfec_explicit = enabled;
+    } else {
+        g_flexfec_explicit.reset();
+    }
+}
+
+void ResetFlexfecTrialSdkOverride(void) {
+    std::lock_guard<std::mutex> lk(g_flexfec_trial_mu);
+    g_flexfec_explicit.reset();
 }
 
 }  // namespace rflow::rtc

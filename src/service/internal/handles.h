@@ -53,13 +53,22 @@ struct librflow_svc_stream_param_s {
     uint32_t           qp;
     uint32_t           bitrate_kbps;
     uint32_t           max_bitrate_kbps;
+    rflow_bitrate_mode_t bitrate_mode;
     bool               dynamic_bitrate;
     uint32_t           lowest_kbps;
     uint32_t           highest_kbps;
     bool               enable_transcode;
     std::string        video_device_path;
     uint32_t           video_device_index;
-
+    rflow_degradation_preference_t degradation_preference{RFLOW_DEGRADATION_MAINTAIN_FRAMERATE};
+    std::string        h264_profile;
+    std::string        h264_level;
+    bool               ice_prioritize_likely_pairs{true};
+    rflow_svc_network_priority_t video_network_priority{RFLOW_SVC_NETWORK_PRIORITY_HIGH};
+    uint32_t           video_encoding_max_fps{0};
+    uint32_t           capture_warmup_sec{0};
+    uint32_t           capture_gate_min_frames{0};
+    uint32_t           capture_gate_max_wait_sec{20};
     /* 追踪每个字段是否被 setter 显式赋值过（NOT_FOUND vs 显式 0 的消歧） */
     bool               has_in_codec;
     bool               has_out_codec;
@@ -70,10 +79,19 @@ struct librflow_svc_stream_param_s {
     bool               has_rc_mode;
     bool               has_qp;
     bool               has_bitrate;
+    bool               has_bitrate_mode{false};
     bool               has_dynamic_bitrate;
     bool               has_enable_transcode;
     bool               has_video_device_path;
     bool               has_video_device_index;
+    bool               has_degradation_preference{false};
+    bool               has_h264_profile{false};
+    bool               has_h264_level{false};
+    bool               has_ice_prioritize_likely_pairs{false};
+    bool               has_video_network_priority{false};
+    bool               has_video_encoding_max_fps{false};
+    bool               has_capture_warmup_sec{false};
+    bool               has_capture_gate{false};
 };
 
 struct librflow_svc_stream_cb_s {

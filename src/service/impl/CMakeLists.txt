@@ -1,6 +1,6 @@
 # src/service/impl — 服务端 WebRTC 业务实现（推/拉流、Camera、信令客户端等）。
 #
-# 当前状态：代码已从 legacy sdk/ include/ 扁平化到 camera/ config/ media/ signaling/，
+# 当前状态：代码已从 legacy sdk/ include/ 扁平化到 camera/ media/ signaling/，
 # 使用 rflow::service::impl / rflow::rtc 命名空间，并直接依赖 libwebrtc 预编译产物。暂不接入
 # librflow_svc 的主目标（否则会把 libwebrtc 全量拽入 service SDK）。
 #
@@ -17,7 +17,6 @@ endif()
 
 set(_SVC_IMPL_SRCS
     camera/camera_utils.cpp
-    config/config_loader.cpp
     media/camera_video_track_source.cpp
     media/external_push_video_track_source.cpp
     media/pull_subscriber.cpp

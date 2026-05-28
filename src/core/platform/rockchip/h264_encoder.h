@@ -20,7 +20,9 @@ namespace rflow::rtc::hw::rockchip_mpp {
 /// 与 OpenH264 相同走 Annex B + start code，供 WebRTC RTP 打包。
 class RkMppH264Encoder final : public webrtc::VideoEncoder {
  public:
-  RkMppH264Encoder(const webrtc::Environment& env, webrtc::H264EncoderSettings settings);
+  RkMppH264Encoder(const webrtc::Environment& env,
+                   webrtc::H264EncoderSettings settings,
+                   bool rockchip_mpp_rc_cbr = false);
   ~RkMppH264Encoder() override;
 
   RkMppH264Encoder(const RkMppH264Encoder&) = delete;
@@ -52,6 +54,7 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
 
   const webrtc::Environment& env_;
   webrtc::H264EncoderSettings h264_settings_;
+  bool rockchip_mpp_rc_cbr_{false};
   webrtc::EncodedImageCallback* callback_{nullptr};
 
   void* mpp_ctx_{nullptr};

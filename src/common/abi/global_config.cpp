@@ -79,4 +79,25 @@ rflow_err_t librflow_global_config_set_region(librflow_global_config_t config_ob
     return RFLOW_OK;
 }
 
+rflow_err_t librflow_global_config_set_flexfec(librflow_global_config_t config_obj,
+                                               rflow_global_flexfec_t mode) {
+    RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicGlobalConfig);
+    if (mode != RFLOW_GLOBAL_FLEXFEC_DEFAULT && mode != RFLOW_GLOBAL_FLEXFEC_OFF &&
+        mode != RFLOW_GLOBAL_FLEXFEC_ON) {
+        return RFLOW_ERR_PARAM;
+    }
+    config_obj->flexfec = mode;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_global_config_get_flexfec(librflow_global_config_t config_obj,
+                                               rflow_global_flexfec_t *out_mode) {
+    RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicGlobalConfig);
+    if (!out_mode) {
+        return RFLOW_ERR_PARAM;
+    }
+    *out_mode = config_obj->flexfec;
+    return RFLOW_OK;
+}
+
 }  // extern "C"

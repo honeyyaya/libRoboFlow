@@ -258,6 +258,13 @@ typedef enum {
     RFLOW_REGION_OVERSEAS = 1,
 } rflow_region_t;
 
+/** GlobalConfig RTP FlexFEC (FlexFEC-03): API overrides env unless DEFAULT. */
+typedef enum {
+    RFLOW_GLOBAL_FLEXFEC_DEFAULT = 0, /**< RFLOW_ENABLE_FLEXFEC (default on). */
+    RFLOW_GLOBAL_FLEXFEC_OFF     = 1, /**< Force off regardless of env. */
+    RFLOW_GLOBAL_FLEXFEC_ON      = 2, /**< Force on regardless of env. */
+} rflow_global_flexfec_t;
+
 /******************************************************************************
  *                        Opaque Handles — 共享配置 / 数据对象
  ******************************************************************************/
@@ -400,6 +407,15 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_license    (librflow_
 LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_config_path(librflow_global_config_t cfg, const char *path);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_region     (librflow_global_config_t cfg, rflow_region_t region);
 
+/**
+ * RTP FlexFEC (WebRTC FlexFEC-03). Call before librflow_*_set_global_config.
+ * RFLOW_GLOBAL_FLEXFEC_DEFAULT: follow RFLOW_ENABLE_FLEXFEC. ON/OFF: API wins over env.
+ * Field trials apply at first PeerConnection factory init only.
+ */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_flexfec(librflow_global_config_t cfg,
+                                                                   rflow_global_flexfec_t mode);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_get_flexfec(librflow_global_config_t cfg,
+                                                                   rflow_global_flexfec_t *out_mode);
 /******************************************************************************
  *                           Video Frame Getter / 生命周期（共享）
  ******************************************************************************/

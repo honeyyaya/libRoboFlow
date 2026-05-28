@@ -8,12 +8,23 @@
  * 默认:
  *   signaling_url = 127.0.0.1:8765
  *   device_id     = demo_device
- *   分辨率/帧率   = 640x360 @ 30
+ *   分辨率/帧率   = 1280x720 @ 60
  *   stream_idx    = 0
  *   camera        = Linux 下优先 RFLOW_PUSH_DEMO_CAMERA，其次 /dev/video0；其他平台默认索引 0
  *
- * 说明:
- *   本 demo 只调用 SDK，采集/编码/推流全部由 SDK 内部完成。
+ * RTP FlexFEC（GlobalConfig）：本 demo **默认显式开启** `librflow_global_config_set_flexfec(..., RFLOW_GLOBAL_FLEXFEC_ON)`，
+ * 不依赖 RFLOW_ENABLE_FLEXFEC。
+ *
+ * degradation_preference（弱网降质）：示例中显式调用 maintain_framerate；亦可省略以使用
+ * SDK 默认 maintain_framerate。
+ * H264_PROFILE / H264_LEVEL / KEYFRAME_INTERVAL / ICE_PRIORITIZE_LIKELY_PAIRS /
+ * VIDEO_NETWORK_PRIORITY / BITRATE_MODE（librflow_svc_stream_param_set_bitrate_mode）
+ * 等亦见下方 stream_param 显式设置（与 SDK 分辨率/帧率等语义对齐）。
+ *
+ * 周期性统计：`[demo][stats]` 为瞬时快照（ outbound GetStats，`fps=` 瞬时估计；弱网下会抖动属正常）。
+ * 判断「帧率优先 / maintain_framerate」不能只盯 fps：须在弱网下结合「分辨率是否先于帧率降下来」等综合现象；
+ * SDK 将把 `RFLOW_DEGRADATION_MAINTAIN_FRAMERATE` 映射到 RTP `DegradationPreference::MAINTAIN_FRAMERATE`（见服务端
+ * PushStreamer::ApplyEncodingParameters）；启动后可在服务端日志关键字 `degradation_preference=` 交叉确认。
  */
 
 #include "rflow/Service/librflow_service_api.h"
@@ -54,9 +65,9 @@ void OnStreamState(librflow_svc_stream_handle_t /*h*/, rflow_stream_state_t stat
 int main(int argc, char** argv) {
     std::string signaling_url = "127.0.0.1:8765";
     std::string device_id     = "demo_device";
-    int width                 = 640;
-    int height                = 360;
-    int fps                   = 30;
+    int width                 = 1280;
+    int height                = 720;
+    int fps                   = 60;
     rflow_stream_index_t stream_idx = 0;
     std::string camera;
 
@@ -75,6 +86,7 @@ int main(int argc, char** argv) {
     librflow_signal_config_set_url(sig_cfg, signaling_url.c_str());
     auto gcfg = librflow_global_config_create();
     librflow_global_config_set_signal(gcfg, sig_cfg);
+    librflow_global_config_set_flexfec(gcfg, RFLOW_GLOBAL_FLEXFEC_ON);
 
     if (librflow_svc_set_global_config(gcfg) != RFLOW_OK) {
         std::cerr << "svc_set_global_config failed\n";
@@ -114,6 +126,13 @@ int main(int argc, char** argv) {
     librflow_svc_stream_param_set_out_size(sp, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     librflow_svc_stream_param_set_fps(sp, static_cast<uint32_t>(fps));
     librflow_svc_stream_param_set_bitrate(sp, 1500, 2500);
+    librflow_svc_stream_param_set_bitrate_mode(sp, RFLOW_BITRATE_MODE_VBR);
+    librflow_svc_stream_param_set_degradation_preference(sp, RFLOW_DEGRADATION_MAINTAIN_FRAMERATE);
+    librflow_svc_stream_param_set_h264_profile(sp, "main");
+    librflow_svc_stream_param_set_h264_level(sp, "4.2");
+    librflow_svc_stream_param_set_gop(sp, 120);
+    librflow_svc_stream_param_set_ice_prioritize_likely_pairs(sp, true);
+    librflow_svc_stream_param_set_video_network_priority(sp, RFLOW_SVC_NETWORK_PRIORITY_HIGH);
 #if defined(__linux__)
     librflow_svc_stream_param_set_video_device_path(sp, camera.c_str());
 #else
@@ -143,7 +162,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    std::cout << "[demo] global_config FlexFEC=ON (forced via librflow_global_config_set_flexfec)" << std::endl;
     std::cout << "[demo] stream_idx=" << stream_idx << " room=" << device_id << ":" << stream_idx << std::endl;
+    std::cout << "[demo] degradation_preference=MAINTAIN_FRAMERATE (RTP adaptation; pull side joined → "
+                 "subscriber PC SetParameters)"
+              << std::endl;
     std::cout << "[demo] SDK internal capture enabled, target "
               << width << "x" << height << "@" << fps << " to " << signaling_url;
 #if defined(__linux__)

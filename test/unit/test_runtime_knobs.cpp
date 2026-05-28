@@ -51,38 +51,38 @@ TEST_F(KnobsTest, BoolSpecTruthyParses) {
 }
 
 TEST_F(KnobsTest, IntSpecDefaultMatchesTable) {
-    Unset("RFLOW_SVC_DEFAULT_FPS");
-    EXPECT_EQ(knob::ReadInt("RFLOW_SVC_DEFAULT_FPS"), 30) << "table default";
+    Unset("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS");
+    EXPECT_EQ(knob::ReadInt("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS"), 2) << "table default";
 }
 
 TEST_F(KnobsTest, IntSpecValidParses) {
-    Set("RFLOW_SVC_DEFAULT_FPS", "60");
-    EXPECT_EQ(knob::ReadInt("RFLOW_SVC_DEFAULT_FPS"), 60);
+    Set("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", "10");
+    EXPECT_EQ(knob::ReadInt("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS"), 10);
 }
 
 TEST_F(KnobsTest, IntSpecAboveMaxClamps) {
-    Set("RFLOW_SVC_DEFAULT_FPS", "9999");
-    EXPECT_EQ(knob::ReadInt("RFLOW_SVC_DEFAULT_FPS"), 240);
+    Set("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", "9999");
+    EXPECT_EQ(knob::ReadInt("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS"), 20);
 }
 
 TEST_F(KnobsTest, IntSpecBelowMinClamps) {
-    Set("RFLOW_SVC_DEFAULT_FPS", "0");
-    EXPECT_EQ(knob::ReadInt("RFLOW_SVC_DEFAULT_FPS"), 1);
+    Set("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", "-1");
+    EXPECT_EQ(knob::ReadInt("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS"), 0);
 }
 
 TEST_F(KnobsTest, IntSpecJunkReturnsDefault) {
-    Set("RFLOW_SVC_DEFAULT_FPS", "abc");
-    EXPECT_EQ(knob::ReadInt("RFLOW_SVC_DEFAULT_FPS"), 30);
+    Set("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS", "abc");
+    EXPECT_EQ(knob::ReadInt("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS"), 2);
 }
 
 TEST_F(KnobsTest, StringSpecDefaultFromTable) {
-    Unset("RFLOW_SVC_DEGRADATION_PREFERENCE");
-    EXPECT_EQ(knob::ReadString("RFLOW_SVC_DEGRADATION_PREFERENCE"), "maintain_framerate");
+    Unset("RFLOW_FIELD_TRIALS_APPEND");
+    EXPECT_EQ(knob::ReadString("RFLOW_FIELD_TRIALS_APPEND"), "");
 }
 
 TEST_F(KnobsTest, StringSpecOverride) {
-    Set("RFLOW_SVC_DEGRADATION_PREFERENCE", "balanced");
-    EXPECT_EQ(knob::ReadString("RFLOW_SVC_DEGRADATION_PREFERENCE"), "balanced");
+    Set("RFLOW_FIELD_TRIALS_APPEND", "RtcFoo/Enabled/");
+    EXPECT_EQ(knob::ReadString("RFLOW_FIELD_TRIALS_APPEND"), "RtcFoo/Enabled/");
 }
 
 TEST_F(KnobsTest, UnregisteredNameFallsBackSilently) {
@@ -98,18 +98,18 @@ TEST_F(KnobsTest, KnobTableHasContent) {
     EXPECT_NE(v.specs, nullptr);
     EXPECT_GT(v.count, 0u);
     // 至少包含我们刚刚测试用到的名字
-    bool found_fps = false, found_deg = false;
+    bool found_pacing = false, found_trials = false;
     for (size_t i = 0; i < v.count; ++i) {
-        if (std::string(v.specs[i].name) == "RFLOW_SVC_DEFAULT_FPS") found_fps = true;
-        if (std::string(v.specs[i].name) == "RFLOW_SVC_DEGRADATION_PREFERENCE") found_deg = true;
+        if (std::string(v.specs[i].name) == "RFLOW_ZERO_PLAYOUT_MIN_PACING_MS") found_pacing = true;
+        if (std::string(v.specs[i].name) == "RFLOW_FIELD_TRIALS_APPEND") found_trials = true;
     }
-    EXPECT_TRUE(found_fps);
-    EXPECT_TRUE(found_deg);
+    EXPECT_TRUE(found_pacing);
+    EXPECT_TRUE(found_trials);
 }
 
 TEST_F(KnobsTest, MarkdownDumpContainsHeaders) {
     const std::string md = knob::DumpAsMarkdown();
     EXPECT_NE(md.find("# libRoboFlow Runtime Knobs"), std::string::npos);
     // 至少包含一个分组与一个 knob
-    EXPECT_NE(md.find("RFLOW_SVC_DEFAULT_FPS"), std::string::npos);
+    EXPECT_NE(md.find("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS"), std::string::npos);
 }

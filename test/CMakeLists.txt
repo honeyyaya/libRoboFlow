@@ -56,6 +56,11 @@ add_rflow_unit_test(test_lifecycle_fsm
 add_rflow_unit_test(test_object_access
     SOURCES unit/test_object_access.cpp)
 
+add_rflow_unit_test(test_global_config_flexfec
+    SOURCES
+        unit/test_global_config_flexfec.cpp
+        ${CMAKE_SOURCE_DIR}/src/common/abi/global_config.cpp)
+
 # -------------------------------------------------------------------- core/signal
 # protocol.cpp 是纯 std 实现，直接编进单测目标即可（避免拽 rflow_core OBJECT lib）
 add_rflow_unit_test(test_signal_protocol
@@ -86,6 +91,17 @@ add_rflow_unit_test(test_runtime_knobs
         unit/test_runtime_knobs.cpp
         ${CMAKE_SOURCE_DIR}/src/core/runtime/runtime_knobs.cpp
         ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp)
+
+# service：stream_param 常用 ABI + ResolvePublisherStartup（不显式启用 RFLOW_SVC_WEBRTC_IMPL，避免 Publisher）
+add_rflow_unit_test(test_svc_stream_param_knobs
+    SOURCES
+        unit/test_svc_stream_param_knobs.cpp
+        ${CMAKE_SOURCE_DIR}/src/service/api_stream_objects.cpp
+        ${CMAKE_SOURCE_DIR}/src/service/internal/stream_startup_policy.cpp
+        ${CMAKE_SOURCE_DIR}/src/service/internal/service_default_params.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/runtime/runtime_knobs.cpp
+        ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp)
+target_include_directories(test_svc_stream_param_knobs PRIVATE ${CMAKE_SOURCE_DIR}/src/service)
 
 # -------------------------------------------------------------------- common/public
 # log_tagged.h 是 RFLOW_LOG_TAG_* 宏；测试需 logger.cpp 提供 ::rflow::logf 实现。

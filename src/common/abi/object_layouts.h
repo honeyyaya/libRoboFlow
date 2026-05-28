@@ -46,6 +46,8 @@ struct librflow_global_config_s {
 
     std::string config_path;
     rflow_region_t region;
+
+    rflow_global_flexfec_t flexfec{RFLOW_GLOBAL_FLEXFEC_DEFAULT};
 };
 
 #endif  // __RFLOW_COMMON_ABI_OBJECT_LAYOUTS_H__

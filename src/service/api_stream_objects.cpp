@@ -5,6 +5,31 @@
 #include "base/abi_string_copy.h"
 #include "public/object_access_api.h"
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
+namespace {
+
+constexpr uint32_t kStreamParamTokenMaxLen = 127u;
+
+std::string TrimCopyToken(const char* s) {
+    if (!s) {
+        return {};
+    }
+    std::string t(s);
+    const auto begin = std::find_if_not(t.begin(), t.end(),
+                                        [](unsigned char c) { return std::isspace(c) != 0; });
+    const auto rend =
+        std::find_if_not(t.rbegin(), t.rend(), [](unsigned char c) { return std::isspace(c) != 0; }).base();
+    if (begin >= rend) {
+        return {};
+    }
+    return std::string(begin, rend);
+}
+
+}  // namespace
+
 extern "C" {
 
 librflow_svc_stream_cb_t librflow_svc_stream_cb_create(void) {
@@ -86,6 +111,13 @@ rflow_err_t librflow_svc_stream_param_set_bitrate(librflow_svc_stream_param_t p,
         p, rflow::service::kMagicStreamParam, bitrate_kbps, br, max_bitrate_kbps, max_br, has_bitrate);
 }
 
+rflow_err_t librflow_svc_stream_param_set_bitrate_mode(librflow_svc_stream_param_t p, rflow_bitrate_mode_t mode) {
+    if (mode != RFLOW_BITRATE_MODE_VBR && mode != RFLOW_BITRATE_MODE_CBR) {
+        return RFLOW_ERR_PARAM;
+    }
+    RFLOW_SET_VALUE_WITH_FLAG(p, rflow::service::kMagicStreamParam, bitrate_mode, has_bitrate_mode, mode);
+}
+
 rflow_err_t librflow_svc_stream_param_set_dynamic_bitrate(librflow_svc_stream_param_t p, bool e, uint32_t lo, uint32_t hi) {
     RFLOW_SET_3_VALUES_WITH_FLAG(
         p,
@@ -114,6 +146,96 @@ rflow_err_t librflow_svc_stream_param_set_video_device_path(librflow_svc_stream_
 rflow_err_t librflow_svc_stream_param_set_video_device_index(librflow_svc_stream_param_t p, uint32_t index) {
     RFLOW_SET_VALUE_WITH_FLAG(
         p, rflow::service::kMagicStreamParam, video_device_index, has_video_device_index, index);
+}
+
+rflow_err_t librflow_svc_stream_param_set_degradation_preference(librflow_svc_stream_param_t          p,
+                                                                 rflow_degradation_preference_t       pref) {
+    RFLOW_CHECK_HANDLE(p, rflow::service::kMagicStreamParam);
+    switch (pref) {
+        case RFLOW_DEGRADATION_MAINTAIN_FRAMERATE:
+        case RFLOW_DEGRADATION_MAINTAIN_RESOLUTION:
+        case RFLOW_DEGRADATION_BALANCED:
+            break;
+        default:
+            return RFLOW_ERR_PARAM;
+    }
+    p->degradation_preference     = pref;
+    p->has_degradation_preference = true;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_svc_stream_param_set_h264_profile(librflow_svc_stream_param_t p, const char* profile) {
+    RFLOW_CHECK_HANDLE(p, rflow::service::kMagicStreamParam);
+    std::string t = TrimCopyToken(profile);
+    if (t.empty() || t.size() > kStreamParamTokenMaxLen) {
+        return RFLOW_ERR_PARAM;
+    }
+    p->h264_profile        = std::move(t);
+    p->has_h264_profile = true;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_svc_stream_param_set_h264_level(librflow_svc_stream_param_t p, const char* level) {
+    RFLOW_CHECK_HANDLE(p, rflow::service::kMagicStreamParam);
+    std::string t = TrimCopyToken(level);
+    if (t.empty() || t.size() > kStreamParamTokenMaxLen) {
+        return RFLOW_ERR_PARAM;
+    }
+    p->h264_level        = std::move(t);
+    p->has_h264_level = true;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_svc_stream_param_set_ice_prioritize_likely_pairs(librflow_svc_stream_param_t p,
+                                                                       bool                             enabled) {
+    RFLOW_SET_VALUE_WITH_FLAG(
+        p,
+        rflow::service::kMagicStreamParam,
+        ice_prioritize_likely_pairs,
+        has_ice_prioritize_likely_pairs,
+        enabled);
+}
+
+rflow_err_t librflow_svc_stream_param_set_video_network_priority(librflow_svc_stream_param_t p,
+                                                                 rflow_svc_network_priority_t prio) {
+    RFLOW_CHECK_HANDLE(p, rflow::service::kMagicStreamParam);
+    switch (prio) {
+        case RFLOW_SVC_NETWORK_PRIORITY_VERY_LOW:
+        case RFLOW_SVC_NETWORK_PRIORITY_LOW:
+        case RFLOW_SVC_NETWORK_PRIORITY_MEDIUM:
+        case RFLOW_SVC_NETWORK_PRIORITY_HIGH:
+            break;
+        default:
+            return RFLOW_ERR_PARAM;
+    }
+    p->video_network_priority       = prio;
+    p->has_video_network_priority = true;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_svc_stream_param_set_video_encoding_max_fps(librflow_svc_stream_param_t p,
+                                                                uint32_t                    fps_limit) {
+    RFLOW_SET_VALUE_WITH_FLAG(p,
+                              rflow::service::kMagicStreamParam,
+                              video_encoding_max_fps,
+                              has_video_encoding_max_fps,
+                              fps_limit);
+}
+
+rflow_err_t librflow_svc_stream_param_set_capture_warmup_sec(librflow_svc_stream_param_t p,
+                                                              uint32_t                    sec) {
+    RFLOW_SET_VALUE_WITH_FLAG(
+        p, rflow::service::kMagicStreamParam, capture_warmup_sec, has_capture_warmup_sec, sec);
+}
+
+rflow_err_t librflow_svc_stream_param_set_capture_gate(librflow_svc_stream_param_t p,
+                                                        uint32_t                    min_frames_before_offer,
+                                                        uint32_t                    max_wait_sec) {
+    RFLOW_CHECK_HANDLE(p, rflow::service::kMagicStreamParam);
+    p->capture_gate_min_frames       = min_frames_before_offer;
+    p->capture_gate_max_wait_sec   = max_wait_sec;
+    p->has_capture_gate = true;
+    return RFLOW_OK;
 }
 
 rflow_err_t librflow_svc_stream_param_get_in_codec(librflow_svc_stream_param_t p, rflow_codec_t* out_codec) {
@@ -165,6 +287,12 @@ rflow_err_t librflow_svc_stream_param_get_bitrate(librflow_svc_stream_param_t p,
                                  p->max_bitrate_kbps);
 }
 
+rflow_err_t librflow_svc_stream_param_get_bitrate_mode(librflow_svc_stream_param_t p,
+                                                       rflow_bitrate_mode_t* out_mode) {
+    RFLOW_GET_VALUE_WITH_FLAG(
+        p, rflow::service::kMagicStreamParam, out_mode, has_bitrate_mode, p->bitrate_mode);
+}
+
 rflow_err_t librflow_svc_stream_param_get_dynamic_bitrate(librflow_svc_stream_param_t p,
                                                            bool* out_enable,
                                                            uint32_t* out_lowest_kbps,
@@ -198,6 +326,75 @@ rflow_err_t librflow_svc_stream_param_get_video_device_index(librflow_svc_stream
                                                               uint32_t* out_device_index) {
     RFLOW_GET_VALUE_WITH_FLAG(
         p, rflow::service::kMagicStreamParam, out_device_index, has_video_device_index, p->video_device_index);
+}
+
+rflow_err_t librflow_svc_stream_param_get_degradation_preference(librflow_svc_stream_param_t    p,
+                                                                 rflow_degradation_preference_t* out_pref) {
+    RFLOW_GET_VALUE_WITH_FLAG(
+        p, rflow::service::kMagicStreamParam, out_pref, has_degradation_preference, p->degradation_preference);
+}
+
+rflow_err_t librflow_svc_stream_param_get_h264_profile(librflow_svc_stream_param_t p,
+                                                       char*                     buf,
+                                                       uint32_t                  buf_len,
+                                                       uint32_t*                 out_needed) {
+    RFLOW_CHECK_HANDLE(p, rflow::service::kMagicStreamParam);
+    if (!p->has_h264_profile) return RFLOW_ERR_NOT_FOUND;
+    return rflow::common::base::CopyOutString(p->h264_profile, buf, buf_len, out_needed);
+}
+
+rflow_err_t librflow_svc_stream_param_get_h264_level(librflow_svc_stream_param_t p,
+                                                     char*                     buf,
+                                                     uint32_t                  buf_len,
+                                                     uint32_t*                 out_needed) {
+    RFLOW_CHECK_HANDLE(p, rflow::service::kMagicStreamParam);
+    if (!p->has_h264_level) return RFLOW_ERR_NOT_FOUND;
+    return rflow::common::base::CopyOutString(p->h264_level, buf, buf_len, out_needed);
+}
+
+rflow_err_t librflow_svc_stream_param_get_ice_prioritize_likely_pairs(librflow_svc_stream_param_t p,
+                                                                       bool* out_enabled) {
+    RFLOW_GET_VALUE_WITH_FLAG(p,
+                              rflow::service::kMagicStreamParam,
+                              out_enabled,
+                              has_ice_prioritize_likely_pairs,
+                              p->ice_prioritize_likely_pairs);
+}
+
+rflow_err_t librflow_svc_stream_param_get_video_network_priority(librflow_svc_stream_param_t p,
+                                                                 rflow_svc_network_priority_t* out_priority) {
+    RFLOW_GET_VALUE_WITH_FLAG(p,
+                              rflow::service::kMagicStreamParam,
+                              out_priority,
+                              has_video_network_priority,
+                              p->video_network_priority);
+}
+
+rflow_err_t librflow_svc_stream_param_get_video_encoding_max_fps(librflow_svc_stream_param_t p,
+                                                                 uint32_t*                   out_fps) {
+    RFLOW_GET_VALUE_WITH_FLAG(p,
+                              rflow::service::kMagicStreamParam,
+                              out_fps,
+                              has_video_encoding_max_fps,
+                              p->video_encoding_max_fps);
+}
+
+rflow_err_t librflow_svc_stream_param_get_capture_warmup_sec(librflow_svc_stream_param_t p,
+                                                              uint32_t*                 out_sec) {
+    RFLOW_GET_VALUE_WITH_FLAG(
+        p, rflow::service::kMagicStreamParam, out_sec, has_capture_warmup_sec, p->capture_warmup_sec);
+}
+
+rflow_err_t librflow_svc_stream_param_get_capture_gate(librflow_svc_stream_param_t p,
+                                                        uint32_t*                 out_min_frames,
+                                                        uint32_t*                 out_max_wait_sec) {
+    RFLOW_GET_2_VALUES_WITH_FLAG(p,
+                                 rflow::service::kMagicStreamParam,
+                                 out_min_frames,
+                                 out_max_wait_sec,
+                                 has_capture_gate,
+                                 p->capture_gate_min_frames,
+                                 p->capture_gate_max_wait_sec);
 }
 
 librflow_svc_push_frame_t librflow_svc_push_frame_create(void) {
