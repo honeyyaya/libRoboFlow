@@ -21,6 +21,10 @@ void OnSig(int /*signo*/) {
 }  // namespace
 
 void InstallStopSignals() {
+    // SSH 会话断开、本地熄屏休眠导致断网时，shell 会对前台进程发 SIGHUP；默认会退出。
+    // demo 在板子上常经 SSH 启动，忽略 SIGHUP/SIGPIPE 后进程可继续推流（仍可用 Ctrl+C / SIGTERM 停止）。
+    std::signal(SIGHUP, SIG_IGN);
+    std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, OnSig);
     std::signal(SIGTERM, OnSig);
 }

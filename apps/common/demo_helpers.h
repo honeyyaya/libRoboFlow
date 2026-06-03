@@ -2,7 +2,7 @@
 #define __RFLOW_APPS_COMMON_DEMO_HELPERS_H__
 
 // apps/common — 推/拉 demo 之间共享的少量轻量 helper：
-//   - 进程级停止 flag + SIGINT/SIGTERM 处理；
+//   - 进程级停止 flag + SIGINT/SIGTERM 处理；忽略 SIGHUP/SIGPIPE 以免 SSH 断线或终端关闭误杀 demo；
 //   - connect/stream 状态打印；
 //   - Linux 下相机路径解析（与 RFLOW_PUSH_DEMO_CAMERA 环境变量约定）。
 //
