@@ -40,6 +40,10 @@ bool IsPositiveIntArg(const char* s) {
 }  // namespace
 
 void InstallStopSignals() {
+    // SSH 断线、终端关闭时 shell 可能发 SIGHUP；忽略以免误杀后台推流 demo。
+    std::signal(SIGHUP, SIG_IGN);
+    std::signal(SIGPIPE, SIG_IGN);
+
     struct sigaction sa {};
     sa.sa_handler = OnSig;
     sigemptyset(&sa.sa_mask);

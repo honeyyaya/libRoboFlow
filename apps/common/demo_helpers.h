@@ -6,7 +6,7 @@
 //   demo_camera_hotplug.*   push 专用：Linux USB 相机 udev/探测
 //   demo_push_session.*     push 专用：信令 + 推流会话与热插拔调度
 //
-// 只面向 demo，不进 SDK；故仅依赖 libc / C++ 标准库 + libRoboFlow 公共 ABI。
+// 信号：SIGINT/SIGTERM 停止；忽略 SIGHUP/SIGPIPE，避免 SSH 断线或终端关闭误杀 demo。
 
 #include "rflow/librflow_common.h"
 
@@ -17,7 +17,7 @@ namespace rflow::apps::common {
 
 struct PushDemoConfig;
 
-// 注册 SIGINT/SIGTERM（sigaction），将进程级 stop flag 置位。
+// 注册信号处理，将进程级 stop flag 置位。
 void InstallStopSignals();
 
 // 是否已请求停止（由信号处理或失败阈值写入）。
