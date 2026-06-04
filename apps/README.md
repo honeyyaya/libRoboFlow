@@ -34,7 +34,7 @@ libRoboFlow 自带的可执行入口与全量编译脚本。
 ./build/apps/signaling_server 8765
 
 # 2) 推流（SDK 内建采集，640x480@30；相机路径见下文 push_demo_sdk）
-./build/apps/push_demo_sdk 127.0.0.1:8765 demo_device 640 480 30 0
+./build/apps/push_demo_sdk 127.0.0.1:8765 demo_device 1280 720 60 0
 
 # 3) 拉流
 ./build/apps/pull_demo_sdk 127.0.0.1:8765 demo_device 0
