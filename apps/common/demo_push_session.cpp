@@ -181,8 +181,8 @@ librflow_svc_stream_param_t PushDemoSession::MakeStreamParam() const {
     librflow_svc_stream_param_set_out_size(sp, static_cast<uint32_t>(config_.width),
                                            static_cast<uint32_t>(config_.height));
     librflow_svc_stream_param_set_fps(sp, static_cast<uint32_t>(config_.fps));
-    librflow_svc_stream_param_set_bitrate(sp, 1500, 2500);
-    librflow_svc_stream_param_set_bitrate_mode(sp, RFLOW_BITRATE_MODE_VBR);
+    librflow_svc_stream_param_set_bitrate(sp, 4000, 4000);
+    librflow_svc_stream_param_set_bitrate_mode(sp, RFLOW_BITRATE_MODE_CBR);
     librflow_svc_stream_param_set_degradation_preference(sp, RFLOW_DEGRADATION_MAINTAIN_FRAMERATE);
     librflow_svc_stream_param_set_h264_profile(sp, "main");
     librflow_svc_stream_param_set_h264_level(sp, "4.2");
