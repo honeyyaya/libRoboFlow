@@ -148,8 +148,11 @@ bool Publisher::Start() {
             cbs_.on_pull_release(stream_idx_, cbs_.userdata);
         }
     });
-    signaling_->SetOnError([](const std::string& msg) {
+    signaling_->SetOnError([this](const std::string& msg) {
         RFLOW_LOGE("[publisher] signaling error: %s", msg.c_str());
+        if (cbs_.on_connect_state) {
+            cbs_.on_connect_state(RFLOW_CONN_DISCONNECTED, RFLOW_OK, cbs_.userdata);
+        }
     });
 
     streamer_->SetOnSdpCallback([this](const std::string& peer_id, const std::string& type,

@@ -2,11 +2,13 @@
 #
 # 三个目标：
 #   - signaling_server : 始终构建。纯 POSIX TCP/epoll，无 webrtc 依赖。
-#   - push_demo_sdk    : 只用 librflow_svc 公共 ABI 的推流 demo（合成 I420）。
+#   - push_demo_sdk    : 只用 librflow_svc 公共 ABI 的推流 demo。
 #   - pull_demo_sdk    : 只用 librflow_client 公共 ABI 的拉流 demo。
 #
-# common/demo_helpers.{h,cpp} 是上述两个 SDK demo 共享的私有 helper（信号处理、
-# 状态打印、相机路径解析），不进 SDK，也不被外部使用。
+# common/ 为 demo 私有 helper，不进 SDK：
+#   demo_helpers.*          信号、状态日志、相机路径
+#   demo_camera_hotplug.*   push：Linux USB 相机 udev（仅 push 链接）
+#   demo_push_session.*     push：信令 + 推流会话与热插拔调度
 
 find_package(Threads REQUIRED)
 
@@ -35,7 +37,42 @@ function(_rflow_apps_add_sdk_demo target source link_lib)
 endfunction()
 
 if(RFLOW_BUILD_SERVICE AND RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
-    _rflow_apps_add_sdk_demo(push_demo_sdk push_demo_sdk.cpp rflow_svc)
+    add_executable(push_demo_sdk
+        push_demo_sdk.cpp
+        common/demo_helpers.cpp
+        common/demo_v4l_linux.cpp
+        common/demo_camera_hotplug.cpp
+        common/demo_push_session.cpp
+    )
+    target_compile_definitions(push_demo_sdk PRIVATE RFLOW_APPS_PUSH_DEMO=1)
+    target_include_directories(push_demo_sdk PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_link_libraries(push_demo_sdk PRIVATE
+        rflow_warnings rflow_svc Threads::Threads ${CMAKE_DL_LIBS})
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(LIBUDEV libudev)
+        endif()
+        if(NOT LIBUDEV_FOUND)
+            find_library(LIBUDEV_LIBRARY NAMES udev)
+            if(LIBUDEV_LIBRARY)
+                set(LIBUDEV_LIBRARIES ${LIBUDEV_LIBRARY})
+                set(LIBUDEV_FOUND TRUE)
+            endif()
+        endif()
+        if(LIBUDEV_FOUND)
+            target_link_libraries(push_demo_sdk PRIVATE ${LIBUDEV_LIBRARIES})
+            if(LIBUDEV_INCLUDE_DIRS)
+                target_include_directories(push_demo_sdk PRIVATE ${LIBUDEV_INCLUDE_DIRS})
+            endif()
+        else()
+            message(WARNING "push_demo_sdk: libudev not found; Linux USB hotplug monitor disabled at link time")
+        endif()
+    endif()
 endif()
 
 if(RFLOW_BUILD_CLIENT AND RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)

@@ -33,6 +33,7 @@ class SignalingClient;
 struct PublisherPullCallbacks {
     librflow_svc_on_pull_request_fn on_pull_request{nullptr};
     librflow_svc_on_pull_release_fn on_pull_release{nullptr};
+    librflow_svc_on_connect_state_fn on_connect_state{nullptr};
     void*                           userdata{nullptr};
 };
 

@@ -5,85 +5,39 @@
  * 用法:
  *   ./push_demo_sdk <signaling_url> [device_id] [width] [height] [fps] [stream_idx] [camera]
  *
- * 默认:
- *   signaling_url = 127.0.0.1:8765
- *   device_id     = demo_device
- *   分辨率/帧率   = 1280x720 @ 60
- *   stream_idx    = 0
- *   camera        = Linux 下优先 RFLOW_PUSH_DEMO_CAMERA，其次 /dev/video0；其他平台默认索引 0
+ * 逻辑拆分：
+ *   - common/demo_helpers.*       信号、日志、相机路径
+ *   - common/demo_camera_hotplug.*  Linux USB 相机 udev/探测
+ *   - common/demo_push_session.*    信令连接、推流生命周期与调度
  *
- * RTP FlexFEC（GlobalConfig）：本 demo **默认显式开启** `librflow_global_config_set_flexfec(..., RFLOW_GLOBAL_FLEXFEC_ON)`，
- * 不依赖 RFLOW_ENABLE_FLEXFEC。
- *
- * degradation_preference（弱网降质）：示例中显式调用 maintain_framerate；亦可省略以使用
- * SDK 默认 maintain_framerate。
- * H264_PROFILE / H264_LEVEL / KEYFRAME_INTERVAL / ICE_PRIORITIZE_LIKELY_PAIRS /
- * VIDEO_NETWORK_PRIORITY / BITRATE_MODE（librflow_svc_stream_param_set_bitrate_mode）
- * 等亦见下方 stream_param 显式设置（与 SDK 分辨率/帧率等语义对齐）。
- *
- * 周期性统计：`[demo][stats]` 为瞬时快照（ outbound GetStats，`fps=` 瞬时估计；弱网下会抖动属正常）。
- * 判断「帧率优先 / maintain_framerate」不能只盯 fps：须在弱网下结合「分辨率是否先于帧率降下来」等综合现象；
- * SDK 将把 `RFLOW_DEGRADATION_MAINTAIN_FRAMERATE` 映射到 RTP `DegradationPreference::MAINTAIN_FRAMERATE`（见服务端
- * PushStreamer::ApplyEncodingParameters）；启动后可在服务端日志关键字 `degradation_preference=` 交叉确认。
+ * RTP FlexFEC、degradation、stream_param 等见 demo_push_session.cpp / 文件头历史说明。
  */
 
 #include "rflow/Service/librflow_service_api.h"
 
+#include "common/demo_camera_hotplug.h"
 #include "common/demo_helpers.h"
+#include "common/demo_push_session.h"
 
 #include <chrono>
-#include <cstdlib>
 #include <iostream>
-#include <string>
-#include <thread>
-
-namespace {
-
-void OnConnectState(rflow_connect_state_t state, rflow_err_t reason, void* /*ud*/) {
-    rflow::apps::common::LogConnectState(state, reason);
-}
-
-void OnBindState(rflow_bind_state_t state, const char* /*detail*/, void* /*ud*/) {
-    std::cout << "[demo] bind state=" << state << std::endl;
-}
-
-void OnPullRequest(rflow_stream_index_t idx, void* /*ud*/) {
-    std::cout << "[demo] on_pull_request idx=" << idx << std::endl;
-}
-
-void OnPullRelease(rflow_stream_index_t idx, void* /*ud*/) {
-    std::cout << "[demo] on_pull_release idx=" << idx << std::endl;
-}
-
-void OnStreamState(librflow_svc_stream_handle_t /*h*/, rflow_stream_state_t state,
-                   rflow_err_t reason, void* /*ud*/) {
-    rflow::apps::common::LogStreamState(state, reason);
-}
-
-}  // namespace
 
 int main(int argc, char** argv) {
-    std::string signaling_url = "127.0.0.1:8765";
-    std::string device_id     = "demo_device";
-    int width                 = 1280;
-    int height                = 720;
-    int fps                   = 60;
-    rflow_stream_index_t stream_idx = 0;
-    std::string camera;
-
-    if (argc >= 2) signaling_url = argv[1];
-    if (argc >= 3) device_id = argv[2];
-    if (argc >= 4) width = std::atoi(argv[3]);
-    if (argc >= 5) height = std::atoi(argv[4]);
-    if (argc >= 6) fps = std::atoi(argv[5]);
-    if (argc >= 7) stream_idx = static_cast<rflow_stream_index_t>(std::atoi(argv[6]));
-    if (argc >= 8) camera = argv[7];
+    rflow::apps::common::PushDemoConfig cfg;
+    if (!rflow::apps::common::ParsePushDemoConfig(argc, argv, cfg)) {
+        return 1;
+    }
 
     rflow::apps::common::InstallStopSignals();
-    camera = rflow::apps::common::PickLinuxCameraPath(camera);
+    cfg.camera = rflow::apps::common::PickLinuxCameraPath(cfg.camera);
+#if defined(__linux__)
+    rflow::apps::common::WarnIfCameraPathNotReady(cfg.camera);
+#endif
+
+    rflow::apps::common::PushDemoSession session(cfg);
 
     auto sig_cfg = librflow_signal_config_create();
-    librflow_signal_config_set_url(sig_cfg, signaling_url.c_str());
+    librflow_signal_config_set_url(sig_cfg, cfg.signaling_url.c_str());
     auto gcfg = librflow_global_config_create();
     librflow_global_config_set_signal(gcfg, sig_cfg);
     librflow_global_config_set_flexfec(gcfg, RFLOW_GLOBAL_FLEXFEC_ON);
@@ -100,88 +54,55 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    auto info = librflow_svc_connect_info_create();
-    librflow_svc_connect_info_set_device_id(info, device_id.c_str());
-    librflow_svc_connect_info_set_device_secret(info, "");
-    librflow_svc_connect_info_set_product_key(info, "rflow_demo");
-    librflow_svc_connect_info_set_vendor_id(info, "rflow");
-
-    auto ccb = librflow_svc_connect_cb_create();
-    librflow_svc_connect_cb_set_on_state(ccb, OnConnectState);
-    librflow_svc_connect_cb_set_on_bind_state(ccb, OnBindState);
-    librflow_svc_connect_cb_set_on_pull_request(ccb, OnPullRequest);
-    librflow_svc_connect_cb_set_on_pull_release(ccb, OnPullRelease);
-
-    if (librflow_svc_connect(info, ccb) != RFLOW_OK) {
-        std::cerr << "svc_connect failed\n";
+    if (!session.Connect()) {
         librflow_svc_uninit();
         return 1;
     }
-    librflow_svc_connect_info_destroy(info);
-    librflow_svc_connect_cb_destroy(ccb);
 
-    auto sp = librflow_svc_stream_param_create();
-    librflow_svc_stream_param_set_out_codec(sp, RFLOW_CODEC_H264);
-    librflow_svc_stream_param_set_src_size(sp, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-    librflow_svc_stream_param_set_out_size(sp, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-    librflow_svc_stream_param_set_fps(sp, static_cast<uint32_t>(fps));
-    librflow_svc_stream_param_set_bitrate(sp, 1500, 2500);
-    librflow_svc_stream_param_set_bitrate_mode(sp, RFLOW_BITRATE_MODE_VBR);
-    librflow_svc_stream_param_set_degradation_preference(sp, RFLOW_DEGRADATION_MAINTAIN_FRAMERATE);
-    librflow_svc_stream_param_set_h264_profile(sp, "main");
-    librflow_svc_stream_param_set_h264_level(sp, "4.2");
-    librflow_svc_stream_param_set_gop(sp, 120);
-    librflow_svc_stream_param_set_ice_prioritize_likely_pairs(sp, true);
-    librflow_svc_stream_param_set_video_network_priority(sp, RFLOW_SVC_NETWORK_PRIORITY_HIGH);
 #if defined(__linux__)
-    librflow_svc_stream_param_set_video_device_path(sp, camera.c_str());
-#else
-    librflow_svc_stream_param_set_video_device_index(sp, 0);
+    session.camera().SyncInitialPresence();
+    session.camera().Start();
+    session.camera().PollWait(std::chrono::steady_clock::now(), false);
+    if (session.camera().RestartRequested()) {
+        session.set_want_stream_restart(true);
+        session.camera().ClearRestartRequest();
+    }
 #endif
 
-    auto scb = librflow_svc_stream_cb_create();
-    librflow_svc_stream_cb_set_on_state(scb, OnStreamState);
-
-    librflow_svc_stream_handle_t stream = nullptr;
-    if (librflow_svc_create_stream(stream_idx, sp, scb, &stream) != RFLOW_OK) {
-        std::cerr << "svc_create_stream failed\n";
-        librflow_svc_stream_param_destroy(sp);
-        librflow_svc_stream_cb_destroy(scb);
-        librflow_svc_disconnect();
-        librflow_svc_uninit();
-        return 1;
-    }
-    librflow_svc_stream_param_destroy(sp);
-    librflow_svc_stream_cb_destroy(scb);
-
-    if (librflow_svc_start_stream(stream) != RFLOW_OK) {
-        std::cerr << "svc_start_stream failed (check signaling server / camera)\n";
-        librflow_svc_destroy_stream(stream);
-        librflow_svc_disconnect();
-        librflow_svc_uninit();
-        return 1;
+    if (!session.TryStartStream()) {
+        std::cout << "[demo] initial stream deferred; retrying in main loop" << std::endl;
     }
 
     std::cout << "[demo] global_config FlexFEC=ON (forced via librflow_global_config_set_flexfec)" << std::endl;
-    std::cout << "[demo] stream_idx=" << stream_idx << " room=" << device_id << ":" << stream_idx << std::endl;
-    std::cout << "[demo] degradation_preference=MAINTAIN_FRAMERATE (RTP adaptation; pull side joined → "
-                 "subscriber PC SetParameters)"
+    std::cout << "[demo] stream_idx=" << cfg.stream_idx << " room=" << cfg.device_id << ":" << cfg.stream_idx
               << std::endl;
-    std::cout << "[demo] SDK internal capture enabled, target "
-              << width << "x" << height << "@" << fps << " to " << signaling_url;
+    std::cout << "[demo] degradation_preference=MAINTAIN_FRAMERATE" << std::endl;
+    std::cout << "[demo] SDK internal capture enabled, target " << cfg.width << "x" << cfg.height << "@"
+              << cfg.fps << " to " << cfg.signaling_url;
 #if defined(__linux__)
-    std::cout << " camera=" << camera;
+    std::cout << " camera=" << session.config().camera;
+    if (session.camera().UsesUdev()) {
+        std::cout << " (hotplug: libudev video4linux monitor)";
+    }
 #endif
-    std::cout << ". Ctrl+C to stop." << std::endl;
+    std::cout << std::endl;
+    std::cout << "[demo] Ctrl+C to stop." << std::endl;
 
     auto last_stats = std::chrono::steady_clock::now();
     while (!rflow::apps::common::StopRequested()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        auto now = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+
+#if defined(__linux__)
+        session.camera().PollWait(now, session.stream() != nullptr);
+#endif
+
+        session.ServiceTick(now);
+
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_stats).count() >= 5) {
             last_stats = now;
+            if (!session.stream()) continue;
             librflow_stream_stats_t stats = nullptr;
-            if (librflow_svc_stream_get_stats(stream, &stats) == RFLOW_OK && stats) {
+            if (librflow_svc_stream_get_stats(session.stream(), &stats) == RFLOW_OK && stats) {
                 std::cout << "[demo][stats]"
                           << " duration_ms=" << librflow_stream_stats_get_duration_ms(stats)
                           << " out_bytes=" << librflow_stream_stats_get_out_bound_bytes(stats)
@@ -197,9 +118,12 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "[demo] stopping..." << std::endl;
-    librflow_svc_stop_stream(stream);
-    librflow_svc_destroy_stream(stream);
+    session.set_shutting_down(true);
+#if defined(__linux__)
+    session.camera().Stop();
+#endif
+    session.StopStreamForExit();
     librflow_svc_disconnect();
     librflow_svc_uninit();
-    return 0;
+    return session.exit_due_to_failures() ? 2 : 0;
 }

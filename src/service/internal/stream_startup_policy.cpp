@@ -128,9 +128,10 @@ std::shared_ptr<void> CreatePublisherImplForStream(const librflow_svc_stream_s& 
     const auto startup = ResolvePublisherStartup(stream, state, stream_idx);
     rflow::service::impl::PublisherPullCallbacks cbs{};
     if (state.has_connect_cb) {
-        cbs.on_pull_request = state.connect_cb.on_pull_request;
-        cbs.on_pull_release = state.connect_cb.on_pull_release;
-        cbs.userdata        = state.connect_cb.userdata;
+        cbs.on_pull_request   = state.connect_cb.on_pull_request;
+        cbs.on_pull_release   = state.connect_cb.on_pull_release;
+        cbs.on_connect_state  = state.connect_cb.on_state;
+        cbs.userdata          = state.connect_cb.userdata;
     }
     rflow::service::impl::PublisherMediaOptions m;
     if (startup.h264_profile) {
