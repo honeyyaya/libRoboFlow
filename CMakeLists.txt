@@ -73,9 +73,11 @@ if(RFLOW_BUILD_SERVICE)
     set(CMAKE_C_STANDARD_REQUIRED ON)
 endif()
 
+# 未指定时默认 Debug（保留符号、-O0），便于 gdb/联调；Release 请显式 -DCMAKE_BUILD_TYPE=Release。
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
 endif()
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
 
 # -------------------------------------------------------------------- warnings (GCC / Clang only, not Windows/MSVC)
 if(MSVC)

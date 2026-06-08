@@ -1,5 +1,8 @@
 # apps/ — libRoboFlow 自带的 demo / 信令服务可执行文件。
 #
+# 构建类型与顶层 CMakeLists.txt 一致（CMAKE_BUILD_TYPE=Debug|Release），
+# SDK 库（rflow_client / rflow_svc）与 demo 可执行文件共用同一配置。
+#
 # 三个目标：
 #   - signaling_server : 始终构建。纯 POSIX TCP/epoll，无 webrtc 依赖。
 #   - push_demo_sdk    : 只用 librflow_svc 公共 ABI 的推流 demo。
@@ -11,6 +14,18 @@
 #   demo_push_session.*     push：信令 + 推流会话与热插拔调度
 
 find_package(Threads REQUIRED)
+
+# Debug 时给 demo 打 RFLOW_APPS_DEBUG，并保留栈帧便于 gdb。
+function(_rflow_apps_apply_build_type target)
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_compile_definitions(${target} PRIVATE RFLOW_APPS_DEBUG=1)
+        if(NOT MSVC)
+            target_compile_options(${target} PRIVATE -fno-omit-frame-pointer)
+        endif()
+    endif()
+endfunction()
+
+message(STATUS "apps: CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
 # ---------------------------------------------------------------- signaling_server
 add_executable(signaling_server signaling_server.cpp
@@ -24,6 +39,7 @@ target_include_directories(signaling_server     PRIVATE
         ${CMAKE_SOURCE_DIR}/src/common
 )
 target_link_libraries(signaling_server PRIVATE rflow_warnings Threads::Threads)
+_rflow_apps_apply_build_type(signaling_server)
 
 # ---------------------------------------------------------------- SDK demos
 function(_rflow_apps_add_sdk_demo target source link_lib)
@@ -34,6 +50,7 @@ function(_rflow_apps_add_sdk_demo target source link_lib)
     )
     target_link_libraries(${target} PRIVATE
         rflow_warnings ${link_lib} Threads::Threads ${CMAKE_DL_LIBS})
+    _rflow_apps_apply_build_type(${target})
 endfunction()
 
 if(RFLOW_BUILD_SERVICE AND RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
@@ -73,6 +90,7 @@ if(RFLOW_BUILD_SERVICE AND RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
             message(WARNING "push_demo_sdk: libudev not found; Linux USB hotplug monitor disabled at link time")
         endif()
     endif()
+    _rflow_apps_apply_build_type(push_demo_sdk)
 endif()
 
 if(RFLOW_BUILD_CLIENT AND RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)

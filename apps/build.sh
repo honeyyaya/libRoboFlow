@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
 # libRoboFlow 全量构建入口（Linux arm64 / Rockchip）。
-# 默认 Release，启用 client + service + apps + tests + libwebrtc + Rockchip MPP。
+# 默认 Debug（保留符号、关闭优化），启用 client + service + apps + tests + libwebrtc + Rockchip MPP。
 #
 # 注：src/common 的 ABI handle 字段直接持有 webrtc::scoped_refptr，无法在 webrtc=OFF
 # 下成功编译；因此本脚本不提供 "tests-only" 之类剔除 webrtc 的最小回归开关。
 # 想跑单测：./apps/build.sh && cd build && ctest --output-on-failure。
 #
 # 可选开关：
-#   --debug         以 Debug 模式编译，保留符号、关闭优化（适合 gdb / ASan 切换）
+#   --release       以 Release 模式编译（-O3、strip 友好）
+#   --debug         同默认，显式指定 Debug（保留符号、关闭优化，适合 gdb）
 #   --werror        叠加 -Werror + RFLOW_ENABLE_STRUCTURE_CHECK，CI 守卫场景
 #   -h / --help     打印用法
 
@@ -18,16 +19,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${ROOT}/build"
 
-BUILD_TYPE="Release"
+BUILD_TYPE="Debug"
 WERROR=0
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--debug] [--werror]
+Usage: $(basename "$0") [--release] [--debug] [--werror]
 
-Default: Release; client+service+apps+tests+libwebrtc+rockchip-mpp.
+Default: Debug; client+service+apps+tests+libwebrtc+rockchip-mpp.
 
-  --debug         build with CMAKE_BUILD_TYPE=Debug
+  --release       build with CMAKE_BUILD_TYPE=Release
+  --debug         build with CMAKE_BUILD_TYPE=Debug (default)
   --werror        treat warnings as errors and run src/ structure check (CI guard)
   -h, --help      show this help
 EOF
@@ -35,8 +37,9 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --debug)        BUILD_TYPE="Debug"; shift ;;
-        --werror)       WERROR=1;           shift ;;
+        --release)      BUILD_TYPE="Release"; shift ;;
+        --debug)        BUILD_TYPE="Debug";   shift ;;
+        --werror)       WERROR=1;             shift ;;
         -h|--help)      usage; exit 0 ;;
         *)              echo "unknown flag: $1" >&2; usage; exit 1 ;;
     esac
