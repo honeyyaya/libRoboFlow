@@ -28,7 +28,9 @@ std::string SequenceCheckerImpl::ExpectationToString() const {
     message.AppendFormat(
         "# Expected: TQ: %p Thread: %p\n"
         "# Actual:   TQ: %p Thread: %p\n",
-        valid_queue_, reinterpret_cast<const void*>(valid_thread_), current_queue,
+        reinterpret_cast<const void*>(valid_queue_),
+        reinterpret_cast<const void*>(valid_thread_),
+        reinterpret_cast<const void*>(current_queue),
         reinterpret_cast<const void*>(current_thread));
 
     if ((valid_queue_ || current_queue) && valid_queue_ != current_queue) {
