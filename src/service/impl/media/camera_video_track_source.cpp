@@ -721,14 +721,14 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
     const int64_t pipeline_t0_us = webrtc::TimeMicros();
     const int w = direct_cap_w_;
     const int h = direct_cap_h_;
+    bool ok = false;
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     int dma_fd = -1;
     size_t dma_cap = 0;
     if (buf_index < direct_expbuf_fd_.size() && buf_index < direct_mmap_len_.size()) {
         dma_fd = direct_expbuf_fd_[buf_index];
         dma_cap = direct_mmap_len_[buf_index];
     }
-    bool ok = false;
-#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     const auto zc_policy = rflow::service::impl::policy::EvaluateMjpegZeroCopyPolicy(
         v4l2_ext_dma_config_, mjpeg_rga_config_);
     const bool mpp_jpeg_dma =
