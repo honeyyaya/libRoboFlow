@@ -8,7 +8,10 @@
 #include <string>
 
 #include "api/task_queue/default_task_queue_factory.h"
+#include "rtc_base/logging.h"
 #include "system_wrappers/include/field_trial.h"
+
+#include <cctype>
 
 namespace rflow::rtc {
 namespace {
@@ -33,6 +36,39 @@ bool FlexfecTrialEnabledEffective() {
 
 std::once_flag g_field_trials_once;
 std::string    g_field_trials_storage;
+std::once_flag g_webrtc_log_once;
+
+webrtc::LoggingSeverity DefaultWebRtcLogSeverity() {
+#if defined(NDEBUG)
+    return webrtc::LS_NONE;
+#else
+    return webrtc::LS_WARNING;
+#endif
+}
+
+webrtc::LoggingSeverity ParseWebRtcLogSeverity(const std::string& raw) {
+    std::string s = raw;
+    for (char& ch : s) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (s == "verbose" || s == "v") return webrtc::LS_VERBOSE;
+    if (s == "info" || s == "i") return webrtc::LS_INFO;
+    if (s == "warning" || s == "warn" || s == "w") return webrtc::LS_WARNING;
+    if (s == "error" || s == "err" || s == "e") return webrtc::LS_ERROR;
+    if (s == "none" || s == "off" || s == "0") return webrtc::LS_NONE;
+    return DefaultWebRtcLogSeverity();
+}
+
+void EnsureWebrtcLoggingConfigured() {
+    std::call_once(g_webrtc_log_once, []() {
+        webrtc::LoggingSeverity sev = DefaultWebRtcLogSeverity();
+        const std::string cfg = knob::ReadString("RFLOW_WEBRTC_LOG_SEVERITY");
+        if (!cfg.empty()) {
+            sev = ParseWebRtcLogSeverity(cfg);
+        }
+        webrtc::LogMessage::LogToDebug(sev);
+    });
+}
 
 std::string ZeroPlayoutDelayTrialString() {
     int pacing_ms = knob::ReadInt("RFLOW_ZERO_PLAYOUT_MIN_PACING_MS");
@@ -53,6 +89,7 @@ std::string ZeroPlayoutDelayTrialString() {
 }  // namespace
 
 void EnsureWebrtcFieldTrialsInitialized() {
+    EnsureWebrtcLoggingConfigured();
     std::call_once(g_field_trials_once, []() {
         g_field_trials_storage =
             "WebRTC-VideoFrameTrackingIdAdvertised/Enabled/"
@@ -79,10 +116,9 @@ void EnsureWebrtcFieldTrialsInitialized() {
 webrtc::scoped_refptr<webrtc::AudioDeviceModule> CreateDummyAudioDeviceModule() {
     static std::unique_ptr<webrtc::TaskQueueFactory> task_queue_factory =
         webrtc::CreateDefaultTaskQueueFactory();
-    static webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm =
-        webrtc::AudioDeviceModule::Create(webrtc::AudioDeviceModule::kDummyAudio,
-                                          task_queue_factory.get());
-    return adm;
+    // 每次新建 ADM，绑定当前线程/TaskQueue 亲和；勿用 static 单例跨 Factory/线程复用。
+    return webrtc::AudioDeviceModule::Create(webrtc::AudioDeviceModule::kDummyAudio,
+                                             task_queue_factory.get());
 }
 
 void NotifyFlexfecTrialFromSdkConfig(bool explicitly_set, bool enabled) {

@@ -101,7 +101,7 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   int native_zero_copy_fail_disable_threshold_{3};
   uint64_t native_zero_copy_frames_{0};
   uint64_t native_copy_fallback_frames_{0};
-  unsigned trace_every_n_{45};
+  unsigned trace_every_n_{120};
 
   bool initialized_{false};
   mutable std::mutex mpp_mu_;

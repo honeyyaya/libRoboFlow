@@ -39,6 +39,32 @@ bool StartThreads(FactoryState& s) {
     return true;
 }
 
+bool CreateFactoryOnSignalingThread(FactoryState& s,
+                                    const rflow::rtc::PeerConnectionFactoryMediaOptions& media_opts) {
+    webrtc::Thread* sig = s.signaling.get();
+    if (!sig) return false;
+
+    auto create = [&]() -> bool {
+        webrtc::PeerConnectionFactoryDependencies deps;
+        deps.network_thread   = s.network.get();
+        deps.worker_thread    = s.worker.get();
+        deps.signaling_thread = sig;
+        // 不在 main 线程预建 ADM：Debug libwebrtc 要求 RegisterAudioCallback 与 ADM 构造同序列；
+        // 由 CreateModularPeerConnectionFactory 在 signaling 线程上完成音频栈接线。
+        rflow::rtc::PeerConnectionFactoryMediaOptions opts = media_opts;
+        rflow::rtc::ConfigurePeerConnectionFactoryDependencies(deps, &opts);
+        s.factory = webrtc::CreateModularPeerConnectionFactory(std::move(deps));
+        return s.factory != nullptr;
+    };
+
+    if (sig->IsCurrent()) {
+        return create();
+    }
+    bool ok = false;
+    sig->BlockingCall([&]() { ok = create(); });
+    return ok;
+}
+
 void StopThreads(FactoryState& s) {
     if (!s.threads_started) return;
     if (s.network)  s.network->Stop();
@@ -64,32 +90,30 @@ bool initialize() {
         return false;
     }
 
-    auto adm = CreateDummyAudioDeviceModule();
-    if (!adm) {
-        RFLOW_CORE_LOGE("[rtc] create dummy ADM failed");
-        StopThreads(s);
-        return false;
-    }
-
-    webrtc::PeerConnectionFactoryDependencies deps;
-    deps.network_thread   = s.network.get();
-    deps.worker_thread    = s.worker.get();
-    deps.signaling_thread = s.signaling.get();
-    deps.adm              = std::move(adm);
-
     rflow::rtc::PeerConnectionFactoryMediaOptions media_opts;
 #if defined(WEBRTC_ANDROID)
     media_opts.decoder_backend = rflow::rtc::VideoCodecBackendPreference::kAndroidMediaCodec;
 #endif
-    rflow::rtc::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
-
-    s.factory = webrtc::CreateModularPeerConnectionFactory(std::move(deps));
-    if (!s.factory) {
+    if (!CreateFactoryOnSignalingThread(s, media_opts)) {
         RFLOW_CORE_LOGE("[rtc] CreateModularPeerConnectionFactory failed");
         StopThreads(s);
         return false;
     }
     RFLOW_CORE_LOGI("[rtc] peer_connection_factory ready");
+    return true;
+}
+
+bool RecreatePeerConnectionFactory(const PeerConnectionFactoryMediaOptions& media_options) {
+    auto& s = State();
+    if (!s.threads_started && !StartThreads(s)) {
+        RFLOW_CORE_LOGE("[rtc] RecreatePeerConnectionFactory: start threads failed");
+        return false;
+    }
+    if (!CreateFactoryOnSignalingThread(s, media_options)) {
+        RFLOW_CORE_LOGE("[rtc] RecreatePeerConnectionFactory failed");
+        return false;
+    }
+    RFLOW_CORE_LOGI("[rtc] peer_connection_factory recreated");
     return true;
 }
 
@@ -105,6 +129,8 @@ webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_connection_fa
 }
 
 webrtc::Thread* network_thread() { return State().network.get(); }
+
+webrtc::Thread* worker_thread() { return State().worker.get(); }
 
 webrtc::Thread* signaling_thread() { return State().signaling.get(); }
 

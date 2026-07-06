@@ -9,6 +9,7 @@
 
 #include "api/peer_connection_interface.h"
 #include "api/scoped_refptr.h"
+#include "rtc/peer_connection_factory_deps.h"
 
 namespace webrtc {
 class Thread;
@@ -16,10 +17,12 @@ class Thread;
 
 namespace rflow::rtc {
 
-// 与 rtc::initialize() 创建、rtc::shutdown() 释放的进程级单例；未初始化时返回 nullptr。
 webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_connection_factory();
 webrtc::Thread* network_thread();
+webrtc::Thread* worker_thread();
 webrtc::Thread* signaling_thread();
+
+bool RecreatePeerConnectionFactory(const PeerConnectionFactoryMediaOptions& media_options);
 
 }  // namespace rflow::rtc
 

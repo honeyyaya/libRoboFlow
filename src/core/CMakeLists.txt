@@ -47,6 +47,48 @@ if(RFLOW_SERVICE_ENABLE_WEBRTC_IMPL AND RFLOW_BUILD_SERVICE)
 endif()
 
 if(_RFLOW_NEED_WEBRTC_IMPL)
+    set(RFLOW_DEPS_ROOT ${CMAKE_SOURCE_DIR}/dependences)
+    set(RFLOW_WEBRTC_INCLUDE_ROOT ${CMAKE_SOURCE_DIR}/include/webrtc)
+
+    if(ANDROID)
+        if(NOT ANDROID_ABI)
+            set(ANDROID_ABI "arm64-v8a")
+        endif()
+        set(RFLOW_WEBRTC_LIB_DIR ${RFLOW_DEPS_ROOT}/lib/android/${ANDROID_ABI})
+        set(_rflow_webrtc_variant "android")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _rflow_sys_arch)
+        if(_rflow_sys_arch STREQUAL "aarch64" OR _rflow_sys_arch STREQUAL "arm64")
+            set(_rflow_lib_arch "arm64")
+        else()
+            set(_rflow_lib_arch "${_rflow_sys_arch}")
+        endif()
+        # linux/arm64：release/ 与 debug/ 各一份 libwebrtc.a，与 CMAKE_BUILD_TYPE 对齐。
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            set(_rflow_webrtc_variant "debug")
+        else()
+            set(_rflow_webrtc_variant "release")
+        endif()
+        set(RFLOW_WEBRTC_LIB_DIR
+            ${RFLOW_DEPS_ROOT}/lib/linux/${_rflow_lib_arch}/${_rflow_webrtc_variant})
+        if(NOT EXISTS ${RFLOW_WEBRTC_LIB_DIR}/libwebrtc.a)
+            set(RFLOW_WEBRTC_LIB_DIR ${RFLOW_DEPS_ROOT}/lib/linux/${_rflow_lib_arch})
+            set(_rflow_webrtc_variant "legacy")
+        endif()
+    else()
+        message(FATAL_ERROR
+            "RFLOW_CLIENT_ENABLE_WEBRTC_IMPL: 仅支持 Android / Linux 交叉构建 (当前 ${CMAKE_SYSTEM_NAME})")
+    endif()
+
+    set(RFLOW_WEBRTC_LIB ${RFLOW_WEBRTC_LIB_DIR}/libwebrtc.a)
+    if(NOT EXISTS ${RFLOW_WEBRTC_LIB})
+        message(FATAL_ERROR
+            "找不到 libwebrtc.a: ${RFLOW_WEBRTC_LIB}\n"
+            "Linux arm64 请放置 dependences/lib/linux/arm64/{release,debug}/libwebrtc.a；"
+            "其他平台见 dependences/lib/<platform>/<arch>/。")
+    endif()
+    message(STATUS "rflow webrtc (core rtc) : ${RFLOW_WEBRTC_LIB} (variant=${_rflow_webrtc_variant}, CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE})")
+
     set(_RTC_DOMAIN_SRCS
         rtc/rtc_factory_common.cpp
         rtc/peer_connection_factory.cpp
@@ -58,9 +100,12 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
         rtc/sdp_observers.cpp
         rtc/stats_observer.cpp
         rtc/hw/backend_registry.cpp
-        rtc/shims/sequence_checker_expectation_to_string.cpp
         rtc/shims/sme_abi_stubs.c
     )
+    # Release 预编译 lib 缺 ExpectationToString；Debug 包已内置，勿重复链 shim。
+    if(NOT _rflow_webrtc_variant STREQUAL "debug")
+        list(APPEND _RTC_DOMAIN_SRCS rtc/shims/sequence_checker_expectation_to_string.cpp)
+    endif()
     set(_RTC_PLATFORM_ANDROID_SRCS)
     set(_RTC_PLATFORM_ROCKCHIP_SRCS)
     if(ANDROID)
@@ -90,35 +135,6 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
     if(RFLOW_ENABLE_ROCKCHIP_MPP)
         add_library(rflow_core_platform_rockchip OBJECT ${_RTC_PLATFORM_ROCKCHIP_SRCS})
     endif()
-
-    set(RFLOW_DEPS_ROOT ${CMAKE_SOURCE_DIR}/dependences)
-    set(RFLOW_WEBRTC_INCLUDE_ROOT ${CMAKE_SOURCE_DIR}/include/webrtc)
-
-    if(ANDROID)
-        if(NOT ANDROID_ABI)
-            set(ANDROID_ABI "arm64-v8a")
-        endif()
-        set(RFLOW_WEBRTC_LIB_DIR ${RFLOW_DEPS_ROOT}/lib/android/${ANDROID_ABI})
-    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _rflow_sys_arch)
-        if(_rflow_sys_arch STREQUAL "aarch64" OR _rflow_sys_arch STREQUAL "arm64")
-            set(_rflow_lib_arch "arm64")
-        else()
-            set(_rflow_lib_arch "${_rflow_sys_arch}")
-        endif()
-        set(RFLOW_WEBRTC_LIB_DIR ${RFLOW_DEPS_ROOT}/lib/linux/${_rflow_lib_arch})
-    else()
-        message(FATAL_ERROR
-            "RFLOW_CLIENT_ENABLE_WEBRTC_IMPL: 仅支持 Android / Linux 交叉构建 (当前 ${CMAKE_SYSTEM_NAME})")
-    endif()
-
-    set(RFLOW_WEBRTC_LIB ${RFLOW_WEBRTC_LIB_DIR}/libwebrtc.a)
-    if(NOT EXISTS ${RFLOW_WEBRTC_LIB})
-        message(FATAL_ERROR
-            "找不到 libwebrtc.a: ${RFLOW_WEBRTC_LIB}\n"
-            "请在 dependences/lib/<platform>/<arch>/ 下放置对应预编译产物。")
-    endif()
-    message(STATUS "rflow webrtc (core rtc) : ${RFLOW_WEBRTC_LIB}")
 
     add_library(rflow_webrtc_prebuilt STATIC IMPORTED GLOBAL)
     set_target_properties(rflow_webrtc_prebuilt PROPERTIES

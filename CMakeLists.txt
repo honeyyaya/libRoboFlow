@@ -73,7 +73,8 @@ if(RFLOW_BUILD_SERVICE)
     set(CMAKE_C_STANDARD_REQUIRED ON)
 endif()
 
-# 未指定时默认 Debug（保留符号、-O0），便于 gdb/联调；Release 请显式 -DCMAKE_BUILD_TYPE=Release。
+# 未指定时默认 Debug；Linux arm64 会链接 dependences/.../debug/libwebrtc.a（须与业务同为 Debug）。
+# 发布/联调性能请 -DCMAKE_BUILD_TYPE=Release（链接 release/libwebrtc.a）。
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
 endif()

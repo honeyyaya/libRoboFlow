@@ -469,7 +469,7 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     native_zero_copy_frames_ = 0;
     native_copy_fallback_frames_ = 0;
     trace_every_n_ =
-        static_cast<unsigned>(ReadEnvIntInRange("RFLOW_MPP_ENC_TRACE_EVERY_N", 45, 1, 600));
+        static_cast<unsigned>(ReadEnvIntInRange("RFLOW_MPP_ENC_TRACE_EVERY_N", 120, 1, 600));
 
     MppCtx ctx = nullptr;
     MppApi* mpi = nullptr;

@@ -58,6 +58,9 @@ constexpr KnobSpec kKnobTable[] = {
      "RFLOW_GLOBAL_FLEXFEC_DEFAULT; set_flexfec(ON/OFF) overrides this knob."},
     {"RFLOW_FIELD_TRIALS_APPEND", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
      "Extra WebRTC FieldTrials string (experimental/runtime flags)."},
+    {"RFLOW_WEBRTC_LOG_SEVERITY", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
+     "WebRTC internal RTC_LOG min level: verbose|info|warning|error|none "
+     "(unset: none in Release, warning in Debug)."},
     {"RFLOW_SYNC_GETSTATS_TIMEOUT_MS", nullptr, KnobGroup::kRtcFactory, KnobKind::kInt, 1500, 200, 60000,
      "",
      "Blocking wait timeout for PeerConnection::GetStats (ms) in QoS collection."},
@@ -143,7 +146,7 @@ constexpr KnobSpec kKnobTable[] = {
      "Zero-copy strict: never fall back after failure."},
     {"RFLOW_MPP_ENC_NATIVE_ZERO_COPY_FAILS", nullptr, KnobGroup::kMppEncoder, KnobKind::kInt, 3, 1, 50, "",
      "Consecutive zero-copy failures before falling back."},
-    {"RFLOW_MPP_ENC_TRACE_EVERY_N", nullptr, KnobGroup::kMppEncoder, KnobKind::kInt, 45, 1, 600, "",
+    {"RFLOW_MPP_ENC_TRACE_EVERY_N", nullptr, KnobGroup::kMppEncoder, KnobKind::kInt, 120, 1, 600, "",
      "Emit MPP encoder trace line every N frames."},
     {"RFLOW_MPP_ENC_ENABLE_IDR_CTRL", nullptr, KnobGroup::kMppEncoder, KnobKind::kBool, 0, 0, 1, "",
      "Experimental MPP CFG control for encoder IDR."},

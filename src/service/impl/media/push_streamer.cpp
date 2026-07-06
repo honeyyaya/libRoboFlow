@@ -9,6 +9,7 @@
 #include "media/frame_types.h"
 #include "public/log_tagged.h"
 #include "rtc/outbound_video_stats_aggregation.h"
+#include "rtc/peer_connection_factory.h"
 #include "rtc/peer_connection_factory_deps.h"
 #include "rtc/rtc_sync_stats.h"
 #include "rtc/sdp_observers.h"
@@ -117,7 +118,6 @@ public:
             return false;
         }
 
-        webrtc::PeerConnectionFactoryDependencies deps;
         rflow::rtc::PeerConnectionFactoryMediaOptions media_opts;
         media_opts.encoder_backend = config_.backend.use_rockchip_mpp_h264
                                          ? rflow::rtc::VideoCodecBackendPreference::kRockchipMpp
@@ -133,15 +133,17 @@ public:
             RFLOW_LOG_TAG_I("PushStreamer", "Rockchip MPP H.264 encoder rc:mode=%s",
                             media_opts.rockchip_h264_encoder_mpp_rc_cbr ? "CBR" : "VBR");
         }
-        rflow::rtc::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
-        rflow::rtc::EnsureDedicatedPeerConnectionSignalingThread(deps, &owned_signaling_thread_);
 
-        factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(deps));
-        if (!factory_) {
-            RFLOW_LOG_TAG_E("PushStreamer", "CreateModularPeerConnectionFactory failed");
+        if (!rflow::rtc::RecreatePeerConnectionFactory(media_opts)) {
+            RFLOW_LOG_TAG_E("PushStreamer", "RecreatePeerConnectionFactory failed");
             return false;
         }
-        RFLOW_LOG_TAG_I("PushStreamer", "PeerConnectionFactory created");
+        factory_ = rflow::rtc::peer_connection_factory();
+        if (!factory_) {
+            RFLOW_LOG_TAG_E("PushStreamer", "peer_connection_factory not ready after recreate");
+            return false;
+        }
+        RFLOW_LOG_TAG_I("PushStreamer", "Using process PeerConnectionFactory (MPP/service media options)");
 
         return CreatePeerConnection();
     }
@@ -184,13 +186,6 @@ public:
         external_source_ = nullptr;
 
         factory_ = nullptr;
-
-        if (owned_signaling_thread_) {
-            if (!owned_signaling_thread_->IsCurrent()) {
-                StopWebrtcThreadWithDeadline(owned_signaling_thread_.get(), 6);
-            }
-            owned_signaling_thread_.reset();
-        }
 
         webrtc::CleanupSSL();
     }
@@ -1280,7 +1275,6 @@ public:
 
 private:
     PushStreamerConfig config_;
-    std::unique_ptr<webrtc::Thread> owned_signaling_thread_;
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
     webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
     webrtc::scoped_refptr<webrtc::VideoTrackInterface> video_track_;
