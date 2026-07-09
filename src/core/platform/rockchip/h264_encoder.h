@@ -110,6 +110,9 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   std::optional<webrtc::VideoCodec> cached_codec_inst_;
   unsigned mpp_recover_attempts_{0};
   int64_t last_mpp_recover_us_{0};
+  bool put_frame_diag_enabled_{false};
+  int empty_eoi_retry_max_{6};
+  int empty_pkt_retry_max_{6};
 
   bool initialized_{false};
   mutable std::mutex mpp_mu_;
