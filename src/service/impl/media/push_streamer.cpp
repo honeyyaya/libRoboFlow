@@ -27,6 +27,7 @@
 #include "api/priority.h"
 #include "api/rtc_error.h"
 #include "api/rtp_parameters.h"
+#include "api/rtp_transceiver_direction.h"
 #include "api/rtp_transceiver_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/set_local_description_observer_interface.h"
@@ -206,18 +207,13 @@ public:
             return false;
         }
 
-        std::vector<std::string> stream_ids = {config_.common.stream_id};
         // 多订阅者 + 仅对订阅者发 Offer：同一 VideoTrack 不要同时挂到「占位」默认 PC 与订阅者 PC，
         // 否则部分 libwebrtc 版本在第二路 CreateOffer 上可能长期不回调（拉流端收不到 SDP）。
         if (!config_.common.signaling_subscriber_offer_only) {
-            auto add = peer_connection_->AddTrack(video_track_, stream_ids);
-            if (!add.ok()) {
-                RFLOW_LOG_TAG_E("PushStreamer", "AddTrack failed: %s", add.error().message());
+            if (!AddVideoSendTransceiver(peer_connection_)) {
                 return false;
             }
-            ApplyVideoCodecPreferences(peer_connection_);
-            ApplyEncodingParameters(peer_connection_);
-            RFLOW_LOG_TAG_I("PushStreamer", "Video track added (stream_id=%s)",
+            RFLOW_LOG_TAG_I("PushStreamer", "Video send transceiver added (stream_id=%s)",
                             config_.common.stream_id.c_str());
             MaybeStartOutboundStatsLoop();
         } else {
@@ -334,74 +330,106 @@ public:
         }
     }
 
-    void ApplyEncodingParameters(webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc) {
-        for (auto tr : pc->GetTransceivers()) {
-            if (!tr || tr->media_type() != webrtc::MediaType::VIDEO) {
-                continue;
-            }
-            auto sender = tr->sender();
-            if (!sender) {
-                continue;
-            }
-            webrtc::RtpParameters params = sender->GetParameters();
-            const webrtc::Priority net_prio = ParseVideoNetworkPriority(config_.common.video_network_priority);
-            const int fps_cap = (config_.common.video_encoding_max_framerate > 0) ? config_.common.video_encoding_max_framerate
-                                                                           : config_.common.video_fps;
-            const double max_fps = (fps_cap > 0) ? static_cast<double>(fps_cap) : 30.0;
-            for (auto& enc : params.encodings) {
-                enc.min_bitrate_bps = config_.common.min_bitrate_kbps * 1000;
-                enc.max_bitrate_bps = config_.common.max_bitrate_kbps * 1000;
-                enc.network_priority = net_prio;
-                enc.max_framerate = max_fps;
-            }
-            if (config_.common.degradation_preference == "maintain_resolution") {
-                params.degradation_preference = webrtc::DegradationPreference::MAINTAIN_RESOLUTION;
-            } else if (config_.common.degradation_preference == "maintain_framerate") {
-                params.degradation_preference = webrtc::DegradationPreference::MAINTAIN_FRAMERATE;
-            } else if (config_.common.degradation_preference == "balanced") {
-                params.degradation_preference = webrtc::DegradationPreference::BALANCED;
-            } else {
-                params.degradation_preference = webrtc::DegradationPreference::MAINTAIN_FRAMERATE;
-            }
-            auto err = sender->SetParameters(params);
-            if (!err.ok()) {
-                RFLOW_LOG_TAG_E("PushStreamer", "SetParameters failed: %s", err.message());
-            } else {
-                webrtc::BitrateSettings br;
-                const int min_bps = std::max(0, config_.common.min_bitrate_kbps * 1000);
-                const int target_bps = std::max(min_bps, config_.common.target_bitrate_kbps * 1000);
-                const int max_bps = std::max(target_bps, config_.common.max_bitrate_kbps * 1000);
-                br.min_bitrate_bps = min_bps;
-                br.start_bitrate_bps = target_bps;
-                br.max_bitrate_bps = max_bps;
-                auto br_err = pc->SetBitrate(br);
-                if (!br_err.ok()) {
-                    RFLOW_LOG_TAG_E("PushStreamer", "SetBitrate failed: %s", br_err.message());
-                } else {
-                    RFLOW_LOG_TAG_I("PushStreamer", "SetBitrate: min/start/max=%d/%d/%d bps", min_bps, target_bps,
-                                    max_bps);
-                }
-                RFLOW_LOG_TAG_I(
-                    "PushStreamer", "Encoding params: bitrate %d-%d kbps max_fps=%f network_priority=%s",
-                    config_.common.min_bitrate_kbps, config_.common.max_bitrate_kbps, max_fps,
-                    config_.common.video_network_priority.c_str());
-                {
-                    const char* deg = "maintain_framerate";
-                    if (config_.common.degradation_preference == "maintain_resolution") {
-                        deg = "maintain_resolution";
-                    } else if (config_.common.degradation_preference == "balanced") {
-                        deg = "balanced";
-                    }
-                    RFLOW_LOG_TAG_I(
-                        "PushStreamer",
-                        "degradation_preference=%s (maintain_framerate: on weak network, prioritize frame rate and tend to reduce resolution)", deg);
-                }
-                if (LatencyTraceEnabled()) {
-                    RFLOW_LOG_TAG_I("Latency", "RTC degradation_preference trace ok");
-                }
-            }
-            break;
+    double VideoEncodingMaxFps() const {
+        const int fps_cap = (config_.common.video_encoding_max_framerate > 0) ? config_.common.video_encoding_max_framerate
+                                                                              : config_.common.video_fps;
+        return (fps_cap > 0) ? static_cast<double>(fps_cap) : 30.0;
+    }
+
+    webrtc::DegradationPreference ParseDegradationPreference() const {
+        if (config_.common.degradation_preference == "maintain_resolution") {
+            return webrtc::DegradationPreference::MAINTAIN_RESOLUTION;
         }
+        if (config_.common.degradation_preference == "balanced") {
+            return webrtc::DegradationPreference::BALANCED;
+        }
+        return webrtc::DegradationPreference::MAINTAIN_FRAMERATE;
+    }
+
+    std::vector<webrtc::RtpEncodingParameters> BuildVideoSendEncodings() const {
+        webrtc::RtpEncodingParameters enc;
+        enc.active = true;
+        enc.min_bitrate_bps = config_.common.min_bitrate_kbps * 1000;
+        enc.max_bitrate_bps = config_.common.max_bitrate_kbps * 1000;
+        enc.network_priority = ParseVideoNetworkPriority(config_.common.video_network_priority);
+        enc.max_framerate = VideoEncodingMaxFps();
+        return {enc};
+    }
+
+    webrtc::RtpTransceiverInit BuildVideoSendTransceiverInit() const {
+        webrtc::RtpTransceiverInit init;
+        init.direction = webrtc::RtpTransceiverDirection::kSendOnly;
+        init.stream_ids = {config_.common.stream_id};
+        init.send_encodings = BuildVideoSendEncodings();
+        return init;
+    }
+
+    bool ApplySenderDegradationAndCallBitrate(
+        webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc,
+        webrtc::scoped_refptr<webrtc::RtpSenderInterface> sender) {
+        if (!pc || !sender) {
+            return false;
+        }
+        webrtc::RtpParameters params = sender->GetParameters();
+        params.degradation_preference = ParseDegradationPreference();
+        auto err = sender->SetParameters(params);
+        if (!err.ok()) {
+            RFLOW_LOG_TAG_E("PushStreamer", "SetParameters(degradation) failed: %s", err.message());
+            return false;
+        }
+
+        webrtc::BitrateSettings br;
+        const int min_bps = std::max(0, config_.common.min_bitrate_kbps * 1000);
+        const int target_bps = std::max(min_bps, config_.common.target_bitrate_kbps * 1000);
+        const int max_bps = std::max(target_bps, config_.common.max_bitrate_kbps * 1000);
+        br.min_bitrate_bps = min_bps;
+        br.start_bitrate_bps = target_bps;
+        br.max_bitrate_bps = max_bps;
+        auto br_err = pc->SetBitrate(br);
+        if (!br_err.ok()) {
+            RFLOW_LOG_TAG_E("PushStreamer", "SetBitrate failed: %s", br_err.message());
+            return false;
+        }
+
+        const double max_fps = VideoEncodingMaxFps();
+        RFLOW_LOG_TAG_I("PushStreamer", "SetBitrate: min/start/max=%d/%d/%d bps", min_bps, target_bps, max_bps);
+        RFLOW_LOG_TAG_I(
+            "PushStreamer", "Transceiver send_encodings: bitrate %d-%d kbps max_fps=%f network_priority=%s",
+            config_.common.min_bitrate_kbps, config_.common.max_bitrate_kbps, max_fps,
+            config_.common.video_network_priority.c_str());
+        {
+            const char* deg = "maintain_framerate";
+            if (config_.common.degradation_preference == "maintain_resolution") {
+                deg = "maintain_resolution";
+            } else if (config_.common.degradation_preference == "balanced") {
+                deg = "balanced";
+            }
+            RFLOW_LOG_TAG_I(
+                "PushStreamer",
+                "degradation_preference=%s (maintain_framerate: on weak network, prioritize frame rate and tend to reduce resolution)",
+                deg);
+        }
+        if (LatencyTraceEnabled()) {
+            RFLOW_LOG_TAG_I("Latency", "RTC degradation_preference trace ok");
+        }
+        return true;
+    }
+
+    bool AddVideoSendTransceiver(webrtc::scoped_refptr<webrtc::PeerConnectionInterface> pc) {
+        if (!pc || !video_track_) {
+            return false;
+        }
+        auto tr = pc->AddTransceiver(video_track_, BuildVideoSendTransceiverInit());
+        if (!tr.ok()) {
+            RFLOW_LOG_TAG_E("PushStreamer", "AddTransceiver failed: %s", tr.error().message());
+            return false;
+        }
+        ApplyVideoCodecPreferences(pc);
+        auto sender = tr.value()->sender();
+        if (!sender || !ApplySenderDegradationAndCallBitrate(pc, sender)) {
+            return false;
+        }
+        return true;
     }
 
     void MaybeStartOutboundStatsLoop() {
@@ -794,7 +822,7 @@ public:
             RFLOW_LOG_TAG_E("PushStreamer", "CreateOfferForPeer: no signaling thread");
             return;
         }
-        // AddTrack / CreateOffer 必须在专用 signaling 线程（见 EnsureDedicatedPeerConnectionSignalingThread）。
+        // AddTransceiver / CreateOffer 必须在专用 signaling 线程（见 EnsureDedicatedPeerConnectionSignalingThread）。
         auto run = [this, peer_id]() {
             if (!EnsurePeerConnectionForPeer(peer_id)) {
                 return;
@@ -831,7 +859,7 @@ public:
                 return true;
             }
         }
-        // 禁止在持 mutex_ 期间 CreatePeerConnection/AddTrack：WebRTC 可能同步触发观察者回调，
+        // 禁止在持 mutex_ 期间 CreatePeerConnection/AddTransceiver：WebRTC 可能同步触发观察者回调，
         // 与主线程里其它持 mutex_ 的逻辑抢锁会死锁 → 不发 Offer、拉流永远 0 帧。
         auto observer = std::make_unique<ExtraPeerObserver>(this, peer_id);
         auto pc = CreatePcWithObserver(observer.get(), MakeRtcConfiguration(config_));
@@ -842,14 +870,9 @@ public:
             RFLOW_LOG_TAG_E("PushStreamer", "EnsurePeerConnectionForPeer: no video track");
             return false;
         }
-        std::vector<std::string> stream_ids = {config_.common.stream_id};
-        auto add = pc->AddTrack(video_track_, stream_ids);
-        if (!add.ok()) {
-            RFLOW_LOG_TAG_E("PushStreamer", "AddTrack for peer failed: %s", add.error().message());
+        if (!AddVideoSendTransceiver(pc)) {
             return false;
         }
-        ApplyVideoCodecPreferences(pc);
-        ApplyEncodingParameters(pc);
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (peer_connections_.find(peer_id) != peer_connections_.end()) {
