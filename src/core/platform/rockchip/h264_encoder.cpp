@@ -306,31 +306,7 @@ static void ResetMppPacketWriteCursor(MppPacket pkt) {
     mpp_packet_set_length(pkt, 0);
 }
 
-// MJPEG 解码器 output buffer 属于 decoder buffer group；H264 编码器只接受已 import 到 encoder group 的 fd。
-// 直接把 decoder MppBuffer 句柄传给 encode_put_frame 会偶发 ret=-1（跨 context 未注册）。
-static MppBuffer ImportDecBufferToEncoderGroup(MppBufferGroup enc_grp, MppBuffer dec_buf) {
-    if (!enc_grp || !dec_buf) {
-        return nullptr;
-    }
-    MppBufferInfo info{};
-    if (mpp_buffer_info_get(dec_buf, &info) != MPP_OK) {
-        info.type = MPP_BUFFER_TYPE_DRM;
-        info.fd = mpp_buffer_get_fd(dec_buf);
-        info.size = mpp_buffer_get_size(dec_buf);
-        info.ptr = mpp_buffer_get_ptr(dec_buf);
-        info.hnd = nullptr;
-        info.index = -1;
-    }
-    if (info.fd < 0 && !info.ptr) {
-        return nullptr;
-    }
-    MppBuffer imported = nullptr;
-    if (mpp_buffer_import_with_tag(enc_grp, &info, &imported, MODULE_TAG, __func__) != MPP_OK || !imported) {
-        return nullptr;
-    }
-    return imported;
-}
-
+// MJPEG 解码器 output buffer 属于 decoder INTERNAL group；zero-copy 需 import 到编码器 EXTERNAL group。
 static void SyncDmabufBeforeDeviceRead(int dmabuf_fd) {
     if (dmabuf_fd < 0) {
         return;
@@ -338,6 +314,107 @@ static void SyncDmabufBeforeDeviceRead(int dmabuf_fd) {
     struct dma_buf_sync sync {};
     sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
     (void)ioctl(dmabuf_fd, DMA_BUF_IOCTL_SYNC, &sync);
+}
+
+struct ImportDecBufferResult {
+    MppBuffer buffer{nullptr};
+    MPP_RET import_ret{MPP_NOK};
+    MppBufferInfo info{};
+};
+
+static ImportDecBufferResult TryImportDecBuffer(MppBufferGroup import_grp, MppBuffer dec_buf) {
+    ImportDecBufferResult result;
+    if (!import_grp || !dec_buf) {
+        result.import_ret = MPP_ERR_NULL_PTR;
+        return result;
+    }
+    if (mpp_buffer_info_get(dec_buf, &result.info) != MPP_OK) {
+        result.info.type = MPP_BUFFER_TYPE_DRM;
+        result.info.fd = mpp_buffer_get_fd(dec_buf);
+        result.info.size = mpp_buffer_get_size(dec_buf);
+        result.info.ptr = mpp_buffer_get_ptr(dec_buf);
+        result.info.hnd = nullptr;
+        result.info.index = -1;
+    }
+    if (result.info.fd < 0 && !result.info.ptr) {
+        result.import_ret = MPP_ERR_NULL_PTR;
+        return result;
+    }
+    SyncDmabufBeforeDeviceRead(result.info.fd);
+    result.import_ret =
+        mpp_buffer_import_with_tag(import_grp, &result.info, &result.buffer, MODULE_TAG, __func__);
+    if (result.import_ret != MPP_OK) {
+        result.buffer = nullptr;
+    }
+    return result;
+}
+
+static void LogImportDecBufferFailDiag(bool enabled,
+                                       int attempt,
+                                       const ImportDecBufferResult& result,
+                                       MppBuffer dec_buf) {
+    if (!enabled) {
+        return;
+    }
+    RFLOW_LOG_TAG_W("RkMppH264Diag",
+                    "import_fail attempt=%d import_ret=%d info_type=%u dec_fd=%d dec_size=%zu",
+                    attempt, static_cast<int>(result.import_ret), static_cast<unsigned>(result.info.type),
+                    MppBufferFdOrNeg1(dec_buf),
+                    dec_buf ? static_cast<size_t>(mpp_buffer_get_size(dec_buf)) : 0u);
+}
+
+static MppBuffer ImportDecBufferWithRetry(MppBufferGroup import_grp,
+                                          MppBuffer dec_buf,
+                                          int retry_sleep_us,
+                                          bool diag_enabled) {
+    ImportDecBufferResult first = TryImportDecBuffer(import_grp, dec_buf);
+    if (first.buffer) {
+        return first.buffer;
+    }
+    LogImportDecBufferFailDiag(diag_enabled, 1, first, dec_buf);
+    if (retry_sleep_us <= 0) {
+        return nullptr;
+    }
+    usleep(static_cast<unsigned>(retry_sleep_us));
+    ImportDecBufferResult second = TryImportDecBuffer(import_grp, dec_buf);
+    if (!second.buffer) {
+        LogImportDecBufferFailDiag(diag_enabled, 2, second, dec_buf);
+    }
+    return second.buffer;
+}
+
+static void SyncDmabufAfterCpuWrite(int dmabuf_fd) {
+    if (dmabuf_fd < 0) {
+        return;
+    }
+    struct dma_buf_sync sync {};
+    sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
+    (void)ioctl(dmabuf_fd, DMA_BUF_IOCTL_SYNC, &sync);
+}
+
+static int DrainPendingEncoderOutput(MppApi* mpi, MppCtx ctx, int64_t restore_output_timeout_ms, int max_packets) {
+    if (!mpi || !ctx || max_packets <= 0) {
+        return 0;
+    }
+    MppPollType non_block = MPP_POLL_NON_BLOCK;
+    (void)mpi->control(ctx, MPP_SET_OUTPUT_TIMEOUT, &non_block);
+    int drained = 0;
+    for (int i = 0; i < max_packets; ++i) {
+        MppPacket pkt = nullptr;
+        const MPP_RET gr = mpi->encode_get_packet(ctx, &pkt);
+        if (pkt) {
+            mpp_packet_deinit(&pkt);
+            ++drained;
+            continue;
+        }
+        if (gr == MPP_ERR_TIMEOUT || gr == MPP_NOK) {
+            break;
+        }
+        break;
+    }
+    RK_S64 restore_ms = restore_output_timeout_ms;
+    (void)mpi->control(ctx, MPP_SET_OUTPUT_TIMEOUT, &restore_ms);
+    return drained;
 }
 
 static void LogPutFrameFailureDiag(bool enabled,
@@ -471,6 +548,10 @@ void RkMppH264Encoder::DestroyMpp() {
     if (md_buf_) {
         mpp_buffer_put(reinterpret_cast<MppBuffer>(md_buf_));
         md_buf_ = nullptr;
+    }
+    if (import_buf_grp_) {
+        mpp_buffer_group_put(reinterpret_cast<MppBufferGroup>(import_buf_grp_));
+        import_buf_grp_ = nullptr;
     }
     if (buf_grp_) {
         mpp_buffer_group_put(reinterpret_cast<MppBufferGroup>(buf_grp_));
@@ -606,6 +687,10 @@ void RkMppH264Encoder::ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* i
     put_frame_diag_enabled_ = ReadEnvIntInRange("RFLOW_MPP_ENC_PUT_FRAME_DIAG", 1, 0, 1) == 1;
     empty_eoi_retry_max_ = ReadEnvIntInRange("RFLOW_MPP_ENC_EMPTY_EOI_RETRIES", 6, 0, 32);
     empty_pkt_retry_max_ = ReadEnvIntInRange("RFLOW_MPP_ENC_EMPTY_PKT_RETRIES", 6, 0, 32);
+    input_timeout_ms_ = ReadEnvIntInRange("RFLOW_MPP_ENC_INPUT_TIMEOUT_MS", 50, -1, 8000);
+    output_timeout_ms_ = ReadEnvIntInRange("RFLOW_MPP_ENC_OUTPUT_TIMEOUT_MS", 4000, -1, 8000);
+    put_frame_drain_max_ = ReadEnvIntInRange("RFLOW_MPP_ENC_PUT_FRAME_DRAIN_MAX", 16, 1, 128);
+    import_retry_sleep_us_ = ReadEnvIntInRange("RFLOW_MPP_ENC_IMPORT_RETRY_US", 500, 0, 5000);
 }
 
 int RkMppH264Encoder::InitMppHardwareLocked(const webrtc::VideoCodec* inst) {
@@ -631,8 +716,8 @@ int RkMppH264Encoder::InitMppHardwareLocked(const webrtc::VideoCodec* inst) {
     }
     // Same as mpi_enc_test: non-split mode should finish with one get_packet per frame.
     // Timeout must be set after mpp_init on some platforms.
-    RK_S64 output_timeout_ms = 4000;
-    RK_S64 input_timeout_ms = 10;
+    RK_S64 input_timeout_ms = input_timeout_ms_;
+    RK_S64 output_timeout_ms = output_timeout_ms_;
     const MPP_RET set_in_to_ret = mpi->control(ctx, MPP_SET_INPUT_TIMEOUT, &input_timeout_ms);
     if (set_in_to_ret != MPP_OK) {
         RTC_LOG(LS_WARNING) << "[RkMppH264] MPP_SET_INPUT_TIMEOUT failed ret=" << set_in_to_ret
@@ -816,11 +901,21 @@ int RkMppH264Encoder::InitMppHardwareLocked(const webrtc::VideoCodec* inst) {
     buf_grp_ = grp;
     frm_buf_ = fb;
     pkt_buf_ = pb;
+
+    MppBufferGroup import_grp = nullptr;
+    if (mpp_buffer_group_get_external(&import_grp, MPP_BUFFER_TYPE_DRM) == MPP_OK && import_grp) {
+        import_buf_grp_ = import_grp;
+    } else {
+        RTC_LOG(LS_WARNING) << "[RkMppH264] external import buffer group failed, native zero-copy unavailable";
+        RFLOW_LOG_TAG_W("RkMppH264Warn", "external import buffer group failed");
+    }
+
     if (debug_enabled_) {
-        RFLOW_LOG_TAG_I("RkMppH264Dbg", "buffer type=%d frm_fd=%d pkt_fd=%d nv12_size=%zu pkt_size=%zu",
+        RFLOW_LOG_TAG_I("RkMppH264Dbg", "buffer type=%d frm_fd=%d pkt_fd=%d import_grp=%p nv12_size=%zu pkt_size=%zu",
                         static_cast<int>(chosen_buf_type),
                         mpp_buffer_get_fd(reinterpret_cast<MppBuffer>(frm_buf_)),
-                        mpp_buffer_get_fd(reinterpret_cast<MppBuffer>(pkt_buf_)), nv12_size, pkt_size);
+                        mpp_buffer_get_fd(reinterpret_cast<MppBuffer>(pkt_buf_)), import_buf_grp_, nv12_size,
+                        pkt_size);
     }
 
     const size_t md_sz = EncMdInfoBytesH264MpiEncTest(hor_stride_, ver_stride_);
@@ -1209,6 +1304,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     MppBuffer input_mpp_buf = reinterpret_cast<MppBuffer>(frm_buf_);
 
     bool used_native_zero_copy = false;
+    bool cpu_wrote_frm_buf = false;
     auto copy_i420_to_encoder_buffer = [&](const webrtc::scoped_refptr<webrtc::VideoFrameBuffer>& any_vfb) -> int32_t {
         webrtc::scoped_refptr<webrtc::I420BufferInterface> i420 = any_vfb->ToI420();
         if (!i420) {
@@ -1222,6 +1318,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         uint8_t* dst_uv = dst + static_cast<size_t>(hor_stride_) * static_cast<size_t>(ver_stride_);
         libyuv::I420ToNV12(i420->DataY(), i420->StrideY(), i420->DataU(), i420->StrideU(), i420->DataV(),
                            i420->StrideV(), dst, hor_stride_, dst_uv, hor_stride_, width_, height_);
+        cpu_wrote_frm_buf = true;
         return WEBRTC_VIDEO_CODEC_OK;
     };
 
@@ -1256,8 +1353,12 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                 const bool stride_ok = (nhs == hor_stride_ && nvs == ver_stride_);
                 const bool nv12_mpp = (fmt == MPP_FMT_YUV420SP);
                 if (dims_ok && stride_ok && nv12_mpp && native_zero_copy_enabled_) {
-                    MppBufferGroup enc_grp = reinterpret_cast<MppBufferGroup>(buf_grp_);
-                    MppBuffer imported = ImportDecBufferToEncoderGroup(enc_grp, ext);
+                    MppBufferGroup import_grp = reinterpret_cast<MppBufferGroup>(import_buf_grp_);
+                    MppBuffer imported = nullptr;
+                    if (import_grp) {
+                        imported = ImportDecBufferWithRetry(import_grp, ext, import_retry_sleep_us_,
+                                                            put_frame_diag_enabled_);
+                    }
                     if (imported) {
                         input_mpp_buf = imported;
                         used_native_zero_copy = true;
@@ -1267,6 +1368,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                     } else {
                         CopySemiPlanarToMppBuffer(src_y, src_uv, nhs, nhs, dst, hor_stride_, ver_stride_, width_,
                                                   height_);
+                        cpu_wrote_frm_buf = true;
                     }
                 } else if (dims_ok && (nv12_mpp || fmt == MPP_FMT_YUV420SP_VU)) {
                     if (fmt == MPP_FMT_YUV420SP) {
@@ -1278,6 +1380,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                             return WEBRTC_VIDEO_CODEC_ENCODER_FAILURE;
                         }
                     }
+                    cpu_wrote_frm_buf = true;
                 } else {
                     RTC_LOG(LS_WARNING) << "[RkMppH264] native dec frame mismatch expect " << width_ << "x" << height_
                                         << " stride " << hor_stride_ << "x" << ver_stride_ << " fmt " << fmt << " got "
@@ -1303,6 +1406,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
         }
         CopyNv12ToMppBuffer(nv12, dst, hor_stride_, ver_stride_, width_, height_);
+        cpu_wrote_frm_buf = true;
     } else {
         webrtc::scoped_refptr<webrtc::I420BufferInterface> i420 = vfb->ToI420();
         if (!i420) {
@@ -1316,6 +1420,11 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         uint8_t* dst_uv = dst + static_cast<size_t>(hor_stride_) * static_cast<size_t>(ver_stride_);
         libyuv::I420ToNV12(i420->DataY(), i420->StrideY(), i420->DataU(), i420->StrideU(), i420->DataV(),
                            i420->StrideV(), dst, hor_stride_, dst_uv, hor_stride_, width_, height_);
+        cpu_wrote_frm_buf = true;
+    }
+
+    if (cpu_wrote_frm_buf) {
+        SyncDmabufAfterCpuWrite(MppBufferFdOrNeg1(reinterpret_cast<MppBuffer>(frm_buf_)));
     }
 
     bool want_key = false;
@@ -1530,6 +1639,9 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             release_held_input();
             return recover_or_error("simulate_put_frame_fail", -1);
         }
+        auto sync_frm_buf_after_cpu_write = [&]() {
+            SyncDmabufAfterCpuWrite(MppBufferFdOrNeg1(reinterpret_cast<MppBuffer>(frm_buf_)));
+        };
         ret = mpi->encode_put_frame(ctx, mframe);
         if (ret != MPP_OK && input_mpp_buf != reinterpret_cast<MppBuffer>(frm_buf_)) {
             log_put_frame_fail("zero_copy_first", ret);
@@ -1558,7 +1670,10 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                         uint8_t* dst_uv = dst + static_cast<size_t>(hor_stride_) * static_cast<size_t>(ver_stride_);
                         libyuv::NV21ToNV12(src_y, nhs, src_uv, nhs, dst, hor_stride_, dst_uv, hor_stride_, width_, height_);
                     }
-                    mpp_frame_set_buffer(mframe, reinterpret_cast<MppBuffer>(frm_buf_));
+                    sync_frm_buf_after_cpu_write();
+                    used_native_zero_copy = false;
+                    input_mpp_buf = reinterpret_cast<MppBuffer>(frm_buf_);
+                    mpp_frame_set_buffer(mframe, input_mpp_buf);
                     ret = mpi->encode_put_frame(ctx, mframe);
                     if (ret != MPP_OK) {
                         log_put_frame_fail("after_memcpy", ret);
@@ -1567,7 +1682,10 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                     const int32_t rc = copy_i420_to_encoder_buffer(vfb);
                     if (rc == WEBRTC_VIDEO_CODEC_OK) {
                         ++native_copy_fallback_frames_;
-                        mpp_frame_set_buffer(mframe, reinterpret_cast<MppBuffer>(frm_buf_));
+                        sync_frm_buf_after_cpu_write();
+                        used_native_zero_copy = false;
+                        input_mpp_buf = reinterpret_cast<MppBuffer>(frm_buf_);
+                        mpp_frame_set_buffer(mframe, input_mpp_buf);
                         ret = mpi->encode_put_frame(ctx, mframe);
                         if (ret != MPP_OK) {
                             log_put_frame_fail("after_i420_memcpy", ret);
@@ -1589,6 +1707,29 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                 }
             }
         }
+        if (ret != MPP_OK) {
+            if (input_mpp_buf == reinterpret_cast<MppBuffer>(frm_buf_)) {
+                log_put_frame_fail("own_buffer", ret);
+            } else if (!used_native_zero_copy) {
+                log_put_frame_fail("final", ret);
+            }
+            const int drained =
+                DrainPendingEncoderOutput(mpi, ctx, output_timeout_ms_, put_frame_drain_max_);
+            if (put_frame_diag_enabled_ && drained > 0) {
+                RFLOW_LOG_TAG_W("RkMppH264Diag", "put_frame drain=%d pkts before retry ret=%d", drained,
+                                static_cast<int>(ret));
+            }
+            ret = mpi->encode_put_frame(ctx, mframe);
+            if (ret == MPP_OK) {
+                if (put_frame_diag_enabled_) {
+                    RFLOW_LOG_TAG_W("RkMppH264Warn", "put_frame ok after drain (discarded_pkts=%d)", drained);
+                }
+            } else if (input_mpp_buf == reinterpret_cast<MppBuffer>(frm_buf_)) {
+                log_put_frame_fail("own_buffer_after_drain", ret);
+            } else if (!used_native_zero_copy) {
+                log_put_frame_fail("final_after_drain", ret);
+            }
+        }
         if (ret == MPP_OK && used_native_zero_copy) {
             ++native_zero_copy_frames_;
         }
@@ -1598,13 +1739,9 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                             use_sync_encode ? 1 : 0);
         }
         if (ret != MPP_OK) {
-            if (input_mpp_buf == reinterpret_cast<MppBuffer>(frm_buf_)) {
-                log_put_frame_fail("own_buffer", ret);
-            } else if (!used_native_zero_copy) {
-                log_put_frame_fail("final", ret);
-            }
             RTC_LOG(LS_ERROR) << "[RkMppH264] encode_put_frame ret=" << ret;
             RFLOW_LOG_TAG_E("RkMppH264Err", "encode_put_frame ret=%d", static_cast<int>(ret));
+            release_held_input();
             return recover_or_error("encode_put_frame", ret);
         }
         if (debug_enabled_ && encode_probe_idx <= 3) {

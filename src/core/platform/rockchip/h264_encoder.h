@@ -65,6 +65,7 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   void* mpi_{nullptr};
   void* mpp_cfg_{nullptr};
   void* buf_grp_{nullptr};
+  void* import_buf_grp_{nullptr};
   void* frm_buf_{nullptr};
   void* pkt_buf_{nullptr};
   void* md_buf_{nullptr};
@@ -113,6 +114,11 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   bool put_frame_diag_enabled_{false};
   int empty_eoi_retry_max_{6};
   int empty_pkt_retry_max_{6};
+  /// MPP_SET_INPUT_TIMEOUT: -1 block, 0 non-block, 1..8000 ms (default 50).
+  int64_t input_timeout_ms_{50};
+  int64_t output_timeout_ms_{4000};
+  int put_frame_drain_max_{16};
+  int import_retry_sleep_us_{500};
 
   bool initialized_{false};
   mutable std::mutex mpp_mu_;
