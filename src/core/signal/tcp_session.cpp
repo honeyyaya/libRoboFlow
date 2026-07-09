@@ -105,7 +105,7 @@ bool TcpClientSession::Connect() {
     }
 
     RFLOW_CORE_LOGI("[Signaling] registered role=%s device_id=%s stream_index=%d "
-               "(信令房间须与推流 stream_id 一致；疑问题时设 RFLOW_VERBOSE_SIGNAL=1 看 register_json)",
+               "(signaling room must match push stream_id; set RFLOW_VERBOSE_SIGNAL=1 to inspect register_json if unsure)",
                ToString(reg.role),
                reg.device_id.c_str(),
                static_cast<int>(reg.stream_index));

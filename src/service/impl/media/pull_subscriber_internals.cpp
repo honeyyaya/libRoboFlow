@@ -62,66 +62,66 @@ void PrintTimingFrameDerivedDeltas(const std::vector<std::string>& parts) {
         !ParseInt64Strict(parts[3], &enc_f) || !ParseInt64Strict(parts[8], &recv_s) ||
         !ParseInt64Strict(parts[9], &recv_f) || !ParseInt64Strict(parts[10], &dec_s) ||
         !ParseInt64Strict(parts[11], &dec_f)) {
-        RFLOW_LOG_TAG_W("TimingDelta", "数值解析失败，跳过推导");
+        RFLOW_LOG_TAG_W("TimingDelta", "numeric parse failed, skipping delta derivation");
         return;
     }
 
-    RFLOW_LOG_TAG_I("TimingDelta", "接收端同一本地时钟（可与 decode_*、receive_* 直接相减）:");
-    RFLOW_LOG_TAG_I("TimingDelta", "  first_RTP→decode_start = %lld ms（首包进机 → 解码开始；含网传抖动、抖动缓冲、拼帧与调度）",
+    RFLOW_LOG_TAG_I("TimingDelta", "receiver uses same local clock (decode_* and receive_* can be subtracted directly):");
+    RFLOW_LOG_TAG_I("TimingDelta", "  first_RTP→decode_start = %lld ms (first RTP arrival → decode start; includes network jitter, JB, frame assembly, scheduling)",
                     static_cast<long long>(dec_s - recv_s));
-    RFLOW_LOG_TAG_I("TimingDelta", "  last_RTP→decode_start = %lld ms（收齐该帧 → 解码开始；主要反映 JB/解码器前排队）",
+    RFLOW_LOG_TAG_I("TimingDelta", "  last_RTP→decode_start = %lld ms (last RTP for frame → decode start; mainly JB/pre-decoder queueing)",
                     static_cast<long long>(dec_s - recv_f));
-    RFLOW_LOG_TAG_I("TimingDelta", "  decode_start→decode_finish = %lld ms（本帧解码耗时）",
+    RFLOW_LOG_TAG_I("TimingDelta", "  decode_start→decode_finish = %lld ms (decode duration for this frame)",
                     static_cast<long long>(dec_f - dec_s));
-    RFLOW_LOG_TAG_I("TimingDelta", "  RTP_last−first = %lld ms（该帧多包到达时间跨度）",
+    RFLOW_LOG_TAG_I("TimingDelta", "  RTP_last−first = %lld ms (multi-packet arrival span for this frame)",
                     static_cast<long long>(recv_f - recv_s));
 
     if (cap >= 0) {
-        RFLOW_LOG_TAG_I("TimingDelta", "端到端（WebRTC 已把发端时间对齐到可与收端比较时；capture_time_ms>=0）:");
-        RFLOW_LOG_TAG_I("TimingDelta", "  capture→decode_start = %lld ms（发端采集 → 收端解码开始）",
+        RFLOW_LOG_TAG_I("TimingDelta", "end-to-end (WebRTC aligned sender time for receiver comparison; capture_time_ms>=0):");
+        RFLOW_LOG_TAG_I("TimingDelta", "  capture→decode_start = %lld ms (sender capture → receiver decode start)",
                         static_cast<long long>(dec_s - cap));
     } else {
         RFLOW_LOG_TAG_W(
             "TimingDelta",
-            "capture_time_ms<0：发收绝对时间尚未对齐，不能用 decode_start−capture 当整段端到端。"
-            " 可临时用 first_RTP→decode_start 看「到机后」延迟，或在业务层打统一时钟时间戳。");
+            "capture_time_ms<0: sender/receiver absolute times not aligned; do not use decode_start−capture as full "
+            "end-to-end. Use first_RTP→decode_start for post-arrival latency, or stamp unified clock in app layer.");
     }
 
-    RFLOW_LOG_TAG_I("TimingDelta", "发端侧相对量（各字段同一偏移下互减仍有意义）:");
+    RFLOW_LOG_TAG_I("TimingDelta", "sender-side relative metrics (differences still meaningful under same offset):");
     RFLOW_LOG_TAG_I("TimingDelta", "  encode_start−capture = %lld ms", static_cast<long long>(enc_s - cap));
-    RFLOW_LOG_TAG_I("TimingDelta", "  encode_finish−encode_start = %lld ms（约等于本帧编码时长）",
+    RFLOW_LOG_TAG_I("TimingDelta", "  encode_finish−encode_start = %lld ms (approx. encode duration for this frame)",
                     static_cast<long long>(enc_f - enc_s));
 }
 
 void PrintGoogTimingFrameInfoLabeled(const std::string& raw) {
-    static constexpr const char* kFieldZh[] = {
-        "rtp_timestamp — RTP 时间戳（90kHz 时钟单位，不是毫秒）",
-        "capture_time_ms — 发送端：采集时刻(ms)；收端 NTP 未对齐时常为负，相对关系仍可比",
-        "encode_start_ms — 发送端：编码开始(ms)",
-        "encode_finish_ms — 发送端：编码结束(ms)",
-        "packetization_finish_ms — 发送端：组包完成 / 进入 pacer 前(ms)",
-        "pacer_exit_ms — 发送端：该帧最后一包离开 pacer(ms)；未用时常为 -1",
-        "network_timestamp_ms — 发送端/扩展：网内时间戳 1(ms)",
-        "network2_timestamp_ms — 发送端/扩展：网内时间戳 2(ms)",
-        "receive_start_ms — 接收端本地时钟：该帧第一个 RTP 包到达(ms)",
-        "receive_finish_ms — 接收端本地时钟：该帧最后一个包收齐(ms)",
-        "decode_start_ms — 接收端本地时钟：解码开始(ms)",
-        "decode_finish_ms — 接收端本地时钟：解码结束(ms)",
-        "render_time_ms — 接收端：建议渲染时刻(ms)",
-        "is_outlier — 是否按帧大小判为异常上报(0/1)",
-        "is_timer_triggered — 是否由周期定时器选中为 timing 帧(0/1)",
+    static constexpr const char* kFieldLabels[] = {
+        "rtp_timestamp — RTP timestamp (90kHz clock units, not milliseconds)",
+        "capture_time_ms — sender: capture time (ms); negative on receiver when NTP not aligned, relative diffs still valid",
+        "encode_start_ms — sender: encode start (ms)",
+        "encode_finish_ms — sender: encode finish (ms)",
+        "packetization_finish_ms — sender: packetization done / before pacer (ms)",
+        "pacer_exit_ms — sender: last packet left pacer for this frame (ms); -1 if unused",
+        "network_timestamp_ms — sender/ext: in-network timestamp 1 (ms)",
+        "network2_timestamp_ms — sender/ext: in-network timestamp 2 (ms)",
+        "receive_start_ms — receiver local clock: first RTP packet arrival for frame (ms)",
+        "receive_finish_ms — receiver local clock: last packet received for frame (ms)",
+        "decode_start_ms — receiver local clock: decode start (ms)",
+        "decode_finish_ms — receiver local clock: decode finish (ms)",
+        "render_time_ms — receiver: suggested render time (ms)",
+        "is_outlier — outlier by frame size (0/1)",
+        "is_timer_triggered — selected as timing frame by periodic timer (0/1)",
     };
-    constexpr size_t kN = sizeof(kFieldZh) / sizeof(kFieldZh[0]);
+    constexpr size_t kN = sizeof(kFieldLabels) / sizeof(kFieldLabels[0]);
     const std::vector<std::string> parts = SplitCommaFields(raw);
     if (parts.size() != kN) {
         RFLOW_LOG_TAG_I("VideoTiming", "TimingFrameInfo (raw): %s", raw.c_str());
-        RFLOW_LOG_TAG_W("VideoTiming", "字段数=%zu（期望 %zu），与当前 libwebrtc ToString 格式不一致",
+        RFLOW_LOG_TAG_W("VideoTiming", "field count=%zu (expected %zu), does not match current libwebrtc ToString format",
                         parts.size(), kN);
         return;
     }
-    RFLOW_LOG_TAG_I("VideoTiming", "TimingFrameInfo 逐字段 (goog_timing_frame_info):");
+    RFLOW_LOG_TAG_I("VideoTiming", "TimingFrameInfo field-by-field (goog_timing_frame_info):");
     for (size_t i = 0; i < kN; ++i) {
-        RFLOW_LOG_TAG_I("VideoTiming", "  [%zu] %s = %s", i + 1, kFieldZh[i], parts[i].c_str());
+        RFLOW_LOG_TAG_I("VideoTiming", "  [%zu] %s = %s", i + 1, kFieldLabels[i], parts[i].c_str());
     }
     PrintTimingFrameDerivedDeltas(parts);
 }
@@ -219,7 +219,7 @@ void PrintInboundVideoStats(
         } else {
             RFLOW_LOG_TAG_I(
                 "VideoTiming",
-                "goog_timing_frame_info: (empty — 对端未带 video-timing 扩展或尚未选中 timing frame)");
+                "goog_timing_frame_info: (empty — peer did not send video-timing extension or no timing frame selected yet)");
         }
     }
 }

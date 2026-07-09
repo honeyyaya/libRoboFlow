@@ -394,7 +394,7 @@ public:
                     }
                     RFLOW_LOG_TAG_I(
                         "PushStreamer",
-                        "degradation_preference=%s (maintain_framerate: 弱网时优先保帧、倾向降分辨率)", deg);
+                        "degradation_preference=%s (maintain_framerate: on weak network, prioritize frame rate and tend to reduce resolution)", deg);
                 }
                 if (LatencyTraceEnabled()) {
                     RFLOW_LOG_TAG_I("Latency", "RTC degradation_preference trace ok");

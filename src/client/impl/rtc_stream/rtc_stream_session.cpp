@@ -307,7 +307,7 @@ bool RtcStreamSession::Start() {
         const std::string dev =
             device_id_.empty() ? std::string(RFLOW_DEFAULT_DEVICE_ID) : device_id_;
         const std::string room = dev + ":" + std::to_string(index_);
-        RFLOW_LOGI("[pull idx=%d] signaling room=%s (须与推流 stream_id 一致), waiting for offer...",
+        RFLOW_LOGI("[pull idx=%d] signaling room=%s (must match push stream_id), waiting for offer...",
                    index_, room.c_str());
     }
 
