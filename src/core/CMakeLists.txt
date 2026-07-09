@@ -99,6 +99,7 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
         rtc/rtc_sync_stats.cpp
         rtc/sdp_observers.cpp
         rtc/stats_observer.cpp
+        rtc/video_codec_preferences.cpp
         rtc/hw/backend_registry.cpp
         rtc/shims/sme_abi_stubs.c
     )

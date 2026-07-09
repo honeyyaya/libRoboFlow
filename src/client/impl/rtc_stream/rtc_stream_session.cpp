@@ -6,6 +6,7 @@
 #include "rtc/rtc.h"
 #include "rtc/sdp_observers.h"
 #include "rtc/stats_observer.h"
+#include "rtc/video_codec_preferences.h"
 #include "signal/tcp_session.h"
 #include "base/timing_log.h"
 
@@ -32,7 +33,6 @@
 #include "api/rtc_error.h"
 #include "api/stats/rtc_stats_collector_callback.h"
 #include "api/stats/rtcstats_objects.h"
-#include "api/video_codecs/h264_profile_level_id.h"
 #include "rtc_base/thread.h"
 
 namespace rflow::client::impl {
@@ -51,72 +51,6 @@ double ReadReceiverJitterMinDelaySeconds() {
         }
     }
     return kDefaultReceiverVideoJitterBufferMinDelaySeconds;
-}
-
-bool IsLowLatencyH264Capability(const webrtc::RtpCodecCapability& codec) {
-    if (codec.kind != webrtc::MediaType::VIDEO || codec.name != "H264") {
-        return false;
-    }
-    const std::optional<webrtc::H264ProfileLevelId> profile =
-        webrtc::ParseSdpForH264ProfileLevelId(codec.parameters);
-    if (!profile.has_value()) return false;
-    return profile->profile == webrtc::H264Profile::kProfileConstrainedBaseline ||
-           profile->profile == webrtc::H264Profile::kProfileBaseline;
-}
-
-std::vector<webrtc::RtpCodecCapability> BuildLowLatencyVideoCodecPreferences(
-    const webrtc::RtpCapabilities& capabilities) {
-    std::vector<webrtc::RtpCodecCapability> preferred_h264;
-    std::vector<webrtc::RtpCodecCapability> other_h264;
-    std::vector<webrtc::RtpCodecCapability> other_media;
-    std::vector<webrtc::RtpCodecCapability> auxiliary;
-    std::vector<int>                        allowed_pts;
-
-    for (const auto& codec : capabilities.codecs) {
-        if (codec.kind != webrtc::MediaType::VIDEO) continue;
-        if (codec.IsMediaCodec()) {
-            if (IsLowLatencyH264Capability(codec)) {
-                preferred_h264.push_back(codec);
-            } else if (codec.name == "H264") {
-                other_h264.push_back(codec);
-            } else {
-                other_media.push_back(codec);
-            }
-            continue;
-        }
-        auxiliary.push_back(codec);
-    }
-
-    if (preferred_h264.empty() && other_h264.empty()) {
-        return {};
-    }
-
-    auto collect_pt = [&allowed_pts](const std::vector<webrtc::RtpCodecCapability>& list) {
-        for (const auto& c : list) {
-            if (c.preferred_payload_type.has_value()) {
-                allowed_pts.push_back(*c.preferred_payload_type);
-            }
-        }
-    };
-    collect_pt(preferred_h264);
-    collect_pt(other_h264);
-    collect_pt(other_media);
-
-    std::vector<webrtc::RtpCodecCapability> result = preferred_h264;
-    result.insert(result.end(), other_h264.begin(), other_h264.end());
-    result.insert(result.end(), other_media.begin(), other_media.end());
-    for (const auto& codec : auxiliary) {
-        if (codec.name == "rtx") {
-            const auto apt_it = codec.parameters.find("apt");
-            if (apt_it == codec.parameters.end()) continue;
-            const int apt = std::atoi(apt_it->second.c_str());
-            if (std::find(allowed_pts.begin(), allowed_pts.end(), apt) == allowed_pts.end()) {
-                continue;
-            }
-        }
-        result.push_back(codec);
-    }
-    return result;
 }
 
 bool ReadEnvBoolDefaultWd(const char* name, bool def) {
@@ -530,25 +464,18 @@ void RtcStreamSession::DoCreateAnswerAfterSetRemote() {
     if (factory_) {
         const webrtc::RtpCapabilities caps =
             factory_->GetRtpReceiverCapabilities(webrtc::MediaType::VIDEO);
-        std::vector<webrtc::RtpCodecCapability> preferred = BuildLowLatencyVideoCodecPreferences(caps);
+        rflow::core::rtc::VideoCodecPreferenceConfig cfg;
+        cfg.role = rflow::core::rtc::VideoCodecPreferenceRole::kSubscriber;
+        cfg.video_codec = "h264";
+        cfg.prefer_baseline_h264_first = true;
+        cfg.include_all_h264_variants = true;
+        cfg.include_all_rtx = true;
+        const auto preferred = rflow::core::rtc::BuildVideoCodecPreferences(caps, cfg);
         if (!preferred.empty()) {
-            for (const auto& transceiver : peer_connection_->GetTransceivers()) {
-                if (!transceiver || transceiver->media_type() != webrtc::MediaType::VIDEO) {
-                    continue;
-                }
-                const webrtc::RTCError err = transceiver->SetCodecPreferences(preferred);
-                if (!err.ok()) {
-                    RFLOW_LOGW("[pull idx=%d] SetCodecPreferences failed: %s",
-                               index_, err.message());
-                } else {
-                    RFLOW_LOGI("[pull idx=%d] SetCodecPreferences ok, codecs=%zu",
-                               index_, preferred.size());
-                }
-            }
+            rflow::core::rtc::SetVideoCodecPreferencesOnPeerConnection(
+                peer_connection_, webrtc::MediaType::VIDEO, preferred, "PullClient");
         } else {
-            RFLOW_LOGD("[pull idx=%d] no preferred low-latency video codec list, skip "
-                       "SetCodecPreferences",
-                       index_);
+            RFLOW_LOGD("[pull idx=%d] no preferred video codec list, skip SetCodecPreferences", index_);
         }
     }
 

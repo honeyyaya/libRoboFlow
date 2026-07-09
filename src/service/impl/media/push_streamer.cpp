@@ -14,6 +14,7 @@
 #include "rtc/rtc_sync_stats.h"
 #include "rtc/sdp_observers.h"
 #include "rtc/stats_observer.h"
+#include "rtc/video_codec_preferences.h"
 #include "runtime/runtime_knobs.h"
 #include "thread/thread_pool.h"
 #include "media/push_h264_profile.h"
@@ -240,6 +241,13 @@ public:
         if (!factory_ || !pc) {
             return;
         }
+
+        rflow::core::rtc::VideoCodecPreferenceConfig cfg;
+        cfg.role = rflow::core::rtc::VideoCodecPreferenceRole::kPublisher;
+        cfg.video_codec = config_.common.video_codec;
+        cfg.include_all_h264_variants = true;
+        cfg.include_all_rtx = false;
+
         std::string want = config_.common.video_codec;
         for (auto& ch : want) {
             ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -247,86 +255,28 @@ public:
         if (want.empty()) {
             want = "h264";
         }
-
-        webrtc::RtpCapabilities caps = factory_->GetRtpSenderCapabilities(webrtc::MediaType::VIDEO);
-        if (caps.codecs.empty()) {
-            RFLOW_LOG_TAG_E("PushStreamer", "GetRtpSenderCapabilities(VIDEO) empty");
-            return;
+        if (want == "h264" && !config_.common.h264_profile.empty()) {
+            const std::string want_idc = H264ProfileIdcHex2(config_.common.h264_profile);
+            cfg.media_filter = [want_idc](const webrtc::RtpCodecCapability& c) {
+                return H264CodecMatchesConfiguredProfile(c, want_idc);
+            };
+            RFLOW_LOG_TAG_I(
+                "PushStreamer", "H264 profile filter: profile_idc=0x%s (H264_PROFILE=%s)",
+                want_idc.c_str(), config_.common.h264_profile.c_str());
         }
 
-        auto match_want = [&](const std::string& m) -> bool {
-            if (want == "h264") {
-                return m.find("h264") != std::string::npos;
-            }
-            if (want == "h265" || want == "hevc") {
-                return m.find("h265") != std::string::npos || m.find("hevc") != std::string::npos ||
-                       m.find("hev1") != std::string::npos;
-            }
-            if (want == "vp8") {
-                return m.find("vp8") != std::string::npos;
-            }
-            if (want == "vp9") {
-                return m.find("vp9") != std::string::npos;
-            }
-            if (want == "av1") {
-                return m.find("av1") != std::string::npos;
-            }
-            return m.find(want) != std::string::npos;
-        };
-
-        std::vector<webrtc::RtpCodecCapability> preferred;
-        std::vector<webrtc::RtpCodecCapability> other;
-        for (const auto& c : caps.codecs) {
-            if (match_want(MimeLower(c))) {
-                preferred.push_back(c);
-            } else {
-                other.push_back(c);
-            }
-        }
-        if (preferred.empty()) {
+        const webrtc::RtpCapabilities caps = factory_->GetRtpSenderCapabilities(webrtc::MediaType::VIDEO);
+        const auto ordered = rflow::core::rtc::BuildVideoCodecPreferences(caps, cfg);
+        if (ordered.empty()) {
             RFLOW_LOG_TAG_I(
                 "PushStreamer", "SetCodecPreferences skipped: no match for VIDEO_CODEC=%s",
                 config_.common.video_codec.c_str());
             return;
         }
-        if (want == "h264") {
-            const std::string want_idc = H264ProfileIdcHex2(config_.common.h264_profile);
-            std::vector<webrtc::RtpCodecCapability> filtered;
-            filtered.reserve(preferred.size());
-            for (const auto& c : preferred) {
-                if (H264CodecMatchesConfiguredProfile(c, want_idc)) {
-                    filtered.push_back(c);
-                }
-            }
-            if (!filtered.empty()) {
-                preferred = std::move(filtered);
-                RFLOW_LOG_TAG_I(
-                    "PushStreamer", "H264 profile filter: profile_idc=0x%s (H264_PROFILE=%s)",
-                    want_idc.c_str(), config_.common.h264_profile.c_str());
-            } else {
-                RFLOW_LOG_TAG_I(
-                    "PushStreamer",
-                    "H264 profile filter skipped: no payload matched profile_idc=0x%s, using all H264 payloads",
-                    want_idc.c_str());
-            }
-        }
-        std::vector<webrtc::RtpCodecCapability> ordered;
-        ordered.reserve(preferred.size() + other.size());
-        ordered.insert(ordered.end(), preferred.begin(), preferred.end());
-        ordered.insert(ordered.end(), other.begin(), other.end());
-
-        for (auto tr : pc->GetTransceivers()) {
-            if (!tr || tr->media_type() != webrtc::MediaType::VIDEO) {
-                continue;
-            }
-            auto err = tr->SetCodecPreferences(webrtc::ArrayView<webrtc::RtpCodecCapability>(
-                ordered.data(), ordered.size()));
-            if (!err.ok()) {
-                RFLOW_LOG_TAG_E("PushStreamer", "SetCodecPreferences: %s", err.message());
-            } else {
-                RFLOW_LOG_TAG_I("PushStreamer", "SetCodecPreferences: prefer %s", want.c_str());
-            }
-            return;
+        if (rflow::core::rtc::SetVideoCodecPreferencesOnPeerConnection(
+                pc, webrtc::MediaType::VIDEO, ordered, "PushStreamer")) {
+            RFLOW_LOG_TAG_I("PushStreamer", "SetCodecPreferences: prefer %s (with RTX/FEC resiliency codecs)",
+                            want.c_str());
         }
     }
 

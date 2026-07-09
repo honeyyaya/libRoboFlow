@@ -4,6 +4,7 @@
 #include "rtc/peer_connection_factory_deps.h"
 #include "rtc/sdp_observers.h"
 #include "rtc/stats_observer.h"
+#include "rtc/video_codec_preferences.h"
 #include "runtime/runtime_knobs.h"
 #include "media/pull_subscriber_internals.h"
 #include "media/pull_subscriber_video_sink.h"
@@ -201,6 +202,22 @@ public:
     }
 
     void CreateAnswer() {
+        if (factory_ && peer_connection_) {
+            const webrtc::RtpCapabilities caps =
+                factory_->GetRtpReceiverCapabilities(webrtc::MediaType::VIDEO);
+            rflow::core::rtc::VideoCodecPreferenceConfig cfg;
+            cfg.role = rflow::core::rtc::VideoCodecPreferenceRole::kSubscriber;
+            cfg.video_codec = "h264";
+            cfg.prefer_baseline_h264_first = true;
+            cfg.include_all_h264_variants = true;
+            cfg.include_all_rtx = true;
+            const auto preferred = rflow::core::rtc::BuildVideoCodecPreferences(caps, cfg);
+            if (!preferred.empty()) {
+                rflow::core::rtc::SetVideoCodecPreferencesOnPeerConnection(
+                    peer_connection_, webrtc::MediaType::VIDEO, preferred, "PullSubscriber");
+            }
+        }
+
         webrtc::PeerConnectionInterface::RTCOfferAnswerOptions opts;
         opts.offer_to_receive_audio = 0;
         opts.num_simulcast_layers = 1;
