@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "api/scoped_refptr.h"
@@ -41,6 +42,9 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
 
  private:
   void DestroyMpp();
+  void ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* inst);
+  int InitMppHardwareLocked(const webrtc::VideoCodec* inst);
+  bool RecoverMppSessionLocked();
   bool ApplyRcToCfg();
   static int MppH264LevelForSize(int width, int height, uint32_t fps);
   /// 将 split_assembly_buf_ 中拼好的一帧 Annex B（或等价）码流发出一次 OnEncodedImage。
@@ -102,6 +106,10 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   uint64_t native_zero_copy_frames_{0};
   uint64_t native_copy_fallback_frames_{0};
   unsigned trace_every_n_{120};
+  int simulate_put_frame_fail_remaining_{0};
+  std::optional<webrtc::VideoCodec> cached_codec_inst_;
+  unsigned mpp_recover_attempts_{0};
+  int64_t last_mpp_recover_us_{0};
 
   bool initialized_{false};
   mutable std::mutex mpp_mu_;

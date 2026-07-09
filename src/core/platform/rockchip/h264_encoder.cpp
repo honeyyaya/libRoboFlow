@@ -395,8 +395,14 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
     }
 
-    DestroyMpp();
+    ConfigureFromVideoCodecLocked(inst);
+    cached_codec_inst_ = *inst;
+    mpp_recover_attempts_ = 0;
+    last_mpp_recover_us_ = 0;
+    return InitMppHardwareLocked(inst);
+}
 
+void RkMppH264Encoder::ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* inst) {
     width_ = static_cast<int>(inst->width);
     height_ = static_cast<int>(inst->height);
     hor_stride_ = MPP_ALIGN(width_, MppEncHorStrideAlignPixels());
@@ -428,24 +434,18 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         RFLOW_LOG_TAG_I("Latency", "MPP H264 GOP frames=%d fps=%u", gop_, static_cast<unsigned>(fps_));
     }
     mpp_rc_mode_ = rockchip_mpp_rc_cbr_ ? MPP_ENC_RC_MODE_CBR : MPP_ENC_RC_MODE_VBR;
-    // Keep default aligned with mpp_h264_smoke unless explicitly enabled.
     intra_refresh_mode_ = ReadEnvIntInRange("RFLOW_MPP_ENC_INTRA_REFRESH_MODE", 0, 0, 3);
     const int mb_rows = std::max(1, (height_ + 15) / 16);
     const int fps_i = std::max(1, static_cast<int>(fps_));
     const int auto_refresh_arg = std::max(1, (mb_rows + fps_i - 1) / fps_i);
     intra_refresh_arg_ = ReadEnvIntInRange("RFLOW_MPP_ENC_INTRA_REFRESH_ARG", auto_refresh_arg, 1, 512);
-    // Default off for byte-splitting; enable for experiments via RFLOW_MPP_ENC_SPLIT_BYTES.
     split_bytes_ = ReadEnvIntInRange("RFLOW_MPP_ENC_SPLIT_BYTES", 0, 0, 4096);
     split_by_byte_enabled_ = split_bytes_ > 0;
-    // Keyframe storm protection: limit continuous IDR injections with max-wait fallback.
     idr_min_interval_ms_ = ReadEnvIntInRange("RFLOW_MPP_ENC_IDR_MIN_INTERVAL_MS", 800, 0, 5000);
-    // In loss cases, allow quick-IDR window when last real IDR is old enough.
-    // Still bounded by force_max_wait upper limit.
     idr_loss_quick_trigger_ms_ = ReadEnvIntInRange("RFLOW_MPP_ENC_IDR_LOSS_QUICK_MS", 180, 0, 2000);
     idr_force_max_wait_ms_ = ReadEnvIntInRange("RFLOW_MPP_ENC_IDR_FORCE_MAX_WAIT_MS", 3000, 200, 15000);
     last_forced_idr_ctrl_us_ = -1;
     last_idr_emit_us_ = -1;
-    consecutive_output_failures_ = 0;
     recover_soft_fail_threshold_ = 6;
     recover_hard_fail_threshold_ = 30;
     recover_disable_split_on_failure_ = true;
@@ -463,13 +463,20 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     task_read_packet_ = ReadEnvIntInRange("RFLOW_MPP_ENC_TASK_READ_PACKET", 1, 0, 1) == 1;
     native_zero_copy_enabled_ = ReadEnvIntInRange("RFLOW_MPP_ENC_NATIVE_ZERO_COPY", 1, 0, 1) == 1;
     native_zero_copy_strict_ = ReadEnvIntInRange("RFLOW_MPP_ENC_NATIVE_ZERO_COPY_STRICT", 0, 0, 1) == 1;
-    native_zero_copy_failures_ = 0;
     native_zero_copy_fail_disable_threshold_ =
         ReadEnvIntInRange("RFLOW_MPP_ENC_NATIVE_ZERO_COPY_FAILS", 3, 1, 50);
-    native_zero_copy_frames_ = 0;
-    native_copy_fallback_frames_ = 0;
     trace_every_n_ =
         static_cast<unsigned>(ReadEnvIntInRange("RFLOW_MPP_ENC_TRACE_EVERY_N", 120, 1, 600));
+    simulate_put_frame_fail_remaining_ =
+        ReadEnvIntInRange("RFLOW_MPP_ENC_SIMULATE_PUT_FRAME_FAIL_COUNT", 0, 0, 100000);
+}
+
+int RkMppH264Encoder::InitMppHardwareLocked(const webrtc::VideoCodec* inst) {
+    DestroyMpp();
+    native_zero_copy_failures_ = 0;
+    native_zero_copy_frames_ = 0;
+    native_copy_fallback_frames_ = 0;
+    consecutive_output_failures_ = 0;
 
     MppCtx ctx = nullptr;
     MppApi* mpi = nullptr;
@@ -698,6 +705,39 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
     return WEBRTC_VIDEO_CODEC_OK;
 }
 
+bool RkMppH264Encoder::RecoverMppSessionLocked() {
+    if (!cached_codec_inst_.has_value()) {
+        return false;
+    }
+    const int64_t now_us = webrtc::TimeMicros();
+    const int cooldown_ms = ReadEnvIntInRange("RFLOW_MPP_ENC_RECOVER_COOLDOWN_MS", 500, 0, 60000);
+    if (last_mpp_recover_us_ > 0 && cooldown_ms > 0 &&
+        (now_us - last_mpp_recover_us_) < static_cast<int64_t>(cooldown_ms) * 1000) {
+        return false;
+    }
+    const unsigned max_attempts =
+        static_cast<unsigned>(ReadEnvIntInRange("RFLOW_MPP_ENC_RECOVER_MAX", 10, 1, 1000));
+    if (mpp_recover_attempts_ >= max_attempts) {
+        RTC_LOG(LS_ERROR) << "[RkMppH264] MPP recover skipped: max attempts reached ("
+                          << mpp_recover_attempts_ << "/" << max_attempts << ")";
+        return false;
+    }
+    ++mpp_recover_attempts_;
+    last_mpp_recover_us_ = now_us;
+    RTC_LOG(LS_WARNING) << "[RkMppH264] attempting MPP session recover attempt="
+                        << mpp_recover_attempts_ << "/" << max_attempts;
+    RFLOW_LOG_TAG_W("RkMppH264Warn", "MPP session recover attempt %u/%u",
+                    mpp_recover_attempts_, max_attempts);
+    if (InitMppHardwareLocked(&*cached_codec_inst_) != WEBRTC_VIDEO_CODEC_OK) {
+        RTC_LOG(LS_ERROR) << "[RkMppH264] MPP session recover failed";
+        RFLOW_LOG_TAG_E("RkMppH264Err", "MPP session recover failed");
+        return false;
+    }
+    RTC_LOG(LS_WARNING) << "[RkMppH264] MPP session recover ok " << width_ << "x" << height_;
+    RFLOW_LOG_TAG_I("RkMppH264Dbg", "MPP session recover ok %dx%d", width_, height_);
+    return true;
+}
+
 int32_t RkMppH264Encoder::RegisterEncodeCompleteCallback(webrtc::EncodedImageCallback* callback) {
     callback_ = callback;
     return WEBRTC_VIDEO_CODEC_OK;
@@ -705,6 +745,9 @@ int32_t RkMppH264Encoder::RegisterEncodeCompleteCallback(webrtc::EncodedImageCal
 
 int32_t RkMppH264Encoder::Release() {
     std::lock_guard<std::mutex> lock(mpp_mu_);
+    cached_codec_inst_.reset();
+    mpp_recover_attempts_ = 0;
+    last_mpp_recover_us_ = 0;
     DestroyMpp();
     return WEBRTC_VIDEO_CODEC_OK;
 }
@@ -975,7 +1018,11 @@ bool RkMppH264Encoder::HandleOutputFailureAndMaybeRecover(const char* stage, int
     }
     if (consecutive_output_failures_ >= recover_hard_fail_threshold_) {
         RTC_LOG(LS_ERROR) << "[RkMppH264] failure streak reached hard threshold="
-                          << recover_hard_fail_threshold_ << ", abort encode session";
+                          << recover_hard_fail_threshold_ << ", attempting MPP recover";
+        if (RecoverMppSessionLocked()) {
+            consecutive_output_failures_ = 0;
+            return true;
+        }
         return false;
     }
     return true;
@@ -1318,6 +1365,12 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                 mpp_packet_set_length(prebound_pkt, 0);
                 mpp_meta_set_packet(meta, KEY_OUTPUT_PACKET, prebound_pkt);
             }
+        }
+        if (simulate_put_frame_fail_remaining_ > 0) {
+            --simulate_put_frame_fail_remaining_;
+            mpp_frame_deinit(&mframe);
+            release_held_input();
+            return recover_or_error("simulate_put_frame_fail", -1);
         }
         ret = mpi->encode_put_frame(ctx, mframe);
         if (ret != MPP_OK && input_mpp_buf != reinterpret_cast<MppBuffer>(frm_buf_)) {
