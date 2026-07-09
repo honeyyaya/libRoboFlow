@@ -28,6 +28,9 @@ struct VideoCodecPreferenceConfig {
     bool include_all_h264_variants = true;
     // When true (subscriber after remote offer), do not filter RTX by static apt.
     bool include_all_rtx = false;
+    // When false, omit RED/ULPFEC from preferences (H264/H265: WebRTC disables them at
+    // runtime with NACK anyway; use FlexFEC + RTX instead).
+    bool include_ulpfec_red = true;
 };
 
 std::vector<webrtc::RtpCodecCapability> BuildVideoCodecPreferences(

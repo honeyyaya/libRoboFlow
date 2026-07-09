@@ -76,6 +76,7 @@ bool RtxMatchesAllowedPayloadTypes(const webrtc::RtpCodecCapability& codec,
 void AppendResiliencyCodecs(const std::vector<webrtc::RtpCodecCapability>& auxiliary,
                             const std::vector<int>& allowed_pts,
                             bool include_all_rtx,
+                            bool include_ulpfec_red,
                             std::vector<webrtc::RtpCodecCapability>* out) {
     for (const auto& codec : auxiliary) {
         if (codec.name == "rtx") {
@@ -84,9 +85,18 @@ void AppendResiliencyCodecs(const std::vector<webrtc::RtpCodecCapability>& auxil
             }
             continue;
         }
-        // flexfec-03 / ulpfec / red: keep available resiliency codecs for weak-network recovery.
+        if (!include_ulpfec_red && (codec.name == "red" || codec.name == "ulpfec")) {
+            continue;
+        }
+        // flexfec-03 / ulpfec / red: resiliency codecs for weak-network recovery.
         out->push_back(codec);
     }
+}
+
+bool PrimaryCodecSupportsUlpfecWithNack(const std::string& want) {
+    // WebRTC call/rtp_video_sender.cc only treats VP8/VP9 (and Generic+GenericPictureId)
+    // as picture-ID-capable for NACK+ULPFEC. H264/H265 always get ULPFEC disabled at runtime.
+    return want == "vp8" || want == "vp9";
 }
 
 }  // namespace
@@ -101,6 +111,8 @@ std::vector<webrtc::RtpCodecCapability> BuildVideoCodecPreferences(
     if (want.empty()) {
         want = "h264";
     }
+    const bool include_ulpfec_red =
+        config.include_ulpfec_red && PrimaryCodecSupportsUlpfecWithNack(want);
 
     std::vector<webrtc::RtpCodecCapability> preferred_media;
     std::vector<webrtc::RtpCodecCapability> other_h264_media;
@@ -156,7 +168,8 @@ std::vector<webrtc::RtpCodecCapability> BuildVideoCodecPreferences(
     CollectPreferredPayloadTypes(media_ordered, &allowed_pts);
 
     std::vector<webrtc::RtpCodecCapability> result = std::move(media_ordered);
-    AppendResiliencyCodecs(auxiliary, allowed_pts, config.include_all_rtx, &result);
+    AppendResiliencyCodecs(auxiliary, allowed_pts, config.include_all_rtx, include_ulpfec_red,
+                           &result);
     return result;
 }
 

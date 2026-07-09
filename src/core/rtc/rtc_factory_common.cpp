@@ -104,7 +104,7 @@ void EnsureWebrtcFieldTrialsInitialized() {
                 "WebRTC-FlexFEC-03-Advertised/Enabled/"
                 "WebRTC-FlexFEC-03/Enabled/";
         }
-        // H264 Generic PictureId enables RTP picture id for NACK+ULPFEC on non-VP8 codecs.
+        // Generic RTP picture id for VP8/VP9-style generic frame descriptors (not H264 ULPFEC).
         g_field_trials_storage += "WebRTC-GenericPictureId/Enabled/";
         const std::string extra = knob::ReadString("RFLOW_FIELD_TRIALS_APPEND");
         if (!extra.empty()) {

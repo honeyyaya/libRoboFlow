@@ -275,7 +275,7 @@ public:
         }
         if (rflow::core::rtc::SetVideoCodecPreferencesOnPeerConnection(
                 pc, webrtc::MediaType::VIDEO, ordered, "PushStreamer")) {
-            RFLOW_LOG_TAG_I("PushStreamer", "SetCodecPreferences: prefer %s (with RTX/FEC resiliency codecs)",
+            RFLOW_LOG_TAG_I("PushStreamer", "SetCodecPreferences: prefer %s (RTX + FlexFEC resiliency)",
                             want.c_str());
         }
     }
