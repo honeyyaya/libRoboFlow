@@ -30,6 +30,8 @@ struct PushStreamerCommonConfig {
     std::string turn_server;
     std::string turn_username;
     std::string turn_password;
+    bool has_stun_server{false};
+    bool has_turn_server{false};
 
     std::string bitrate_mode{"vbr"};
     int target_bitrate_kbps{1000};

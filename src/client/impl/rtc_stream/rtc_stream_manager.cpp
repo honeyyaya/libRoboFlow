@@ -1,6 +1,7 @@
 #include "rtc_stream_manager.h"
 
 #include "rtc/rtc.h"
+#include "rtc/rtc_ice_config.h"
 #include "rtc_stream/rtc_stream_session.h"
 
 #include "internal/handles.h"  // librflow_stream_param_s
@@ -12,6 +13,25 @@
 namespace rflow::client::impl {
 
 namespace {
+
+rflow::rtc::IceRtcServerConfig IceConfigFromClientParam(const ::librflow_stream_param_s* param) {
+    rflow::rtc::IceRtcServerConfig ice;
+    if (!param) {
+        return ice;
+    }
+    if (param->has_stun_server) {
+        ice.has_stun_server = true;
+        ice.stun_server     = param->stun_server;
+    }
+    if (param->has_turn_server) {
+        ice.has_turn_server = true;
+        ice.turn_server     = param->turn_server;
+        ice.turn_username   = param->turn_username;
+        ice.turn_password   = param->turn_password;
+    }
+    return ice;
+}
+
 }  // namespace
 
 RtcStreamManager& RtcStreamManager::Instance() {
@@ -50,7 +70,7 @@ void RtcStreamManager::Shutdown() {
 }
 
 rflow_err_t RtcStreamManager::OpenStream(int32_t index,
-                                         const ::librflow_stream_param_s* /*param*/,
+                                         const ::librflow_stream_param_s* param,
                                          StateSink state_sink,
                                          FrameSink frame_sink,
                                          std::shared_ptr<RtcStreamSession>* out) {
@@ -78,8 +98,8 @@ rflow_err_t RtcStreamManager::OpenStream(int32_t index,
         url       = signaling_url_;
         device_id = device_id_;
 
-        stream = std::make_shared<RtcStreamSession>(index, std::move(factory),
-                                                    url, device_id);
+        stream = std::make_shared<RtcStreamSession>(index, std::move(factory), url, device_id,
+                                                    IceConfigFromClientParam(param));
         open_indices_.emplace(index, stream);
     }
 

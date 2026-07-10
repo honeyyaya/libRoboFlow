@@ -16,6 +16,7 @@
 #include "public/last_error_api.h"
 #include "public/logger_api.h"
 #include "rtc/rtc_factory_common.h"
+#include "rtc/rtc_ice_config.h"
 
 #include <new>
 
@@ -55,6 +56,11 @@ rflow_err_t librflow_svc_set_global_config(librflow_global_config_t cfg) {
     const bool flexfec_explicit = (s.global_config.flexfec != RFLOW_GLOBAL_FLEXFEC_DEFAULT);
     const bool flexfec_enabled  = (s.global_config.flexfec == RFLOW_GLOBAL_FLEXFEC_ON);
     rflow::rtc::NotifyFlexfecTrialFromSdkConfig(flexfec_explicit, flexfec_enabled);
+    if (s.global_config.has_ice_ignore_interfaces) {
+        rflow::rtc::NotifyIceIgnoreInterfacesFromSdkConfig(s.global_config.ice_ignore_interfaces.c_str());
+    } else {
+        rflow::rtc::NotifyIceIgnoreInterfacesFromSdkConfig(nullptr);
+    }
     rflow::common::base::ApplyLogConfigIfPresent(s.global_config);
     return RFLOW_OK;
 }
@@ -82,6 +88,7 @@ rflow_err_t librflow_svc_uninit(void) {
     s.streams.clear();
     rflow::service::internal::ShutdownSubsystems();
     rflow::rtc::ResetFlexfecTrialSdkOverride();
+    rflow::rtc::ResetIceIgnoreInterfacesSdkOverride();
 
     s.lifecycle = rflow::service::LifecycleState::kUninit;
     RFLOW_LOGI("librflow_svc_uninit OK");

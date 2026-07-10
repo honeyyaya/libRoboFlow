@@ -178,10 +178,12 @@ RtcStreamSession::RtcStreamSession(
     int32_t index,
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
     std::string signaling_url,
-    std::string device_id)
+    std::string device_id,
+    rflow::rtc::IceRtcServerConfig ice_config)
     : index_(index),
       signaling_url_(std::move(signaling_url)),
       device_id_(std::move(device_id)),
+      ice_config_(std::move(ice_config)),
       factory_(std::move(factory)) {
     observer_ = std::make_unique<PeerConnectionObserverImpl>(this);
     frame_adapter_ = std::make_unique<FrameAdapter>(this);
@@ -314,15 +316,11 @@ void RtcStreamSession::CreatePeerConnectionLocked() {
         peer_connection_ = nullptr;
     }
 
-    webrtc::PeerConnectionInterface::RTCConfiguration config;
-    config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
+    webrtc::PeerConnectionInterface::RTCConfiguration config =
+        rflow::rtc::BuildRtcConfiguration(ice_config_);
     config.audio_jitter_buffer_max_packets = 1;
     config.audio_jitter_buffer_min_delay_ms = 0;
     config.audio_jitter_buffer_fast_accelerate = true;
-
-    webrtc::PeerConnectionInterface::IceServer ice_server;
-    ice_server.urls.push_back("stun:stun.l.google.com:19302");
-    config.servers.push_back(ice_server);
 
     webrtc::PeerConnectionDependencies deps(observer_.get());
     auto result = factory_->CreatePeerConnectionOrError(config, std::move(deps));

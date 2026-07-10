@@ -1,5 +1,7 @@
 #include "media/push_streamer_internals.h"
 
+#include "rtc/rtc_ice_config.h"
+
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -102,26 +104,15 @@ webrtc::Priority ParseVideoNetworkPriority(const std::string& s) {
 
 webrtc::PeerConnectionInterface::RTCConfiguration MakeRtcConfiguration(
     const PushStreamerConfig& config) {
-    webrtc::PeerConnectionInterface::RTCConfiguration rtc_config;
-    webrtc::PeerConnectionInterface::IceServer stun;
-    stun.urls.push_back(config.common.stun_server);
-    rtc_config.servers.push_back(stun);
-    if (!config.common.turn_server.empty()) {
-        webrtc::PeerConnectionInterface::IceServer turn;
-        turn.urls.push_back(config.common.turn_server);
-        turn.username = config.common.turn_username;
-        turn.password = config.common.turn_password;
-        rtc_config.servers.push_back(turn);
-    }
-    rtc_config.disable_ipv6_on_wifi = true;
-    rtc_config.max_ipv6_networks = 0;
-    rtc_config.disable_link_local_networks = true;
-    rtc_config.bundle_policy = webrtc::PeerConnectionInterface::kBundlePolicyMaxBundle;
-    rtc_config.tcp_candidate_policy = webrtc::PeerConnectionInterface::kTcpCandidatePolicyDisabled;
-    rtc_config.set_dscp(true);
-    rtc_config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
-    rtc_config.prioritize_most_likely_ice_candidate_pairs = config.common.ice_prioritize_likely_pairs;
-    return rtc_config;
+    rflow::rtc::IceRtcServerConfig ice;
+    ice.has_stun_server               = config.common.has_stun_server;
+    ice.stun_server                   = config.common.stun_server;
+    ice.has_turn_server               = config.common.has_turn_server;
+    ice.turn_server                   = config.common.turn_server;
+    ice.turn_username                 = config.common.turn_username;
+    ice.turn_password                 = config.common.turn_password;
+    ice.ice_prioritize_likely_pairs = config.common.ice_prioritize_likely_pairs;
+    return rflow::rtc::BuildRtcConfiguration(ice);
 }
 
 webrtc::PeerConnectionInterface::RTCOfferAnswerOptions MakeOfferOptions() {

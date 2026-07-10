@@ -18,6 +18,7 @@
 
 #include "rflow/librflow_common.h"
 #include "rtc/pending_ice_buffer.h"
+#include "rtc/rtc_ice_config.h"
 #include "signal/session.h"
 
 #include "api/jsep.h"
@@ -44,7 +45,8 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
     RtcStreamSession(int32_t index,
                      webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
                      std::string signaling_url,
-                     std::string device_id);
+                     std::string device_id,
+                     rflow::rtc::IceRtcServerConfig ice_config);
     ~RtcStreamSession();
 
     RtcStreamSession(const RtcStreamSession&) = delete;
@@ -88,6 +90,7 @@ class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
     const int32_t index_;
     const std::string signaling_url_;
     const std::string device_id_;
+    const rflow::rtc::IceRtcServerConfig ice_config_;
 
     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
 

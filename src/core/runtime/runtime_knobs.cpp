@@ -56,6 +56,9 @@ constexpr KnobSpec kKnobTable[] = {
     {"RFLOW_ENABLE_FLEXFEC", nullptr, KnobGroup::kRtcFactory, KnobKind::kBool, 1, 0, 1, "",
      "RTP FlexFEC (FlexFEC-03): effective when librflow_global_config.flexfec stays "
      "RFLOW_GLOBAL_FLEXFEC_DEFAULT; set_flexfec(ON/OFF) overrides this knob."},
+    {"RFLOW_ICE_IGNORE_INTERFACES", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
+     "Comma-separated NIC names ignored by WebRTC ICE (e.g. eth0). Overridden by "
+     "librflow_global_config_set_ice_ignore_interfaces when explicitly set."},
     {"RFLOW_FIELD_TRIALS_APPEND", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
      "Extra WebRTC FieldTrials string (experimental/runtime flags)."},
     {"RFLOW_WEBRTC_LOG_SEVERITY", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",

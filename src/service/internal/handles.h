@@ -64,6 +64,10 @@ struct librflow_svc_stream_param_s {
     std::string        h264_profile;
     std::string        h264_level;
     bool               ice_prioritize_likely_pairs{true};
+    std::string        stun_server;
+    std::string        turn_server;
+    std::string        turn_username;
+    std::string        turn_password;
     rflow_svc_network_priority_t video_network_priority{RFLOW_SVC_NETWORK_PRIORITY_HIGH};
     uint32_t           video_encoding_max_fps{0};
     uint32_t           capture_warmup_sec{0};
@@ -88,6 +92,8 @@ struct librflow_svc_stream_param_s {
     bool               has_h264_profile{false};
     bool               has_h264_level{false};
     bool               has_ice_prioritize_likely_pairs{false};
+    bool               has_stun_server{false};
+    bool               has_turn_server{false};
     bool               has_video_network_priority{false};
     bool               has_video_encoding_max_fps{false};
     bool               has_capture_warmup_sec{false};

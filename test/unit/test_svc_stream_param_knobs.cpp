@@ -4,6 +4,7 @@
 
 #include "internal/stream_startup_policy.h"
 #include "rflow/Service/librflow_service_api.h"
+#include "rflow/librflow_common.h"
 
 TEST(SvcStreamParamDegradation, SetGetMaintainFramerate) {
     librflow_svc_stream_param_t p = librflow_svc_stream_param_create();
@@ -225,4 +226,49 @@ TEST(StreamStartupDegradationPreference, ApiThenResolvePropagatesStrings) {
     EXPECT_EQ(*resolved.degradation_pref_explicit, "balanced");
 
     librflow_svc_stream_param_destroy(param);
+}
+
+TEST(SvcStreamParamIceServers, StunTurnRoundtripAndResolve) {
+    librflow_svc_stream_param_t p = librflow_svc_stream_param_create();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(librflow_svc_stream_param_set_stun_server(p, "stun:192.168.1.1:3478"), RFLOW_OK);
+    EXPECT_EQ(librflow_svc_stream_param_set_turn_server(p, "turn:192.168.1.1:3478?transport=udp",
+                                                        "robot", "secret"),
+              RFLOW_OK);
+
+    char buf[256];
+    uint32_t needed = 0;
+    EXPECT_EQ(librflow_svc_stream_param_get_stun_server(p, buf, sizeof(buf), &needed), RFLOW_OK);
+    EXPECT_STREQ(buf, "stun:192.168.1.1:3478");
+
+    char user[64];
+    char pass[64];
+    EXPECT_EQ(librflow_svc_stream_param_get_turn_server(p, buf, sizeof(buf), &needed, user, sizeof(user),
+                                                        &needed, pass, sizeof(pass), &needed),
+              RFLOW_OK);
+    EXPECT_STREQ(buf, "turn:192.168.1.1:3478?transport=udp");
+    EXPECT_STREQ(user, "robot");
+    EXPECT_STREQ(pass, "secret");
+
+    librflow_svc_stream_s stream{};
+    stream.param = *p;
+    rflow::service::State state{};
+    const auto resolved = rflow::service::internal::ResolvePublisherStartup(stream, state, 0);
+    ASSERT_TRUE(resolved.stun_server.has_value());
+    EXPECT_EQ(*resolved.stun_server, "stun:192.168.1.1:3478");
+    ASSERT_TRUE(resolved.turn_server.has_value());
+    EXPECT_EQ(*resolved.turn_server, "turn:192.168.1.1:3478?transport=udp");
+
+    librflow_svc_stream_param_destroy(p);
+}
+
+TEST(GlobalConfigIceIgnore, SetGetRoundtrip) {
+    librflow_global_config_t g = librflow_global_config_create();
+    ASSERT_NE(g, nullptr);
+    EXPECT_EQ(librflow_global_config_set_ice_ignore_interfaces(g, "eth0, eth1"), RFLOW_OK);
+    char buf[64];
+    uint32_t needed = 0;
+    EXPECT_EQ(librflow_global_config_get_ice_ignore_interfaces(g, buf, sizeof(buf), &needed), RFLOW_OK);
+    EXPECT_STREQ(buf, "eth0, eth1");
+    librflow_global_config_destroy(g);
 }

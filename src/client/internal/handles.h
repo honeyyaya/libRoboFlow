@@ -52,6 +52,13 @@ struct librflow_stream_param_s {
     bool                        has_max_size = false;
     bool                        has_fps = false;
     bool                        has_open_timeout_ms = false;
+
+    std::string                 stun_server;
+    std::string                 turn_server;
+    std::string                 turn_username;
+    std::string                 turn_password;
+    bool                        has_stun_server = false;
+    bool                        has_turn_server = false;
 };
 
 struct librflow_stream_cb_s {

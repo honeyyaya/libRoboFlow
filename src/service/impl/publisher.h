@@ -43,6 +43,10 @@ struct PublisherMediaOptions {
     std::optional<std::string> h264_level;
     std::optional<int>         keyframe_gop_frames;
     std::optional<bool>        ice_prioritize_likely_pairs;
+    std::optional<std::string> stun_server;
+    std::optional<std::string> turn_server;
+    std::optional<std::string> turn_username;
+    std::optional<std::string> turn_password;
     std::optional<std::string> video_network_priority;
     std::optional<int>         video_encoding_max_framerate;
     std::optional<int>         capture_warmup_sec;

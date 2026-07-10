@@ -1,5 +1,7 @@
 #include "media/pull_subscriber_internals.h"
 
+#include "rtc/rtc_ice_config.h"
+
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
@@ -168,18 +170,7 @@ unsigned MediaTimingTraceEveryN() {
 }
 
 webrtc::PeerConnectionInterface::RTCConfiguration MakeRtcConfig() {
-    webrtc::PeerConnectionInterface::RTCConfiguration rtc_config;
-    webrtc::PeerConnectionInterface::IceServer stun;
-    stun.urls.push_back("stun:stun.l.google.com:19302");
-    rtc_config.servers.push_back(stun);
-    rtc_config.disable_ipv6_on_wifi = true;
-    rtc_config.max_ipv6_networks = 0;
-    rtc_config.disable_link_local_networks = true;
-    rtc_config.bundle_policy = webrtc::PeerConnectionInterface::kBundlePolicyMaxBundle;
-    rtc_config.tcp_candidate_policy = webrtc::PeerConnectionInterface::kTcpCandidatePolicyDisabled;
-    rtc_config.set_dscp(true);
-    rtc_config.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
-    return rtc_config;
+    return rflow::rtc::BuildRtcConfiguration(rflow::rtc::IceRtcServerConfig{});
 }
 
 void PrintInboundVideoStats(

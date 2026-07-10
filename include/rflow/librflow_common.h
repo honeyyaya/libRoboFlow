@@ -416,6 +416,19 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_flexfec(librflow_glob
                                                                    rflow_global_flexfec_t mode);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_get_flexfec(librflow_global_config_t cfg,
                                                                    rflow_global_flexfec_t *out_mode);
+
+/**
+ * WebRTC ICE：忽略指定网卡（逗号分隔，如 "eth0" 或 "eth0,eth2"）。
+ * 在 PeerConnectionFactory 创建前生效；推/拉两端共用 global_config。
+ * 未设置时仍可读 RFLOW_ICE_IGNORE_INTERFACES 环境变量。
+ * 传 NULL 或空串表示清除显式列表（回退 env / 无过滤）。
+ */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_set_ice_ignore_interfaces(librflow_global_config_t cfg,
+                                                                                 const char *interfaces_csv);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_global_config_get_ice_ignore_interfaces(librflow_global_config_t cfg,
+                                                                                 char *buf,
+                                                                                 uint32_t buf_len,
+                                                                                 uint32_t *out_needed);
 /******************************************************************************
  *                           Video Frame Getter / 生命周期（共享）
  ******************************************************************************/

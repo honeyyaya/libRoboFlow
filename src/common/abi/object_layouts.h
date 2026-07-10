@@ -48,6 +48,9 @@ struct librflow_global_config_s {
     rflow_region_t region;
 
     rflow_global_flexfec_t flexfec{RFLOW_GLOBAL_FLEXFEC_DEFAULT};
+
+    bool has_ice_ignore_interfaces{false};
+    std::string ice_ignore_interfaces;
 };
 
 #endif  // __RFLOW_COMMON_ABI_OBJECT_LAYOUTS_H__

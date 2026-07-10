@@ -41,6 +41,8 @@ int main(int argc, char** argv) {
     auto gcfg = librflow_global_config_create();
     librflow_global_config_set_signal(gcfg, sig_cfg);
     librflow_global_config_set_flexfec(gcfg, RFLOW_GLOBAL_FLEXFEC_ON);
+    // 双网卡时忽略非推流网卡，避免 ICE 在 eth0(2.x) 上 STUN/候选干扰；单网卡可保持注释。
+    // librflow_global_config_set_ice_ignore_interfaces(gcfg, "eth0");
 
     if (librflow_svc_set_global_config(gcfg) != RFLOW_OK) {
         std::cerr << "svc_set_global_config failed\n";

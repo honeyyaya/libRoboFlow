@@ -94,6 +94,14 @@ ResolvedPublisherStartup ResolvePublisherStartup(const librflow_svc_stream_s& st
     if (stream.param.has_ice_prioritize_likely_pairs) {
         out.ice_prioritize_likely_pairs = stream.param.ice_prioritize_likely_pairs;
     }
+    if (stream.param.has_stun_server) {
+        out.stun_server = stream.param.stun_server;
+    }
+    if (stream.param.has_turn_server) {
+        out.turn_server   = stream.param.turn_server;
+        out.turn_username = stream.param.turn_username;
+        out.turn_password = stream.param.turn_password;
+    }
     if (stream.param.has_video_network_priority) {
         if (const char* lit = NetworkPriorityToConfigLiteral(stream.param.video_network_priority)) {
             out.video_network_priority = std::string(lit);
@@ -145,6 +153,14 @@ std::shared_ptr<void> CreatePublisherImplForStream(const librflow_svc_stream_s& 
     }
     if (startup.ice_prioritize_likely_pairs.has_value()) {
         m.ice_prioritize_likely_pairs = startup.ice_prioritize_likely_pairs;
+    }
+    if (startup.stun_server.has_value()) {
+        m.stun_server = startup.stun_server;
+    }
+    if (startup.turn_server.has_value()) {
+        m.turn_server   = startup.turn_server;
+        m.turn_username = startup.turn_username;
+        m.turn_password = startup.turn_password;
     }
     if (startup.video_network_priority) {
         m.video_network_priority = startup.video_network_priority;

@@ -241,6 +241,14 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_h264_profile(librf
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_h264_level  (librflow_svc_stream_param_t p, const char* level);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_ice_prioritize_likely_pairs(librflow_svc_stream_param_t p,
                                                                                          bool enabled);
+/** STUN server URL，如 stun:192.168.1.1:3478；未设置时使用 stun.l.google.com:19302 */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_stun_server(librflow_svc_stream_param_t p,
+                                                                          const char* stun_url);
+/** TURN server URL + 可选用户名/密码；username/password 可传 NULL */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_turn_server(librflow_svc_stream_param_t p,
+                                                                          const char* turn_url,
+                                                                          const char* username,
+                                                                          const char* password);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_video_network_priority(librflow_svc_stream_param_t p,
                                                                                     rflow_svc_network_priority_t priority);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_set_video_encoding_max_fps(librflow_svc_stream_param_t p,
@@ -294,6 +302,20 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_h264_level  (librf
                                                                           uint32_t *out_needed);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_ice_prioritize_likely_pairs(librflow_svc_stream_param_t p,
                                                                                          bool *out_enabled);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_stun_server(librflow_svc_stream_param_t p,
+                                                                          char *buf,
+                                                                          uint32_t buf_len,
+                                                                          uint32_t *out_needed);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_turn_server(librflow_svc_stream_param_t p,
+                                                                          char *url_buf,
+                                                                          uint32_t url_buf_len,
+                                                                          uint32_t *out_url_needed,
+                                                                          char *username_buf,
+                                                                          uint32_t username_buf_len,
+                                                                          uint32_t *out_username_needed,
+                                                                          char *password_buf,
+                                                                          uint32_t password_buf_len,
+                                                                          uint32_t *out_password_needed);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_video_network_priority(librflow_svc_stream_param_t p,
                                                                                      rflow_svc_network_priority_t *out_priority);
 LIBRFLOW_API_EXPORT rflow_err_t librflow_svc_stream_param_get_video_encoding_max_fps(librflow_svc_stream_param_t p,

@@ -1,5 +1,7 @@
 #include "rtc/peer_connection_factory_deps.h"
 
+#include "rtc/rtc_ice_config.h"
+
 #include <memory>
 
 #include "api/audio/builtin_audio_processing_builder.h"
@@ -74,6 +76,7 @@ void ConfigurePeerConnectionFactoryDependencies(
         deps.video_decoder_factory = rflow::rtc::hw::CreatePreferredVideoDecoderFactory(prefs);
     }
     webrtc::EnableMedia(deps);
+    MaybeInjectFilteredNetworkManager(deps);
 }
 
 void EnsureDedicatedPeerConnectionSignalingThread(

@@ -93,6 +93,30 @@ LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_set_preferred_fps     (lib
 /* 输出偏好：当前默认/实际仍为 CPU planar，后续可扩展为 GPU/native texture。 */
 LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_set_video_output_mode (librflow_stream_param_t p,
                                                                              rflow_video_output_mode_t mode);
+/** STUN server URL（拉流 PeerConnection）；未设置时使用 stun.l.google.com:19302 */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_set_stun_server(librflow_stream_param_t p,
+                                                                      const char* stun_url);
+/** TURN server URL + 可选用户名/密码；username/password 可传 NULL */
+LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_set_turn_server(librflow_stream_param_t p,
+                                                                      const char* turn_url,
+                                                                      const char* username,
+                                                                      const char* password);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_get_stun_server(librflow_stream_param_t p,
+                                                                      char* buf,
+                                                                      uint32_t buf_len,
+                                                                      uint32_t* out_needed);
+LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_get_turn_server(librflow_stream_param_t p,
+                                                                      char* url_buf,
+                                                                      uint32_t url_buf_len,
+                                                                      uint32_t* out_url_needed,
+                                                                      char* username_buf,
+                                                                      uint32_t username_buf_len,
+                                                                      uint32_t* out_username_needed,
+                                                                      char* password_buf,
+                                                                      uint32_t password_buf_len,
+                                                                      uint32_t* out_password_needed);
+
+LIBRFLOW_API_EXPORT rflow_err_t librflow_stream_param_set_open_timeout_ms(librflow_stream_param_t p, uint32_t timeout_ms);
 
 /******************************************************************************
  *                          StreamCb

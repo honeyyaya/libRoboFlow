@@ -1,6 +1,7 @@
 #include "rflow/librflow_common.h"
 
 #include "abi/object_layouts.h"
+#include "base/abi_string_copy.h"
 
 #include <new>
 
@@ -98,6 +99,41 @@ rflow_err_t librflow_global_config_get_flexfec(librflow_global_config_t config_o
     }
     *out_mode = config_obj->flexfec;
     return RFLOW_OK;
+}
+
+namespace {
+
+constexpr uint32_t kIceIgnoreInterfacesMaxLen = 255u;
+
+}  // namespace
+
+rflow_err_t librflow_global_config_set_ice_ignore_interfaces(librflow_global_config_t config_obj,
+                                                             const char* interfaces_csv) {
+    RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicGlobalConfig);
+    if (!interfaces_csv || interfaces_csv[0] == '\0') {
+        config_obj->has_ice_ignore_interfaces = false;
+        config_obj->ice_ignore_interfaces.clear();
+        return RFLOW_OK;
+    }
+    const std::string csv(interfaces_csv);
+    if (csv.size() > kIceIgnoreInterfacesMaxLen) {
+        return RFLOW_ERR_PARAM;
+    }
+    config_obj->has_ice_ignore_interfaces = true;
+    config_obj->ice_ignore_interfaces     = csv;
+    return RFLOW_OK;
+}
+
+rflow_err_t librflow_global_config_get_ice_ignore_interfaces(librflow_global_config_t config_obj,
+                                                             char* buf,
+                                                             uint32_t buf_len,
+                                                             uint32_t* out_needed) {
+    RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicGlobalConfig);
+    if (!config_obj->has_ice_ignore_interfaces) {
+        return RFLOW_ERR_NOT_FOUND;
+    }
+    return rflow::common::base::CopyOutString(config_obj->ice_ignore_interfaces, buf, buf_len,
+                                              out_needed);
 }
 
 }  // extern "C"

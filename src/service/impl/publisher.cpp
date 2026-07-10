@@ -100,6 +100,16 @@ bool Publisher::Start() {
     if (media_opts_.ice_prioritize_likely_pairs.has_value()) {
         cfg.common.ice_prioritize_likely_pairs = *media_opts_.ice_prioritize_likely_pairs;
     }
+    if (media_opts_.stun_server.has_value()) {
+        cfg.common.stun_server     = *media_opts_.stun_server;
+        cfg.common.has_stun_server = true;
+    }
+    if (media_opts_.turn_server.has_value()) {
+        cfg.common.turn_server     = *media_opts_.turn_server;
+        cfg.common.turn_username   = media_opts_.turn_username.value_or(std::string{});
+        cfg.common.turn_password   = media_opts_.turn_password.value_or(std::string{});
+        cfg.common.has_turn_server = true;
+    }
     if (media_opts_.video_network_priority) {
         cfg.common.video_network_priority = LowerCopy(*media_opts_.video_network_priority);
     }

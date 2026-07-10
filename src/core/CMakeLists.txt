@@ -91,6 +91,7 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
 
     set(_RTC_DOMAIN_SRCS
         rtc/rtc_factory_common.cpp
+        rtc/rtc_ice_config.cpp
         rtc/peer_connection_factory.cpp
         rtc/peer_connection_factory_deps.cpp
         rtc/inbound_video_stats_aggregation.cpp
