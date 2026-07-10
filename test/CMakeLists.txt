@@ -119,6 +119,28 @@ add_rflow_unit_test(test_zero_copy_pipeline_policy
 target_include_directories(test_zero_copy_pipeline_policy PRIVATE
     ${CMAKE_SOURCE_DIR}/src/service/impl)
 
+add_rflow_unit_test(test_capture_fps_pipeline_policy
+    SOURCES
+        unit/test_capture_fps_pipeline_policy.cpp
+        ${CMAKE_SOURCE_DIR}/src/service/impl/media/capture_fps_pipeline_policy.cpp)
+target_include_directories(test_capture_fps_pipeline_policy PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/service/impl)
+
+add_rflow_unit_test(test_builtin_video_decoder_recovery
+    SOURCES
+        unit/test_builtin_video_decoder_recovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/rtc/shims/builtin_video_decoder_recovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/runtime/runtime_knobs.cpp
+        ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/rtc/shims/sme_abi_stubs.c)
+target_include_directories(test_builtin_video_decoder_recovery PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core
+    ${CMAKE_SOURCE_DIR}/include/webrtc
+    ${CMAKE_SOURCE_DIR}/include/webrtc/third_party/abseil-cpp
+    ${CMAKE_SOURCE_DIR}/include/webrtc/third_party/libyuv/include)
+target_compile_definitions(test_builtin_video_decoder_recovery PRIVATE WEBRTC_POSIX=1 WEBRTC_LINUX=1)
+target_link_libraries(test_builtin_video_decoder_recovery PRIVATE rflow_webrtc_prebuilt ${CMAKE_DL_LIBS})
+
 # -------------------------------------------------------------------- common/base
 # last_error.cpp 是纯 std；验证内部 set_last_error_* 重载、thread-local 隔离，
 # 及对外 ABI librflow_get_last_error；origin / timestamp_ms 走内部 snapshot，未对外。

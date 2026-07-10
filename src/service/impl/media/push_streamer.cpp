@@ -2,6 +2,7 @@
 
 #include "api/array_view.h"
 #include "camera/camera_utils.h"
+#include "media/capture_fps_pipeline_policy.h"
 #include "media/camera_video_track_source.h"
 #include "media/external_push_video_track_source.h"
 #include "base/env_reader.h"
@@ -64,6 +65,8 @@
 #include <vector>
 
 namespace rflow::service::impl {
+
+namespace capture_policy = rflow::service::impl::policy;
 
 using detail::push::ClosePeerConnectionWithDeadline;
 using detail::push::LatencyTraceEnabled;
@@ -598,6 +601,17 @@ public:
         mjpeg_pipe.mjpeg_decode_inline = config_.backend.mjpeg_decode_inline;
         mjpeg_pipe.mjpeg_v4l2_ext_dma = config_.backend.mjpeg_v4l2_ext_dma;
         mjpeg_pipe.mjpeg_rga_to_mpp = config_.backend.mjpeg_rga_to_mpp;
+        {
+            const auto tier = capture_policy::ClassifyCaptureFpsTier(config_.common.video_fps);
+            RFLOW_LOG_TAG_I(
+                "PushStreamer",
+                "Capture fps pipeline tier=%s (request=%dfps) latest_only=%d v4l2_bufs=%d mjpeg_qmax=%d "
+                "nv12_slots=%d stale_wait_ms=%d",
+                tier == capture_policy::CaptureFpsTier::kHighFidelity ? "high_fidelity" : "low_latency",
+                config_.common.video_fps, mjpeg_pipe.mjpeg_queue_latest_only ? 1 : 0,
+                mjpeg_pipe.v4l2_buffer_count, mjpeg_pipe.mjpeg_queue_max, mjpeg_pipe.nv12_pool_slots,
+                capture_policy::MjpegDecodeQueueMaxWaitMsForFps(config_.common.video_fps));
+        }
         if (!static_cast<CameraVideoTrackSource*>(cam_holder)
                  ->Start(unique_id.c_str(), config_.common.video_width, config_.common.video_height, config_.common.video_fps,
                          mpp_mjpeg_decode, &mjpeg_pipe)) {

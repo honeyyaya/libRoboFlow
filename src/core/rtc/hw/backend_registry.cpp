@@ -7,6 +7,7 @@
 
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "api/video_codecs/builtin_video_encoder_factory.h"
+#include "rtc/shims/builtin_video_decoder_recovery.h"
 #include "runtime/runtime_knobs.h"
 
 #if defined(WEBRTC_ANDROID)
@@ -70,7 +71,7 @@ VideoBackendDescriptor MakeBuiltinDescriptor() {
   d.backend = VideoCodecBackend::kBuiltin;
   d.name    = "builtin";
   d.create_encoder_factory = [] { return webrtc::CreateBuiltinVideoEncoderFactory(); };
-  d.create_decoder_factory = [] { return webrtc::CreateBuiltinVideoDecoderFactory(); };
+  d.create_decoder_factory = [] { return rflow::rtc::shims::CreateRecoveringBuiltinVideoDecoderFactory(); };
   d.get_capabilities = [] {
     CodecBackendCapabilities c;
     c.backend_name              = "builtin";

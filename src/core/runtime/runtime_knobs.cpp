@@ -59,6 +59,17 @@ constexpr KnobSpec kKnobTable[] = {
     {"RFLOW_ICE_IGNORE_INTERFACES", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
      "Comma-separated NIC names ignored by WebRTC ICE (e.g. eth0). Overridden by "
      "librflow_global_config_set_ice_ignore_interfaces when explicitly set."},
+    {"RFLOW_DECODER_BACKEND", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
+     "Pull/client default H264 decoder: mpp|rockchip (default on RK) or builtin|ffmpeg."},
+    {"RFLOW_BUILTIN_DECODE_RECOVERY", "RFLOW_FFMPEG_H264_DECODE_RECOVERY", KnobGroup::kRtcFactory,
+     KnobKind::kBool, 1, 0, 1, "",
+     "Wrap builtin software decoders with stall/error recovery."},
+    {"RFLOW_BUILTIN_DECODE_STALL_FRAMES", "RFLOW_FFMPEG_H264_DECODE_STALL_FRAMES", KnobGroup::kRtcFactory,
+     KnobKind::kInt, 45, 5, 600, "",
+     "Reset software decoder after N Decode calls with no output."},
+    {"RFLOW_H264_DECODE_RESET_FRAME_COUNT", "RFLOW_FFMPEG_H264_DECODE_RESET_FRAME_COUNT",
+     KnobGroup::kRtcFactory, KnobKind::kInt, 2800, 500, 100000, "",
+     "H264-only: proactive reset on keyframe before FFmpeg frame_num wrap (~3000)."},
     {"RFLOW_FIELD_TRIALS_APPEND", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
      "Extra WebRTC FieldTrials string (experimental/runtime flags)."},
     {"RFLOW_WEBRTC_LOG_SEVERITY", nullptr, KnobGroup::kRtcFactory, KnobKind::kString, 0, 0, 0, "",
@@ -96,7 +107,9 @@ constexpr KnobSpec kKnobTable[] = {
 
     // ---------- Media MJPEG ---------------------------------------------
     {"RFLOW_MJPEG_DECODE_QUEUE_MAX_WAIT_MS", nullptr, KnobGroup::kMediaMjpeg, KnobKind::kInt, 25, 0, 5000, "",
-     "Max wait (ms) in MJPEG decode queue; expires → drop frame."},
+     "Max wait (ms) in MJPEG decode queue; expires → drop frame. Unset env: auto 25ms @30fps, ~3 frames @60fps."},
+    {"RFLOW_CAPTURE_FPS_PIPELINE", nullptr, KnobGroup::kMediaMjpeg, KnobKind::kString, 0, 0, 0, "auto",
+     "Capture preset: auto|low_latency|high_fidelity (30 vs 60 fps queue depth)."},
     {"RFLOW_MJPEG_ZERO_COPY_TO_ENC", nullptr, KnobGroup::kMediaMjpeg, KnobKind::kBool, 0, 0, 1, "",
      "Allow MJPEG→MPP H264 zero-copy path when policy permits."},
     {"RFLOW_MJPEG_DECODE_INLINE", nullptr, KnobGroup::kMediaMjpeg, KnobKind::kBool, 0, 0, 1, "",

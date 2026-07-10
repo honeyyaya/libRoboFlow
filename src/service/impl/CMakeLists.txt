@@ -23,6 +23,7 @@ set(_SVC_IMPL_SRCS
     media/pull_subscriber_internals.cpp
     media/pull_subscriber_video_sink.cpp
     media/zero_copy_pipeline_policy.cpp
+    media/capture_fps_pipeline_policy.cpp
     media/push_h264_profile.cpp
     media/push_streamer.cpp
     media/push_streamer_internals.cpp

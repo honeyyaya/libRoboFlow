@@ -95,6 +95,7 @@ public:
 
 private:
     std::atomic<uint32_t> captured_frames_{0};
+    int requested_capture_fps_{30};
     int negotiated_capture_fps_{0};
     bool prefer_mpp_mjpeg_decode_{true};
 #if defined(WEBRTC_LINUX) && defined(__linux__)

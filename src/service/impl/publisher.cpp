@@ -3,6 +3,7 @@
 #include <cctype>
 #include <utility>
 
+#include "media/capture_fps_pipeline_policy.h"
 #include "media/push_streamer.h"
 #include "signaling/signaling_client.h"
 
@@ -10,6 +11,8 @@
 #include "runtime/runtime_knobs.h"
 
 namespace rflow::service::impl {
+
+namespace policy = rflow::service::impl::policy;
 
 namespace {
 
@@ -128,6 +131,7 @@ bool Publisher::Start() {
 
     // Rockchip MPP 硬件编解码：根据编译宏默认打开；策略由 SDK 配置与内部探测决定。
     cfg.backend.use_rockchip_mpp_h264 = true;
+    policy::ApplyCaptureFpsPipelineDefaults(cfg.backend, cfg.common.video_fps);
 
     streamer_ = std::make_unique<PushStreamer>(cfg);
 

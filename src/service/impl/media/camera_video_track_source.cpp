@@ -1,5 +1,7 @@
 #include "media/camera_video_track_source.h"
 
+#include "media/capture_fps_pipeline_policy.h"
+
 #include <cstdint>
 #include <cstring>
 
@@ -42,6 +44,8 @@
 #endif
 
 namespace rflow::service::impl {
+
+namespace capture_policy = rflow::service::impl::policy;
 
 #if defined(WEBRTC_LINUX) && defined(__linux__)
 namespace {
@@ -92,12 +96,9 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
     }
 }
 
-int64_t DecodeQueueStaleDropBudgetUs() {
-    static const int64_t budget_us =
-        static_cast<int64_t>(
-            rflow::common::util::ReadEnvIntInRange("RFLOW_MJPEG_DECODE_QUEUE_MAX_WAIT_MS", 25, 0, 5000)) *
-        1000;
-    return budget_us;
+int64_t DecodeQueueStaleDropBudgetUs(int requested_fps) {
+    const int wait_ms = capture_policy::MjpegDecodeQueueMaxWaitMsForFps(requested_fps);
+    return static_cast<int64_t>(wait_ms) * 1000;
 }
 
 void LogMjpegDecodeTiming(const char* tag, int64_t before_us, int64_t after_us) {
@@ -905,7 +906,7 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                 std::deque<MjpegPendingBuf> dropped;
                 {
                     std::unique_lock<std::mutex> lk(jpeg_queue_mu_);
-                    const int64_t stale_budget_us = DecodeQueueStaleDropBudgetUs();
+                    const int64_t stale_budget_us = DecodeQueueStaleDropBudgetUs(requested_capture_fps_);
                     if (stale_budget_us > 0) {
                         const int64_t now_us = webrtc::TimeMicros();
                         while (!jpeg_queue_.empty()) {
@@ -961,6 +962,7 @@ bool CameraVideoTrackSource::Start(const char* device_unique_id, int width, int 
                                    bool prefer_mpp_mjpeg_decode,
                                    const V4l2MjpegPipelineOptions* mjpeg_pipeline) {
     Stop();
+    requested_capture_fps_ = fps > 0 ? fps : 30;
     prefer_mpp_mjpeg_decode_ = prefer_mpp_mjpeg_decode;
 #if defined(WEBRTC_LINUX) && defined(__linux__)
     ApplyMjpegPipelineOptions(mjpeg_pipeline);

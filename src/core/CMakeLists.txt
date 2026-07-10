@@ -102,6 +102,7 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
         rtc/stats_observer.cpp
         rtc/video_codec_preferences.cpp
         rtc/hw/backend_registry.cpp
+        rtc/shims/builtin_video_decoder_recovery.cpp
         rtc/shims/sme_abi_stubs.c
     )
     # Release 预编译 lib 缺 ExpectationToString；Debug 包已内置，勿重复链 shim。

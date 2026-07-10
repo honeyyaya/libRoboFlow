@@ -2,6 +2,7 @@
 
 #include "rtc/peer_connection_factory_deps.h"
 #include "rtc/rtc_factory_common.h"
+#include "runtime/runtime_knobs.h"
 
 #include "base/logging.h"
 
@@ -76,6 +77,41 @@ void StopThreads(FactoryState& s) {
     s.threads_started = false;
 }
 
+VideoCodecBackendPreference DefaultDecoderBackendForInitialize() {
+#if defined(WEBRTC_ANDROID)
+    return VideoCodecBackendPreference::kAndroidMediaCodec;
+#elif defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    const std::string backend =
+        rflow::core::runtime::ReadString("RFLOW_DECODER_BACKEND");
+    if (!backend.empty()) {
+        if (backend == "builtin" || backend == "ffmpeg" || backend == "0") {
+            return VideoCodecBackendPreference::kBuiltin;
+        }
+        if (backend == "mpp" || backend == "rockchip" || backend == "1") {
+            return VideoCodecBackendPreference::kRockchipMpp;
+        }
+    }
+    // 默认 MPP：避免 FFmpeg H264 软解在 frame_num 回绕（~3000 帧）后卡死。
+    return VideoCodecBackendPreference::kRockchipMpp;
+#else
+    return VideoCodecBackendPreference::kBuiltin;
+#endif
+}
+
+const char* DecoderBackendLabel(VideoCodecBackendPreference backend) {
+    switch (backend) {
+        case VideoCodecBackendPreference::kRockchipMpp:
+            return "rockchip_mpp";
+#if defined(WEBRTC_ANDROID)
+        case VideoCodecBackendPreference::kAndroidMediaCodec:
+            return "android_mediacodec";
+#endif
+        case VideoCodecBackendPreference::kBuiltin:
+        default:
+            return "builtin";
+    }
+}
+
 }  // namespace
 
 bool initialize() {
@@ -91,15 +127,14 @@ bool initialize() {
     }
 
     rflow::rtc::PeerConnectionFactoryMediaOptions media_opts;
-#if defined(WEBRTC_ANDROID)
-    media_opts.decoder_backend = rflow::rtc::VideoCodecBackendPreference::kAndroidMediaCodec;
-#endif
+    media_opts.decoder_backend = DefaultDecoderBackendForInitialize();
     if (!CreateFactoryOnSignalingThread(s, media_opts)) {
         RFLOW_CORE_LOGE("[rtc] CreateModularPeerConnectionFactory failed");
         StopThreads(s);
         return false;
     }
-    RFLOW_CORE_LOGI("[rtc] peer_connection_factory ready");
+    RFLOW_CORE_LOGI("[rtc] peer_connection_factory ready decoder=%s",
+                    DecoderBackendLabel(media_opts.decoder_backend));
     return true;
 }
 
