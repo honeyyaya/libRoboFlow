@@ -36,13 +36,32 @@ CaptureFpsTier TierFromFps(int requested_fps) {
     return (fps >= kHighFpsThreshold) ? CaptureFpsTier::kHighFidelity : CaptureFpsTier::kLowLatency;
 }
 
+void ApplyEnvBackendOverrides(PushStreamerBackendConfig& backend) {
+    const char* v4l2_env = std::getenv("RFLOW_V4L2_BUFFER_COUNT");
+    if (v4l2_env && v4l2_env[0]) {
+        backend.v4l2_buffer_count =
+            rflow::common::util::ReadEnvIntInRange("RFLOW_V4L2_BUFFER_COUNT", backend.v4l2_buffer_count, 2, 32);
+    }
+    const char* qmax_env = std::getenv("RFLOW_MJPEG_QUEUE_MAX");
+    if (qmax_env && qmax_env[0]) {
+        backend.mjpeg_queue_max =
+            rflow::common::util::ReadEnvIntInRange("RFLOW_MJPEG_QUEUE_MAX", backend.mjpeg_queue_max, 1, 32);
+    }
+    const char* nv12_env = std::getenv("RFLOW_NV12_POOL_SLOTS");
+    if (nv12_env && nv12_env[0]) {
+        backend.nv12_pool_slots =
+            rflow::common::util::ReadEnvIntInRange("RFLOW_NV12_POOL_SLOTS", backend.nv12_pool_slots, 4, 16);
+    }
+}
+
 void ApplyTierPreset(PushStreamerBackendConfig& backend, CaptureFpsTier tier) {
     switch (tier) {
         case CaptureFpsTier::kHighFidelity:
             backend.mjpeg_queue_latest_only = false;
-            backend.v4l2_buffer_count       = 4;
-            backend.mjpeg_queue_max         = 3;
-            backend.nv12_pool_slots         = 6;
+            // 小幅加深缓冲：+1 V4L2 buf / +1 队列槽，稳 60fps 且 e2e 仅积压时多 ~16ms。
+            backend.v4l2_buffer_count       = 5;
+            backend.mjpeg_queue_max         = 4;
+            backend.nv12_pool_slots         = 7;
             backend.v4l2_poll_timeout_ms    = 5;
             backend.mjpeg_decode_inline     = false;
             break;
@@ -89,6 +108,21 @@ int MjpegDecodeQueueMaxWaitMsForFps(int requested_fps) {
 
 void ApplyCaptureFpsPipelineDefaults(PushStreamerBackendConfig& backend, int requested_fps) {
     ApplyTierPreset(backend, ClassifyCaptureFpsTier(requested_fps));
+    ApplyEnvBackendOverrides(backend);
+}
+
+bool ShouldAutoTuneMediaThreadsForFps(int requested_fps) {
+    if (requested_fps < kHighFpsThreshold) {
+        return false;
+    }
+    const char* e = std::getenv("RFLOW_MEDIA_THREAD_AUTO");
+    if (e && e[0]) {
+        const char c = e[0];
+        if (c == '0' || c == 'n' || c == 'N' || c == 'f' || c == 'F') {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace rflow::service::impl::policy

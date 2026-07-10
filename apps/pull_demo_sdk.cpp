@@ -17,6 +17,7 @@
 #include "rflow/Client/librflow_client_api.h"
 
 #include "common/demo_helpers.h"
+#include "common/demo_privilege.h"
 
 #include <atomic>
 #include <chrono>
@@ -52,6 +53,8 @@ void OnVideoFrame(librflow_stream_handle_t /*h*/, librflow_video_frame_t frame, 
 }  // namespace
 
 int main(int argc, char** argv) {
+    rflow::apps::common::DropRootPrivilegesIfSudoInvoked();
+
     std::string signaling_url = "127.0.0.1:8765";
     std::string device_id     = "demo_device";
     int32_t stream_index      = 0;

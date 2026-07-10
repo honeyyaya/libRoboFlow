@@ -28,6 +28,9 @@ int MjpegDecodeQueueMaxWaitMsForFps(int requested_fps);
 /// 根据档位写入 PushStreamerBackendConfig 的采集/MJPEG 字段（不改动 MPP 开关）。
 void ApplyCaptureFpsPipelineDefaults(PushStreamerBackendConfig& backend, int requested_fps);
 
+/// ≥45fps 且 RFLOW_MEDIA_THREAD_AUTO 未关闭时，V4L2/MJPEG 线程自动提优先级（nice）。
+bool ShouldAutoTuneMediaThreadsForFps(int requested_fps);
+
 }  // namespace rflow::service::impl::policy
 
 #endif  // RFLOW_SERVICE_IMPL_MEDIA_CAPTURE_FPS_PIPELINE_POLICY_H_

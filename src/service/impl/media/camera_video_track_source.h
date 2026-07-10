@@ -116,6 +116,7 @@ private:
     void ApplyMjpegPipelineOptions(const V4l2MjpegPipelineOptions* mjpeg_pipeline);
     void EnsureNv12Pool(int w, int h);
     void QBufV4l2Index(unsigned int index);
+    void MaybeLogMjpegQueueDropStats(size_t queue_depth, bool force = false);
     /// MJPEG：仅传 mmap 索引，解码后再 QBUF，避免压缩 JPEG 再 memcpy 一整份到队列。
     struct MjpegPendingBuf {
         unsigned int index{0};
@@ -135,6 +136,9 @@ private:
     bool decode_worker_exit_{false};
     bool mjpeg_queue_latest_only_{false};
     size_t mjpeg_queue_max_{8};
+    std::atomic<uint64_t> mjpeg_stale_drop_count_{0};
+    std::atomic<uint64_t> mjpeg_queue_full_drop_count_{0};
+    std::atomic<uint64_t> mjpeg_latest_only_drop_count_{0};
     int nv12_pool_slots_{6};
     int v4l2_buffer_count_{2};
     int v4l2_poll_timeout_ms_{50};

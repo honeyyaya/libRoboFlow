@@ -11,6 +11,10 @@ namespace {
 void ClearKnobs() {
     ::unsetenv("RFLOW_CAPTURE_FPS_PIPELINE");
     ::unsetenv("RFLOW_MJPEG_DECODE_QUEUE_MAX_WAIT_MS");
+    ::unsetenv("RFLOW_V4L2_BUFFER_COUNT");
+    ::unsetenv("RFLOW_MJPEG_QUEUE_MAX");
+    ::unsetenv("RFLOW_NV12_POOL_SLOTS");
+    ::unsetenv("RFLOW_MEDIA_THREAD_AUTO");
 }
 
 class CaptureFpsPipelinePolicyTest : public ::testing::Test {
@@ -35,9 +39,9 @@ TEST_F(CaptureFpsPipelinePolicyTest, Apply60FpsPreset) {
     rflow::service::impl::PushStreamerBackendConfig backend;
     policy::ApplyCaptureFpsPipelineDefaults(backend, 60);
     EXPECT_FALSE(backend.mjpeg_queue_latest_only);
-    EXPECT_EQ(backend.v4l2_buffer_count, 4);
-    EXPECT_EQ(backend.mjpeg_queue_max, 3);
-    EXPECT_EQ(backend.nv12_pool_slots, 6);
+    EXPECT_EQ(backend.v4l2_buffer_count, 5);
+    EXPECT_EQ(backend.mjpeg_queue_max, 4);
+    EXPECT_EQ(backend.nv12_pool_slots, 7);
     EXPECT_EQ(backend.v4l2_poll_timeout_ms, 5);
 }
 
@@ -60,6 +64,15 @@ TEST_F(CaptureFpsPipelinePolicyTest, EnvOverridesStaleWait) {
     EXPECT_EQ(policy::MjpegDecodeQueueMaxWaitMsForFps(60), 100);
 }
 
+TEST_F(CaptureFpsPipelinePolicyTest, EnvOverridesQueueDepth) {
+    ::setenv("RFLOW_V4L2_BUFFER_COUNT", "6", 1);
+    ::setenv("RFLOW_MJPEG_QUEUE_MAX", "5", 1);
+    rflow::service::impl::PushStreamerBackendConfig backend;
+    policy::ApplyCaptureFpsPipelineDefaults(backend, 60);
+    EXPECT_EQ(backend.v4l2_buffer_count, 6);
+    EXPECT_EQ(backend.mjpeg_queue_max, 5);
+}
+
 TEST_F(CaptureFpsPipelinePolicyTest, ForceLowLatencyViaEnv) {
     ::setenv("RFLOW_CAPTURE_FPS_PIPELINE", "low_latency", 1);
     rflow::service::impl::PushStreamerBackendConfig backend;
@@ -73,5 +86,12 @@ TEST_F(CaptureFpsPipelinePolicyTest, ForceHighFidelityViaEnv) {
     rflow::service::impl::PushStreamerBackendConfig backend;
     policy::ApplyCaptureFpsPipelineDefaults(backend, 30);
     EXPECT_FALSE(backend.mjpeg_queue_latest_only);
-    EXPECT_EQ(backend.v4l2_buffer_count, 4);
+    EXPECT_EQ(backend.v4l2_buffer_count, 5);
+}
+
+TEST_F(CaptureFpsPipelinePolicyTest, AutoThreadTuneEnabledForHighFps) {
+    EXPECT_TRUE(policy::ShouldAutoTuneMediaThreadsForFps(60));
+    EXPECT_FALSE(policy::ShouldAutoTuneMediaThreadsForFps(30));
+    ::setenv("RFLOW_MEDIA_THREAD_AUTO", "0", 1);
+    EXPECT_FALSE(policy::ShouldAutoTuneMediaThreadsForFps(60));
 }

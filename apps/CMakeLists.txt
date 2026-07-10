@@ -28,7 +28,7 @@ endfunction()
 message(STATUS "apps: CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
 # ---------------------------------------------------------------- signaling_server
-add_executable(signaling_server signaling_server.cpp
+add_executable(signaling_server signaling_server.cpp common/demo_privilege.cpp
     $<TARGET_OBJECTS:rflow_common>
     $<TARGET_OBJECTS:rflow_core>
     $<TARGET_OBJECTS:rflow_signal_server>
@@ -37,13 +37,14 @@ target_include_directories(signaling_server     PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_SOURCE_DIR}/src/common
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(signaling_server PRIVATE rflow_warnings Threads::Threads)
 _rflow_apps_apply_build_type(signaling_server)
 
 # ---------------------------------------------------------------- SDK demos
 function(_rflow_apps_add_sdk_demo target source link_lib)
-    add_executable(${target} ${source} common/demo_helpers.cpp)
+    add_executable(${target} ${source} common/demo_helpers.cpp common/demo_privilege.cpp)
     target_include_directories(${target} PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -57,6 +58,7 @@ if(RFLOW_BUILD_SERVICE AND RFLOW_SERVICE_ENABLE_WEBRTC_IMPL)
     add_executable(push_demo_sdk
         push_demo_sdk.cpp
         common/demo_helpers.cpp
+        common/demo_privilege.cpp
         common/demo_v4l_linux.cpp
         common/demo_camera_hotplug.cpp
         common/demo_push_session.cpp

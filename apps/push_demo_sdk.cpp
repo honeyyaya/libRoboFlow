@@ -17,12 +17,14 @@
 
 #include "common/demo_camera_hotplug.h"
 #include "common/demo_helpers.h"
+#include "common/demo_privilege.h"
 #include "common/demo_push_session.h"
 
 #include <chrono>
 #include <iostream>
 
-int main(int argc, char** argv) {
+int main(int argc, char* argv[]) {
+    rflow::apps::common::DropRootPrivilegesIfSudoInvoked();
     rflow::apps::common::PushDemoConfig cfg;
     if (!rflow::apps::common::ParsePushDemoConfig(argc, argv, cfg)) {
         return 1;

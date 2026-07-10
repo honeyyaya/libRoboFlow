@@ -54,7 +54,7 @@ bool LatencyTraceEnabled() {
     return enabled;
 }
 
-void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
+void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name, int requested_fps) {
     const char* mode = std::getenv("RFLOW_MEDIA_THREAD_SCHED");
     const bool mode_off = mode && (mode[0] == '0' || mode[0] == 'n' || mode[0] == 'N' || mode[0] == 'f' || mode[0] == 'F');
     const bool mode_set = mode && mode[0];
@@ -68,6 +68,8 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
             const int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
             if (rc != 0) {
                 RFLOW_LOG_TAG_E("ThreadTune", "%s setaffinity cpu=%d failed rc=%d", role, cpu, rc);
+            } else {
+                RFLOW_LOG_TAG_I("ThreadTune", "%s affinity cpu=%d", role, cpu);
             }
         }
     }
@@ -75,6 +77,19 @@ void ApplyThreadTuneIfRequested(const char* role, const char* cpu_env_name) {
         return;
     }
     if (!mode_set) {
+        if (capture_policy::ShouldAutoTuneMediaThreadsForFps(requested_fps)) {
+            const int nice_val =
+                rflow::common::util::ReadEnvIntInRange("RFLOW_MEDIA_THREAD_NICE", -10, -20, 19);
+            if (setpriority(PRIO_PROCESS, 0, nice_val) == 0) {
+                RFLOW_LOG_TAG_I("ThreadTune",
+                                "%s auto high-fps nice=%d (request=%dfps; override RFLOW_MEDIA_THREAD_SCHED "
+                                "or RFLOW_MEDIA_THREAD_AUTO=0 to disable)",
+                                role, nice_val, requested_fps);
+            } else {
+                RFLOW_LOG_TAG_E("ThreadTune", "%s auto high-fps setpriority nice=%d failed errno=%d", role,
+                                nice_val, errno);
+            }
+        }
         return;
     }
 
@@ -674,7 +689,7 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
 void CameraVideoTrackSource::DecodeWorkerThreadMain() {
 #if defined(__linux__)
     pthread_setname_np(pthread_self(), "wrtc_mjpg_dec");
-    ApplyThreadTuneIfRequested("mjpeg_decode", "RFLOW_MJPEG_DECODE_CPU");
+    ApplyThreadTuneIfRequested("mjpeg_decode", "RFLOW_MJPEG_DECODE_CPU", requested_capture_fps_);
 #endif
     while (true) {
         MjpegPendingBuf job{};
@@ -841,7 +856,7 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
 void CameraVideoTrackSource::DirectCaptureThreadMain() {
 #if defined(__linux__)
     pthread_setname_np(pthread_self(), "wrtc_v4l2_cap");
-    ApplyThreadTuneIfRequested("v4l2_capture", "RFLOW_V4L2_CAPTURE_CPU");
+    ApplyThreadTuneIfRequested("v4l2_capture", "RFLOW_V4L2_CAPTURE_CPU", requested_capture_fps_);
 #endif
     std::atomic<unsigned> poll_log_counter{0};
     while (direct_run_.load(std::memory_order_relaxed)) {
@@ -904,6 +919,10 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
             // 延迟 QBUF：解码线程从 mmap 读 JPEG 并入 MPP 后再归还驱动，去掉「整帧 memcpy 到队列」。
             {
                 std::deque<MjpegPendingBuf> dropped;
+                size_t stale_drop_n = 0;
+                size_t queue_full_drop_n = 0;
+                size_t latest_only_drop_n = 0;
+                size_t qdepth_after = 0;
                 {
                     std::unique_lock<std::mutex> lk(jpeg_queue_mu_);
                     const int64_t stale_budget_us = DecodeQueueStaleDropBudgetUs(requested_capture_fps_);
@@ -916,22 +935,38 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                             }
                             dropped.push_back(jpeg_queue_.front());
                             jpeg_queue_.pop_front();
+                            ++stale_drop_n;
                         }
                     }
                     if (mjpeg_queue_latest_only_) {
+                        latest_only_drop_n = jpeg_queue_.size();
                         dropped.swap(jpeg_queue_);
                     } else {
                         while (jpeg_queue_.size() >= mjpeg_queue_max_) {
                             dropped.push_back(jpeg_queue_.front());
                             jpeg_queue_.pop_front();
+                            ++queue_full_drop_n;
                         }
                     }
                     jpeg_queue_.push_back(
                         MjpegPendingBuf{buf.index, buf.bytesused, dq_time_us, v4l2_timestamp_us, poll_wait_us,
                                        dqbuf_ioctl_us, webrtc::TimeMicros()});
+                    qdepth_after = jpeg_queue_.size();
+                }
+                if (stale_drop_n > 0) {
+                    mjpeg_stale_drop_count_.fetch_add(stale_drop_n, std::memory_order_relaxed);
+                }
+                if (queue_full_drop_n > 0) {
+                    mjpeg_queue_full_drop_count_.fetch_add(queue_full_drop_n, std::memory_order_relaxed);
+                }
+                if (latest_only_drop_n > 0) {
+                    mjpeg_latest_only_drop_count_.fetch_add(latest_only_drop_n, std::memory_order_relaxed);
                 }
                 for (const MjpegPendingBuf& drop : dropped) {
                     QBufV4l2Index(drop.index);
+                }
+                if (stale_drop_n > 0 || queue_full_drop_n > 0 || latest_only_drop_n > 0) {
+                    MaybeLogMjpegQueueDropStats(qdepth_after, true);
                 }
             }
             jpeg_queue_cv_.notify_one();
@@ -1025,7 +1060,26 @@ void CameraVideoTrackSource::OnFrame(const webrtc::VideoFrame& frame) {
     }
 #endif
     captured_frames_.fetch_add(1, std::memory_order_relaxed);
+    MaybeLogMjpegQueueDropStats(0);
     AdaptedVideoTrackSource::OnFrame(frame);
+}
+
+void CameraVideoTrackSource::MaybeLogMjpegQueueDropStats(size_t queue_depth, bool force) {
+    const uint32_t decoded = captured_frames_.load(std::memory_order_relaxed);
+    const uint64_t stale = mjpeg_stale_drop_count_.load(std::memory_order_relaxed);
+    const uint64_t queue_full = mjpeg_queue_full_drop_count_.load(std::memory_order_relaxed);
+    const uint64_t latest_only = mjpeg_latest_only_drop_count_.load(std::memory_order_relaxed);
+    const uint64_t total_drops = stale + queue_full + latest_only;
+    if (!force) {
+        if (decoded == 0 || total_drops == 0 || (decoded % 300u) != 0u) {
+            return;
+        }
+    }
+    RFLOW_LOG_TAG_I("MJPEG_QUEUE",
+                    "decoded=%u qdepth=%zu stale_drop=%llu queue_full_drop=%llu latest_only_drop=%llu",
+                    decoded, queue_depth, static_cast<unsigned long long>(stale),
+                    static_cast<unsigned long long>(queue_full),
+                    static_cast<unsigned long long>(latest_only));
 }
 
 #if defined(WEBRTC_LINUX) && defined(__linux__) && defined(RFLOW_HAVE_ROCKCHIP_MPP)
