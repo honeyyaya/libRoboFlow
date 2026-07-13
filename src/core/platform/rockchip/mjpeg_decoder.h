@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "api/scoped_refptr.h"
 
@@ -36,6 +37,9 @@ class RkMppMjpegDecoder {
   /// 与 CameraVideoTrackSource 配置对齐。
   void SetPipelineRgaToMpp(bool enable) { pipeline_rga_to_mpp_ = enable; }
 
+  /// 限制 decoder output DRM 池大小（count=0 表示不限制）。
+  void SetOutputBufferPoolLimit(int max_buffers, int width, int height);
+
   /// dma_buf_fd>=0：按配置选择 EXT_DMA 或 RGA；capacity 一般取 QUERYBUF.length。
   /// 建议始终传入 jpeg（mmap）：RGA 失败时 memcpy 回退；EXT_DMA 成功时可忽略指针。
   bool DecodeJpegToI420(const uint8_t* jpeg,
@@ -67,7 +71,8 @@ class RkMppMjpegDecoder {
                                   int64_t v4l2_timestamp_us = 0,
                                   int64_t poll_wait_us = 0,
                                   int64_t dqbuf_ioctl_us = 0,
-                                  int64_t decode_queue_wait_us = 0);
+                                  int64_t decode_queue_wait_us = 0,
+                                  std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive = nullptr);
 
  private:
   static size_t ComputeJpegOutputBufSize(int width, int height);
@@ -82,6 +87,7 @@ class RkMppMjpegDecoder {
                            size_t jpeg_len,
                            void** out_packet);
 
+  bool ApplyOutputBufferPoolLimitLocked();
   bool WantExtDmabufImport() const;
   bool WantRgaToMpp() const;
 
@@ -101,6 +107,10 @@ class RkMppMjpegDecoder {
   bool session_skip_rga_{false};
   bool pipeline_v4l2_ext_dma_{false};
   bool pipeline_rga_to_mpp_{false};
+  int output_pool_limit_count_{0};
+  int output_pool_limit_w_{0};
+  int output_pool_limit_h_{0};
+  bool output_pool_limit_applied_{false};
 };
 
 }  // namespace rflow::rtc::hw::rockchip_mpp

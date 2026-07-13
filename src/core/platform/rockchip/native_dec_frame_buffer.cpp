@@ -1,5 +1,7 @@
 #include "platform/rockchip/native_dec_frame_buffer.h"
 
+#include "platform/rockchip/mjpeg_decoder.h"
+
 #include <cstring>
 
 #include "api/video/i420_buffer.h"
@@ -49,19 +51,21 @@ bool CopyMppSemiPlanarToNv12(RK_U32 fmt,
 }  // namespace
 
 // static
-webrtc::scoped_refptr<MppNativeDecFrameBuffer> MppNativeDecFrameBuffer::CreateFromMppFrame(void* mpp_frame,
-                                                                                           int width,
-                                                                                           int height,
-                                                                                           int hor_stride,
-                                                                                           int ver_stride,
-                                                                                           uint32_t mpp_fmt,
-                                                                                           int64_t mjpeg_input_timestamp_us,
-                                                                                           int64_t dq_time_us,
-                                                                                           int64_t v4l2_timestamp_us,
-                                                                                           int64_t poll_wait_us,
-                                                                                           int64_t dqbuf_ioctl_us,
-                                                                                           int64_t decode_queue_wait_us,
-                                                                                           int64_t wall_capture_utc_ms) {
+webrtc::scoped_refptr<MppNativeDecFrameBuffer> MppNativeDecFrameBuffer::CreateFromMppFrame(
+    void* mpp_frame,
+    int width,
+    int height,
+    int hor_stride,
+    int ver_stride,
+    uint32_t mpp_fmt,
+    int64_t mjpeg_input_timestamp_us,
+    int64_t dq_time_us,
+    int64_t v4l2_timestamp_us,
+    int64_t poll_wait_us,
+    int64_t dqbuf_ioctl_us,
+    int64_t decode_queue_wait_us,
+    int64_t wall_capture_utc_ms,
+    std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive) {
     if (!mpp_frame) {
         return nullptr;
     }
@@ -69,7 +73,8 @@ webrtc::scoped_refptr<MppNativeDecFrameBuffer> MppNativeDecFrameBuffer::CreateFr
         new webrtc::RefCountedObject<MppNativeDecFrameBuffer>(mpp_frame, width, height, hor_stride, ver_stride,
                                                               mpp_fmt, mjpeg_input_timestamp_us, dq_time_us,
                                                               v4l2_timestamp_us, poll_wait_us, dqbuf_ioctl_us,
-                                                              decode_queue_wait_us, wall_capture_utc_ms));
+                                                              decode_queue_wait_us, wall_capture_utc_ms,
+                                                              std::move(decoder_keepalive)));
 }
 
 MppNativeDecFrameBuffer* MppNativeDecFrameBuffer::TryGet(const webrtc::scoped_refptr<webrtc::VideoFrameBuffer>& buffer) {
@@ -91,7 +96,8 @@ MppNativeDecFrameBuffer::MppNativeDecFrameBuffer(void* mpp_frame,
                                                  int64_t poll_wait_us,
                                                  int64_t dqbuf_ioctl_us,
                                                  int64_t decode_queue_wait_us,
-                                                 int64_t wall_capture_utc_ms)
+                                                 int64_t wall_capture_utc_ms,
+                                                 std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive)
     : frame_(mpp_frame),
       width_(width),
       height_(height),
@@ -104,7 +110,8 @@ MppNativeDecFrameBuffer::MppNativeDecFrameBuffer(void* mpp_frame,
       poll_wait_us_(poll_wait_us),
       dqbuf_ioctl_us_(dqbuf_ioctl_us),
       decode_queue_wait_us_(decode_queue_wait_us),
-      wall_capture_utc_ms_(wall_capture_utc_ms) {}
+      wall_capture_utc_ms_(wall_capture_utc_ms),
+      decoder_keepalive_(std::move(decoder_keepalive)) {}
 
 MppNativeDecFrameBuffer::~MppNativeDecFrameBuffer() {
     if (frame_) {

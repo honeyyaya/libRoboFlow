@@ -44,6 +44,14 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   void DestroyMpp();
   void ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* inst);
   int InitMppHardwareLocked(const webrtc::VideoCodec* inst);
+  /// 丢弃并重建 EXTERNAL import group，清掉可能残留的 dec fd 引用。
+  bool ResetImportBufferGroupLocked(const char* reason);
+  /// EXTERNAL import group 槽位上限，与 MJPEG dec_out_pool + WebRTC 排队深度对齐。
+  bool ApplyImportBufferPoolLimitLocked(void* import_grp);
+  void RefreshImportPoolLimitCountLocked();
+  /// 零拷贝绑定 dec buffer：direct(inc_ref) / null(import 无 group) / external(legacy)。
+  void* BindDecBufferForEncodeLocked(void* dec_buf);
+  void* ExternalGroupImportDecBufferForEncodeLocked(void* dec_buf);
   bool RecoverMppSessionLocked();
   bool ApplyRcToCfg();
   static int MppH264LevelForSize(int width, int height, uint32_t fps);
@@ -119,6 +127,18 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   int64_t output_timeout_ms_{4000};
   int put_frame_drain_max_{16};
   int import_retry_sleep_us_{500};
+  int import_consecutive_failures_{0};
+  int import_grp_reset_threshold_{3};
+  int import_pause_threshold_{30};
+  int import_pause_probe_interval_{120};
+  int import_pause_probe_frames_{0};
+  bool import_pause_zero_copy_{false};
+  unsigned import_grp_reset_count_{0};
+  int import_pool_limit_count_{0};
+  bool import_pool_limit_applied_{false};
+  int import_reset_loop_pause_threshold_{5};
+  /// 0=direct inc_ref, 1=null-group import, 2=external-group import (legacy)
+  int zero_copy_bind_mode_{0};
 
   bool initialized_{false};
   mutable std::mutex mpp_mu_;

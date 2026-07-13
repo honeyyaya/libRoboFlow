@@ -469,6 +469,38 @@ bool RkMppMjpegDecoder::Init() {
     return true;
 }
 
+void RkMppMjpegDecoder::SetOutputBufferPoolLimit(int max_buffers, int width, int height) {
+    output_pool_limit_count_ = max_buffers;
+    output_pool_limit_w_ = width;
+    output_pool_limit_h_ = height;
+    output_pool_limit_applied_ = false;
+    (void)ApplyOutputBufferPoolLimitLocked();
+}
+
+bool RkMppMjpegDecoder::ApplyOutputBufferPoolLimitLocked() {
+    if (output_pool_limit_count_ <= 0 || !output_buf_group_ || output_pool_limit_w_ <= 0 ||
+        output_pool_limit_h_ <= 0) {
+        return false;
+    }
+    const size_t computed = ComputeJpegOutputBufSize(output_pool_limit_w_, output_pool_limit_h_);
+    const size_t sz = std::max(computed, output_buf_size_);
+    if (sz == 0) {
+        return false;
+    }
+    MppBufferGroup grp = reinterpret_cast<MppBufferGroup>(output_buf_group_);
+    const MPP_RET ret =
+        mpp_buffer_group_limit_config(grp, sz, static_cast<RK_S32>(output_pool_limit_count_));
+    if (ret == MPP_OK) {
+        output_pool_limit_applied_ = true;
+        RFLOW_LOG_TAG_I("RkMppMjpeg", "output pool limit count=%d size=%zu",
+                        output_pool_limit_count_, sz);
+        return true;
+    }
+    RFLOW_LOG_TAG_W("RkMppMjpeg", "output pool limit_config failed count=%d ret=%d",
+                    output_pool_limit_count_, static_cast<int>(ret));
+    return false;
+}
+
 bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
                                             size_t dma_buf_capacity,
                                             const uint8_t* jpeg,
@@ -691,6 +723,9 @@ bool RkMppMjpegDecoder::HandleInfoChangeFrame(void* frame_vp) {
         output_buf_size_ = bs;
         if (MjpegDecTraceEnabled()) {
             RFLOW_LOG_TAG_W("RkMppMjpeg", "info_change: bump output_buf_size to %zu", output_buf_size_);
+        }
+        if (output_pool_limit_applied_) {
+            (void)ApplyOutputBufferPoolLimitLocked();
         }
     }
 
@@ -970,7 +1005,8 @@ bool RkMppMjpegDecoder::DecodeJpegToNativeDecFrame(const uint8_t* jpeg,
                                                   int64_t v4l2_timestamp_us,
                                                   int64_t poll_wait_us,
                                                   int64_t dqbuf_ioctl_us,
-                                                  int64_t decode_queue_wait_us) {
+                                                  int64_t decode_queue_wait_us,
+                                                  std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive) {
     if (!out) {
         return false;
     }
@@ -991,6 +1027,9 @@ bool RkMppMjpegDecoder::DecodeJpegToNativeDecFrame(const uint8_t* jpeg,
     }
     if (output_buf_size_ == 0) {
         return false;
+    }
+    if (!output_pool_limit_applied_) {
+        (void)ApplyOutputBufferPoolLimitLocked();
     }
 
     const int64_t mjpeg_input_us = webrtc::TimeMicros();
@@ -1068,7 +1107,8 @@ bool RkMppMjpegDecoder::DecodeJpegToNativeDecFrame(const uint8_t* jpeg,
             webrtc::scoped_refptr<MppNativeDecFrameBuffer> wrapped =
                 MppNativeDecFrameBuffer::CreateFromMppFrame(frame, fw, fh, hs, ver_stride, fmt, mjpeg_input_us,
                                                             dq_time_us, v4l2_timestamp_us, poll_wait_us,
-                                                            dqbuf_ioctl_us, decode_queue_wait_us, wall_capture_utc_ms);
+                                                            dqbuf_ioctl_us, decode_queue_wait_us, wall_capture_utc_ms,
+                                                            std::move(decoder_keepalive));
             if (!wrapped) {
                 mpp_frame_deinit(&frame);
                 return false;

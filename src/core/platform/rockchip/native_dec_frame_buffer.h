@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include "api/scoped_refptr.h"
@@ -10,24 +11,28 @@
 
 namespace rflow::rtc::hw::rockchip_mpp {
 
+class RkMppMjpegDecoder;
+
 /// WebRTC kNative：持有 MPP MJPEG 解码输出 MppFrame（DRM buffer），供 RkMppH264Encoder 零拷贝入参。
 /// 析构时 mpp_frame_deinit，归还解码器 buffer pool。
 class MppNativeDecFrameBuffer : public webrtc::VideoFrameBuffer {
  public:
   /// 取得 frame 所有权（不再对 frame 调用 mpp_frame_deinit，由本类析构释放）。
-  static webrtc::scoped_refptr<MppNativeDecFrameBuffer> CreateFromMppFrame(void* mpp_frame,
-                                                                           int width,
-                                                                           int height,
-                                                                           int hor_stride,
-                                                                           int ver_stride,
-                                                                           uint32_t mpp_fmt,
-                                                                           int64_t mjpeg_input_timestamp_us,
-                                                                           int64_t dq_time_us,
-                                                                           int64_t v4l2_timestamp_us,
-                                                                           int64_t poll_wait_us,
-                                                                           int64_t dqbuf_ioctl_us,
-                                                                           int64_t decode_queue_wait_us,
-                                                                           int64_t wall_capture_utc_ms);
+  static webrtc::scoped_refptr<MppNativeDecFrameBuffer> CreateFromMppFrame(
+      void* mpp_frame,
+      int width,
+      int height,
+      int hor_stride,
+      int ver_stride,
+      uint32_t mpp_fmt,
+      int64_t mjpeg_input_timestamp_us,
+      int64_t dq_time_us,
+      int64_t v4l2_timestamp_us,
+      int64_t poll_wait_us,
+      int64_t dqbuf_ioctl_us,
+      int64_t decode_queue_wait_us,
+      int64_t wall_capture_utc_ms,
+      std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive = nullptr);
 
   static MppNativeDecFrameBuffer* TryGet(const webrtc::scoped_refptr<webrtc::VideoFrameBuffer>& buffer);
 
@@ -72,7 +77,8 @@ class MppNativeDecFrameBuffer : public webrtc::VideoFrameBuffer {
                           int64_t poll_wait_us,
                           int64_t dqbuf_ioctl_us,
                           int64_t decode_queue_wait_us,
-                          int64_t wall_capture_utc_ms);
+                          int64_t wall_capture_utc_ms,
+                          std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive = nullptr);
 
  protected:
   ~MppNativeDecFrameBuffer() override;
@@ -92,6 +98,8 @@ class MppNativeDecFrameBuffer : public webrtc::VideoFrameBuffer {
   int64_t decode_queue_wait_us_;
   int64_t wall_capture_utc_ms_;
   std::atomic<int64_t> on_frame_enter_us_{0};
+  /// 保证 in-flight native 帧持有期间 MJPEG 解码器与 output buffer group 不被 Stop 销毁。
+  std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive_;
 };
 
 }  // namespace rflow::rtc::hw::rockchip_mpp

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
 #include "api/video/i420_buffer.h"
 #include "api/video/nv12_buffer.h"
@@ -23,6 +24,7 @@
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
 #include "platform/rockchip/native_dec_frame_buffer.h"
 #include "platform/rockchip/mjpeg_decoder.h"
+#include <linux/dma-buf.h>
 #endif
 #include <cerrno>
 #include <fcntl.h>
@@ -37,6 +39,7 @@
 
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <sstream>
 #include <cstdlib>
 #include <atomic>
@@ -127,6 +130,48 @@ void LogMjpegDecodeTiming(const char* tag, int64_t before_us, int64_t after_us) 
                     static_cast<unsigned>(n), static_cast<long long>(before_us), static_cast<long long>(after_us), ms);
 
 }
+
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+class Nv12PoolLease {
+ public:
+  Nv12PoolLease(std::function<void()> on_release, webrtc::scoped_refptr<webrtc::NV12Buffer> buf)
+      : on_release_(std::move(on_release)), buf_(std::move(buf)) {}
+  ~Nv12PoolLease() {
+    if (on_release_) {
+      on_release_();
+    }
+  }
+  webrtc::scoped_refptr<webrtc::NV12Buffer> buffer() const { return buf_; }
+
+ private:
+  std::function<void()> on_release_;
+  webrtc::scoped_refptr<webrtc::NV12Buffer> buf_;
+};
+
+class PooledNv12Buffer : public webrtc::NV12BufferInterface {
+ public:
+  static webrtc::scoped_refptr<PooledNv12Buffer> Create(std::shared_ptr<Nv12PoolLease> lease) {
+    return webrtc::make_ref_counted<PooledNv12Buffer>(std::move(lease));
+  }
+  explicit PooledNv12Buffer(std::shared_ptr<Nv12PoolLease> lease)
+      : lease_(std::move(lease)), backing_(lease_->buffer()) {}
+
+  Type type() const override { return Type::kNV12; }
+  int width() const override { return backing_->width(); }
+  int height() const override { return backing_->height(); }
+  int StrideY() const override { return backing_->StrideY(); }
+  int StrideUV() const override { return backing_->StrideUV(); }
+  const uint8_t* DataY() const override { return backing_->DataY(); }
+  const uint8_t* DataUV() const override { return backing_->DataUV(); }
+  webrtc::scoped_refptr<webrtc::I420BufferInterface> ToI420() override { return backing_->ToI420(); }
+
+  webrtc::NV12Buffer* mutable_backing() const { return backing_.get(); }
+
+ private:
+  std::shared_ptr<Nv12PoolLease> lease_;
+  webrtc::scoped_refptr<webrtc::NV12Buffer> backing_;
+};
+#endif
 
 // V4L2 帧间隔：interval = numerator/denominator 秒；fps = denominator/numerator。
 // 判断是否可达 min_fps（含）：denominator >= min_fps * numerator。
@@ -222,6 +267,8 @@ void CameraVideoTrackSource::StopDirectV4l2() {
     }
     decode_worker_exit_ = false;
     nv12_pool_.clear();
+    nv12_slot_in_use_.reset();
+    nv12_slot_count_ = 0;
     nv12_pool_w_ = nv12_pool_h_ = 0;
     nv12_ring_next_ = 0;
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
@@ -319,6 +366,18 @@ void CameraVideoTrackSource::QBufV4l2Index(unsigned int index) {
     if (direct_fd_ < 0) {
         return;
     }
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    if (index < direct_expbuf_fd_.size()) {
+        const int exp_fd = direct_expbuf_fd_[index];
+        if (exp_fd >= 0) {
+            struct dma_buf_sync sync {};
+            sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+            if (ioctl(exp_fd, DMA_BUF_IOCTL_SYNC, &sync) < 0) {
+                RFLOW_LOG_TAG_W("CameraV4L2", "EXPBUF DMA_BUF_SYNC_END index=%u errno=%d", index, errno);
+            }
+        }
+    }
+#endif
     struct v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
@@ -333,23 +392,64 @@ void CameraVideoTrackSource::EnsureNv12Pool(int w, int h) {
     if (w <= 0 || h <= 0 || slots < 4) {
         return;
     }
-    if (nv12_pool_.size() == static_cast<size_t>(slots) && nv12_pool_w_ == w && nv12_pool_h_ == h) {
+    if (nv12_pool_.size() == static_cast<size_t>(slots) && nv12_pool_w_ == w && nv12_pool_h_ == h &&
+        nv12_slot_count_ == static_cast<size_t>(slots)) {
         return;
     }
     nv12_pool_.clear();
+    nv12_slot_in_use_.reset();
+    nv12_slot_count_ = 0;
     nv12_pool_.reserve(static_cast<size_t>(slots));
     for (int i = 0; i < slots; ++i) {
         webrtc::scoped_refptr<webrtc::NV12Buffer> b = webrtc::NV12Buffer::Create(w, h);
         if (!b) {
             nv12_pool_.clear();
+            nv12_slot_in_use_.reset();
+            nv12_slot_count_ = 0;
             nv12_pool_w_ = nv12_pool_h_ = 0;
             return;
         }
         nv12_pool_.push_back(std::move(b));
     }
+    nv12_slot_in_use_ = std::make_unique<std::atomic<bool>[]>(nv12_pool_.size());
+    nv12_slot_count_ = nv12_pool_.size();
+    for (size_t i = 0; i < nv12_slot_count_; ++i) {
+        nv12_slot_in_use_[i].store(false, std::memory_order_relaxed);
+    }
     nv12_pool_w_ = w;
     nv12_pool_h_ = h;
     nv12_ring_next_ = 0;
+}
+
+void CameraVideoTrackSource::ReleaseNv12PoolSlot(size_t slot_index) {
+    if (nv12_slot_in_use_ && slot_index < nv12_slot_count_) {
+        nv12_slot_in_use_[slot_index].store(false, std::memory_order_release);
+    }
+}
+
+webrtc::scoped_refptr<webrtc::VideoFrameBuffer> CameraVideoTrackSource::AcquireNv12PoolBuffer(int w, int h) {
+    EnsureNv12Pool(w, h);
+    if (nv12_pool_.empty() || !nv12_slot_in_use_ || nv12_slot_count_ != nv12_pool_.size()) {
+        return nullptr;
+    }
+    const size_t n = nv12_pool_.size();
+    for (size_t tried = 0; tried < n; ++tried) {
+        const size_t idx = (nv12_ring_next_ + tried) % n;
+        bool expected = false;
+        if (!nv12_slot_in_use_[idx].compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+            continue;
+        }
+        nv12_ring_next_ = idx + 1;
+        auto lease = std::make_shared<Nv12PoolLease>(
+            [this, idx]() { ReleaseNv12PoolSlot(idx); }, nv12_pool_[idx]);
+        return PooledNv12Buffer::Create(std::move(lease));
+    }
+    static std::atomic<uint64_t> drop_count{0};
+    const uint64_t n_drop = ++drop_count;
+    if ((n_drop % 60) == 1) {
+        RFLOW_LOG_TAG_W("CameraV4L2", "NV12 pool exhausted (slots=%zu), drop frame", n);
+    }
+    return nullptr;
 }
 
 bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width, int height, int fps) {
@@ -655,13 +755,20 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
     decode_worker_exit_ = false;
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     if (prefer_mpp_mjpeg_decode_ && direct_pixfmt_ == V4L2_PIX_FMT_MJPEG) {
-        auto dec = std::make_unique<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder>();
+        auto dec = std::make_shared<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder>();
         if (dec->Init()) {
             dec->SetPipelineV4l2ExtDmabuf(v4l2_ext_dma_config_);
             dec->SetPipelineRgaToMpp(mjpeg_rga_config_);
-            mjpeg_mpp_ = std::move(dec);
+            const int pool_slack =
+                rflow::common::util::ReadEnvIntInRange("RFLOW_MJPEG_DEC_OUT_POOL_SLACK", 2, 0, 8);
+            const int pool_max = v4l2_buffer_count_ + static_cast<int>(mjpeg_queue_max_) + pool_slack;
+            dec->SetOutputBufferPoolLimit(pool_max, direct_cap_w_, direct_cap_h_);
+            mjpeg_mpp_ = dec;
             RFLOW_LOG_TAG_I(
-                "CameraV4L2", "MJPEG: Rockchip MPP decode -> NV12 (zero I420/libyuv chroma conversion in HW encode path)");
+                "CameraV4L2",
+                "MJPEG: Rockchip MPP decode -> NV12 (zero I420/libyuv chroma conversion in HW encode path) "
+                "dec_out_pool=%d",
+                pool_max);
         }
     }
 #endif
@@ -759,7 +866,7 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
             const bool dec_native =
                 mjpeg_mpp_->DecodeJpegToNativeDecFrame(src, bytesused, w, h, &native, dma_arg_fd, dma_arg_cap,
                                                        dq_time_us, v4l2_timestamp_us, poll_wait_us, dqbuf_ioctl_us,
-                                                       decode_queue_wait_us);
+                                                       decode_queue_wait_us, mjpeg_mpp_);
             if (dec_native && native) {
                 webrtc::VideoFrame frame = webrtc::VideoFrame::Builder()
                                                .set_video_frame_buffer(native)
@@ -771,25 +878,28 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
             }
         }
         EnsureNv12Pool(w, h);
-        if (!nv12_pool_.empty()) {
-            webrtc::scoped_refptr<webrtc::NV12Buffer> nv12 =
-                nv12_pool_[nv12_ring_next_ % nv12_pool_.size()];
-            ++nv12_ring_next_;
-            const int64_t decode_before_us = webrtc::TimeMicros();
-            const bool dec_ok =
-                mjpeg_mpp_->DecodeJpegToNV12(src, bytesused, w, h, nv12.get(), dma_arg_fd, dma_arg_cap);
-            const int64_t decode_after_us = webrtc::TimeMicros();
-            if (dec_ok) {
-                LogMjpegDecodeTiming("mpp-nv12-pool", decode_before_us, decode_after_us);
-                webrtc::VideoFrame frame = webrtc::VideoFrame::Builder()
-                                               .set_video_frame_buffer(nv12)
-                                               .set_timestamp_us(pipeline_t0_us)
-                                               .set_rotation(webrtc::kVideoRotation_0)
-                                               .build();
-                OnFrame(frame);
-                return;
+        {
+            webrtc::scoped_refptr<webrtc::VideoFrameBuffer> pool_vfb = AcquireNv12PoolBuffer(w, h);
+            PooledNv12Buffer* pooled = pool_vfb ? static_cast<PooledNv12Buffer*>(pool_vfb.get()) : nullptr;
+            webrtc::NV12Buffer* nv12 = pooled ? pooled->mutable_backing() : nullptr;
+            if (nv12) {
+                const int64_t decode_before_us = webrtc::TimeMicros();
+                const bool dec_ok =
+                    mjpeg_mpp_->DecodeJpegToNV12(src, bytesused, w, h, nv12, dma_arg_fd, dma_arg_cap);
+                const int64_t decode_after_us = webrtc::TimeMicros();
+                if (dec_ok) {
+                    LogMjpegDecodeTiming("mpp-nv12-pool", decode_before_us, decode_after_us);
+                    webrtc::VideoFrame frame = webrtc::VideoFrame::Builder()
+                                                   .set_video_frame_buffer(pool_vfb)
+                                                   .set_timestamp_us(pipeline_t0_us)
+                                                   .set_rotation(webrtc::kVideoRotation_0)
+                                                   .build();
+                    OnFrame(frame);
+                    return;
+                }
             }
-        } else {
+        }
+        {
             webrtc::scoped_refptr<webrtc::NV12Buffer> nv12 = webrtc::NV12Buffer::Create(w, h);
             const int64_t decode_before_us = webrtc::TimeMicros();
             const bool dec_ok =

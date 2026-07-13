@@ -16,6 +16,7 @@
 #endif
 
 #include "api/scoped_refptr.h"
+#include "api/video/video_frame_buffer.h"
 #include "api/video/video_sink_interface.h"
 #include "media/video_frame_source.h"
 #include "media/base/adapted_video_track_source.h"
@@ -115,6 +116,8 @@ private:
                                   int64_t decode_queue_wait_us = 0);
     void ApplyMjpegPipelineOptions(const V4l2MjpegPipelineOptions* mjpeg_pipeline);
     void EnsureNv12Pool(int w, int h);
+    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> AcquireNv12PoolBuffer(int w, int h);
+    void ReleaseNv12PoolSlot(size_t slot_index);
     void QBufV4l2Index(unsigned int index);
     void MaybeLogMjpegQueueDropStats(size_t queue_depth, bool force = false);
     /// MJPEG：仅传 mmap 索引，解码后再 QBUF，避免压缩 JPEG 再 memcpy 一整份到队列。
@@ -146,6 +149,8 @@ private:
     int nv12_pool_w_{0};
     int nv12_pool_h_{0};
     size_t nv12_ring_next_{0};
+    std::unique_ptr<std::atomic<bool>[]> nv12_slot_in_use_;
+    size_t nv12_slot_count_{0};
     bool mjpeg_decode_inline_{false};
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     bool v4l2_ext_dma_config_{false};
@@ -163,7 +168,7 @@ private:
     /// VIDIOC_EXPBUF 得到的 dma-buf fd，与 mmap 同一块物理内存；-1 表示未导出或失败。
     std::vector<int> direct_expbuf_fd_;
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-    std::unique_ptr<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder> mjpeg_mpp_;
+    std::shared_ptr<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder> mjpeg_mpp_;
 #endif
 #endif
     webrtc::scoped_refptr<webrtc::VideoCaptureModule> vcm_;
