@@ -34,6 +34,16 @@ class MppNativeDecFrameBuffer : public webrtc::VideoFrameBuffer {
       int64_t wall_capture_utc_ms,
       std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive = nullptr);
 
+  /// RGA 缩放输出：持有 scale pool 的 MppBuffer（无 MppFrame）。
+  static webrtc::scoped_refptr<MppNativeDecFrameBuffer> CreateFromOwnedScaleBuffer(
+      void* mpp_buffer,
+      int width,
+      int height,
+      int hor_stride,
+      int ver_stride,
+      uint32_t mpp_fmt,
+      std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive = nullptr);
+
   static MppNativeDecFrameBuffer* TryGet(const webrtc::scoped_refptr<webrtc::VideoFrameBuffer>& buffer);
 
   webrtc::VideoFrameBuffer::Type type() const override;
@@ -42,6 +52,12 @@ class MppNativeDecFrameBuffer : public webrtc::VideoFrameBuffer {
   webrtc::scoped_refptr<webrtc::I420BufferInterface> ToI420() override;
   webrtc::scoped_refptr<webrtc::VideoFrameBuffer> GetMappedFrameBuffer(
       webrtc::ArrayView<Type> types) override;
+  webrtc::scoped_refptr<webrtc::VideoFrameBuffer> CropAndScale(int offset_x,
+                                                                int offset_y,
+                                                                int crop_width,
+                                                                int crop_height,
+                                                                int scaled_width,
+                                                                int scaled_height) override;
   std::string storage_representation() const override;
 
   int hor_stride() const { return hor_stride_; }
@@ -80,11 +96,24 @@ class MppNativeDecFrameBuffer : public webrtc::VideoFrameBuffer {
                           int64_t wall_capture_utc_ms,
                           std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive = nullptr);
 
+  MppNativeDecFrameBuffer(void* mpp_buffer,
+                          int width,
+                          int height,
+                          int hor_stride,
+                          int ver_stride,
+                          uint32_t mpp_fmt,
+                          std::shared_ptr<RkMppMjpegDecoder> decoder_keepalive,
+                          bool from_scale_pool);
+
  protected:
   ~MppNativeDecFrameBuffer() override;
 
  private:
-  void* frame_;
+  void ReleaseOwnedBuffer();
+
+  void* frame_{nullptr};
+  void* owned_mpp_buf_{nullptr};
+  bool from_scale_pool_{false};
   int width_;
   int height_;
   int hor_stride_;

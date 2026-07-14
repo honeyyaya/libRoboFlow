@@ -126,6 +126,8 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
             platform/rockchip/mpp_hardware_probe.cpp
             platform/rockchip/mjpeg_decoder.cpp
             platform/rockchip/native_dec_frame_buffer.cpp
+            platform/rockchip/rga_dmabuf_sync.cpp
+            platform/rockchip/rga_nv12_scale.cpp
             platform/rockchip/video_decoder_factory.cpp
             platform/rockchip/video_encoder_factory.cpp
         )
@@ -198,6 +200,16 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
         endif()
         target_include_directories(rflow_core_platform_rockchip SYSTEM PRIVATE ${RFLOW_MPP_INCLUDE_DIR})
         target_link_libraries(rflow_core_platform_rockchip PRIVATE ${RFLOW_MPP_LIB})
+        find_path(RFLOW_RGA_INCLUDE_DIR NAMES rga/im2d.hpp PATHS /usr/include /usr/local/include)
+        find_library(RFLOW_RGA_LIB NAMES rga PATHS /usr/lib /usr/lib64 /usr/lib/aarch64-linux-gnu /usr/local/lib)
+        if(RFLOW_RGA_INCLUDE_DIR AND RFLOW_RGA_LIB)
+            target_compile_definitions(rflow_core_platform_rockchip PRIVATE RFLOW_HAVE_LIBRGA=1)
+            target_include_directories(rflow_core_platform_rockchip SYSTEM PRIVATE ${RFLOW_RGA_INCLUDE_DIR})
+            target_link_libraries(rflow_core_platform_rockchip PRIVATE ${RFLOW_RGA_LIB})
+            message(STATUS "Rockchip RGA enabled: ${RFLOW_RGA_LIB}")
+        else()
+            message(STATUS "Rockchip RGA not found; NV12 scale falls back to libyuv on adaptation")
+        endif()
     endif()
 endif()
 

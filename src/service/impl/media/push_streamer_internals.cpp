@@ -154,8 +154,17 @@ void PrintOutboundVideoStats(
         if (s->retransmitted_packets_sent.has_value()) {
             line << " retrans_pkts=" << *s->retransmitted_packets_sent;
         }
+        if (s->frame_width.has_value()) {
+            line << " frame_w=" << *s->frame_width;
+        }
+        if (s->frame_height.has_value()) {
+            line << " frame_h=" << *s->frame_height;
+        }
         if (s->quality_limitation_reason.has_value()) {
             line << " ql_reason=" << *s->quality_limitation_reason;
+        }
+        if (s->quality_limitation_resolution_changes.has_value()) {
+            line << " ql_res_changes=" << *s->quality_limitation_resolution_changes;
         }
         RFLOW_LOG_TAG_I("OutboundVideoStats", "%s", line.str().c_str());
     }

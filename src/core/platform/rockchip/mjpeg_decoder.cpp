@@ -3,6 +3,7 @@
 #include "platform/rockchip/mjpeg_decoder.h"
 
 #include "platform/rockchip/native_dec_frame_buffer.h"
+#include "platform/rockchip/rga_dmabuf_sync.h"
 
 #include <algorithm>
 #include <chrono>
@@ -224,18 +225,10 @@ static bool RgaCopyDmaBufJpeg(int src_fd,
     }
 
     {
-        struct dma_buf_sync sync {};
-        sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
-        if (ioctl(src_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0 && MjpegDecTraceEnabled()) {
-            RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA src DMA_BUF_SYNC(READ) errno=%d", errno);
-        }
+        DmabufSyncStartRead(src_fd);
     }
     {
-        struct dma_buf_sync sync {};
-        sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE;
-        if (ioctl(dst_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0 && MjpegDecTraceEnabled()) {
-            RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA dst DMA_BUF_SYNC(WRITE) errno=%d", errno);
-        }
+        DmabufSyncStartWrite(dst_fd);
     }
 
     const int src_import_sz =
@@ -244,20 +237,8 @@ static bool RgaCopyDmaBufJpeg(int src_fd,
         static_cast<int>(std::min(dst_cap, static_cast<size_t>(std::numeric_limits<int>::max())));
 
     auto do_end_sync = [&]() {
-        {
-            struct dma_buf_sync sync {};
-            sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
-            if (ioctl(dst_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0 && MjpegDecTraceEnabled()) {
-                RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA dst DMA_BUF_SYNC(END WRITE) errno=%d", errno);
-            }
-        }
-        {
-            struct dma_buf_sync sync {};
-            sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
-            if (ioctl(src_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0 && MjpegDecTraceEnabled()) {
-                RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA src DMA_BUF_SYNC(END READ) errno=%d", errno);
-            }
-        }
+        DmabufSyncEndWrite(dst_fd);
+        DmabufSyncEndRead(src_fd);
     };
 
     IM_STATUS st = IM_STATUS_FAILED;
@@ -284,8 +265,8 @@ static bool RgaCopyDmaBufJpeg(int src_fd,
             RFLOW_LOG_TAG_E("RkMppMjpeg", "RGA imcopy(importbuffer) status=%d (%s), retry wrapbuffer_fd",
                             static_cast<int>(st), imStrError_t(st));
         }
-        rga_buffer_t src = wrapbuffer_fd(src_fd, w, h, RK_FORMAT_YCbCr_400);
-        rga_buffer_t dst = wrapbuffer_fd(dst_fd, w, h, RK_FORMAT_YCbCr_400);
+        rga_buffer_t src = wrapbuffer_fd_t(src_fd, w, h, w, h, RK_FORMAT_YCbCr_400);
+        rga_buffer_t dst = wrapbuffer_fd_t(dst_fd, w, h, w, h, RK_FORMAT_YCbCr_400);
         st = imcopy(src, dst, 1);
     }
 

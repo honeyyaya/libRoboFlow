@@ -6,6 +6,7 @@
 
 #include "base/env_reader.h"
 #include "platform/rockchip/native_dec_frame_buffer.h"
+#include "platform/rockchip/rga_dmabuf_sync.h"
 
 #include <algorithm>
 #include <atomic>
@@ -21,11 +22,7 @@
 #include <vector>
 
 #include "public/log_tagged.h"
-#include <errno.h>
-#include <sys/ioctl.h>
 #include <unistd.h>
-
-#include <linux/dma-buf.h>
 #include "api/array_view.h"
 #include "api/video/video_codec_constants.h"
 #include "modules/video_coding/codecs/interface/common_constants.h"
@@ -308,15 +305,6 @@ static void ResetMppPacketWriteCursor(MppPacket pkt) {
 }
 
 // MJPEG 解码 output buffer 零拷贝绑定：direct inc_ref 或 misc/external import。
-static void SyncDmabufBeforeDeviceRead(int dmabuf_fd) {
-    if (dmabuf_fd < 0) {
-        return;
-    }
-    struct dma_buf_sync sync {};
-    sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
-    (void)ioctl(dmabuf_fd, DMA_BUF_IOCTL_SYNC, &sync);
-}
-
 struct ImportDecBufferResult {
     MppBuffer buffer{nullptr};
     MPP_RET import_ret{MPP_NOK};
@@ -356,7 +344,7 @@ static ImportDecBufferResult TryImportDecBuffer(MppBufferGroup import_grp, MppBu
         result.import_ret = MPP_ERR_NULL_PTR;
         return result;
     }
-    SyncDmabufBeforeDeviceRead(result.info.fd);
+    DmabufSyncStartRead(result.info.fd);
     result.import_ret =
         mpp_buffer_import_with_tag(import_grp, &result.info, &result.buffer, MODULE_TAG, __func__);
     if (result.import_ret != MPP_OK) {
@@ -398,15 +386,6 @@ static MppBuffer ImportDecBufferWithRetry(MppBufferGroup import_grp,
         LogImportDecBufferFailDiag(diag_enabled, 2, second, dec_buf);
     }
     return second.buffer;
-}
-
-static void SyncDmabufAfterCpuWrite(int dmabuf_fd) {
-    if (dmabuf_fd < 0) {
-        return;
-    }
-    struct dma_buf_sync sync {};
-    sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
-    (void)ioctl(dmabuf_fd, DMA_BUF_IOCTL_SYNC, &sync);
 }
 
 static int DrainPendingEncoderOutput(MppApi* mpi, MppCtx ctx, int64_t restore_output_timeout_ms, int max_packets) {
@@ -1304,7 +1283,10 @@ void RkMppH264Encoder::SetRates(const webrtc::VideoEncoder::RateControlParameter
 
 webrtc::VideoEncoder::EncoderInfo RkMppH264Encoder::GetEncoderInfo() const {
     webrtc::VideoEncoder::EncoderInfo info;
-    info.supports_native_handle = true;
+    // false：弱网时 VideoStreamEncoder 可对 kNative 帧做 CropAndScale（经 ToI420/NV12），
+    // 使 MAINTAIN_FRAMERATE 能真正降分辨率；true 则跳过缩放，始终 1280x720 硬编。
+    info.supports_native_handle =
+        ReadEnvIntInRange("RFLOW_MPP_ENC_SUPPORTS_NATIVE_HANDLE", 0, 0, 1) == 1;
     info.implementation_name = "rockchip_mpp_h264";
     info.has_trusted_rate_controller = false;
     info.is_hardware_accelerated = true;
@@ -1676,13 +1658,13 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                         return WEBRTC_VIDEO_CODEC_ERROR;
                     } else {
                         ++native_copy_fallback_frames_;
-                        SyncDmabufBeforeDeviceRead(MppBufferFdOrNeg1(ext));
+                        DmabufSyncStartRead(MppBufferFdOrNeg1(ext));
                         CopySemiPlanarToMppBuffer(src_y, src_uv, nhs, nhs, dst, hor_stride_, ver_stride_, width_,
                                                   height_);
                         cpu_wrote_frm_buf = true;
                     }
                 } else if (dims_ok && (nv12_mpp || fmt == MPP_FMT_YUV420SP_VU)) {
-                    SyncDmabufBeforeDeviceRead(MppBufferFdOrNeg1(ext));
+                    DmabufSyncStartRead(MppBufferFdOrNeg1(ext));
                     if (fmt == MPP_FMT_YUV420SP) {
                         CopySemiPlanarToMppBuffer(src_y, src_uv, nhs, nhs, dst, hor_stride_, ver_stride_, width_, height_);
                     } else {
@@ -1736,7 +1718,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     }
 
     if (cpu_wrote_frm_buf) {
-        SyncDmabufAfterCpuWrite(MppBufferFdOrNeg1(reinterpret_cast<MppBuffer>(frm_buf_)));
+        DmabufSyncEndWrite(MppBufferFdOrNeg1(reinterpret_cast<MppBuffer>(frm_buf_)));
     }
 
     bool want_key = false;
@@ -1792,7 +1774,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     MppBuffer held_input_buf = nullptr;
     HeldMppInputGuard held_input_guard{&held_input_buf};
     if (used_native_zero_copy && input_mpp_buf && input_mpp_buf != reinterpret_cast<MppBuffer>(frm_buf_)) {
-        SyncDmabufBeforeDeviceRead(mpp_buffer_get_fd(input_mpp_buf));
+        DmabufSyncStartRead(mpp_buffer_get_fd(input_mpp_buf));
         held_input_buf = input_mpp_buf;
         orphan_import_buf = nullptr;
     }
@@ -1948,7 +1930,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             return recover_or_error("simulate_put_frame_fail", -1);
         }
         auto sync_frm_buf_after_cpu_write = [&]() {
-            SyncDmabufAfterCpuWrite(MppBufferFdOrNeg1(reinterpret_cast<MppBuffer>(frm_buf_)));
+            DmabufSyncEndWrite(MppBufferFdOrNeg1(reinterpret_cast<MppBuffer>(frm_buf_)));
         };
         ret = mpi->encode_put_frame(ctx, mframe);
         if (ret != MPP_OK && input_mpp_buf != reinterpret_cast<MppBuffer>(frm_buf_)) {
@@ -1978,7 +1960,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                     RTC_LOG(LS_WARNING) << "[RkMppH264] zero-copy encode_put_frame failed ret=" << ret
                                         << ", retry with memcpy to encoder buffer";
                     held_input_guard.release();
-                    SyncDmabufBeforeDeviceRead(MppBufferFdOrNeg1(ext));
+                    DmabufSyncStartRead(MppBufferFdOrNeg1(ext));
                     if (fmt == MPP_FMT_YUV420SP) {
                         CopySemiPlanarToMppBuffer(src_y, src_uv, nhs, nhs, dst, hor_stride_, ver_stride_, width_, height_);
                     } else if (fmt == MPP_FMT_YUV420SP_VU) {

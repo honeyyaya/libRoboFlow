@@ -97,6 +97,12 @@ if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)
                 target_link_libraries(rflow_client PRIVATE ${RFLOW_CLIENT_MPP_LIB})
             endif()
         endif()
+        find_library(RFLOW_CLIENT_RGA_LIB NAMES rga
+            PATHS /usr/lib /usr/lib64 /usr/lib/aarch64-linux-gnu /usr/local/lib)
+        if(RFLOW_CLIENT_RGA_LIB)
+            target_compile_definitions(rflow_client PRIVATE RFLOW_HAVE_LIBRGA=1)
+            target_link_libraries(rflow_client PRIVATE ${RFLOW_CLIENT_RGA_LIB})
+        endif()
     endif()
 endif()
 
