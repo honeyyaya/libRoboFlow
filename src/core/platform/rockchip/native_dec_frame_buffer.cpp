@@ -3,6 +3,7 @@
 #include "platform/rockchip/mjpeg_decoder.h"
 #include "platform/rockchip/rga_nv12_scale.h"
 #include "public/log_tagged.h"
+#include "rtc/push_pipeline_drop_stats.h"
 
 #include <cstring>
 
@@ -306,11 +307,20 @@ webrtc::scoped_refptr<webrtc::VideoFrameBuffer> MppNativeDecFrameBuffer::CropAnd
         params.dst_hor_stride = dst_hs;
         params.dst_ver_stride = dst_vs;
         if (RgaNv12CropScaleDmabuf(params)) {
+            rflow::core::rtc::PushPipelineDropStats::Instance().OnRgaScaleOk(1);
             return CreateFromOwnedScaleBuffer(dst_buf, scaled_width, scaled_height, dst_hs, dst_vs, MPP_FMT_YUV420SP,
                                               decoder_keepalive_);
         }
+        rflow::core::rtc::PushPipelineDropStats::Instance().OnRgaScaleFail(1);
         MppDrmScaleBufferPool::Instance().Release(dst_buf);
+    } else {
+        rflow::core::rtc::PushPipelineDropStats::Instance().OnRgaScaleFail(1);
     }
+#else
+    (void)src_buf;
+    (void)src_fd;
+    (void)src_size;
+    (void)fmt;
 #endif
 
     webrtc::scoped_refptr<webrtc::I420BufferInterface> i420 = ToI420();

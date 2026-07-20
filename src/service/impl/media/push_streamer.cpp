@@ -74,6 +74,8 @@ using detail::push::MakeOfferOptions;
 using detail::push::MakeRtcConfiguration;
 using detail::push::ParseVideoNetworkPriority;
 using detail::push::PrintOutboundVideoStats;
+using detail::push::MaybeLogWebRtcSendDropStats;
+using detail::push::MaybeLogPushPipelineHealth;
 using detail::push::SignalingNowUs;
 using detail::push::SignalingTimingTraceEnabled;
 using detail::push::StopWebrtcThreadWithDeadline;
@@ -155,6 +157,7 @@ public:
 
     void Shutdown() {
         StopOutboundStatsLoop();
+        StopPushHealthLoop();
         if (frame_counter_ && camera_source_) {
             camera_source_->RemoveSink(frame_counter_.get());
         }
@@ -414,6 +417,7 @@ public:
                 auto cb = rflow::core::rtc::MakeStatsCollectorObserver(
                     [tag](const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
                         PrintOutboundVideoStats(tag, report);
+                        MaybeLogWebRtcSendDropStats(report);
                     });
                 pc->GetStats(cb.get());
             }
@@ -431,6 +435,51 @@ public:
         // post_after 中的延时任务在 shutdown_infrastructure → thread_pool::shutdown 时
         // 会被一并丢弃。无需 join。
         outbound_stats_started_.store(false, std::memory_order_release);
+    }
+
+    void MaybeStartPushHealthLoop() {
+        const int interval_sec = rflow::core::runtime::ReadInt("RFLOW_PUSH_HEALTH_INTERVAL_SEC");
+        if (interval_sec <= 0 || push_health_started_.exchange(true, std::memory_order_acq_rel)) {
+            return;
+        }
+        push_health_stop_.store(false, std::memory_order_release);
+        push_health_interval_sec_.store(interval_sec, std::memory_order_relaxed);
+        RFLOW_LOG_TAG_I("PushStreamer", "Push health summary enabled, interval=%ds", interval_sec);
+        SchedulePushHealthTick();
+    }
+
+    void SchedulePushHealthTick() {
+        if (push_health_stop_.load(std::memory_order_acquire)) {
+            return;
+        }
+        const int interval_sec = push_health_interval_sec_.load(std::memory_order_relaxed);
+        rflow::thread::post([this, interval_sec]() {
+            if (push_health_stop_.load(std::memory_order_acquire)) {
+                return;
+            }
+            auto emit_health = [this, interval_sec](
+                                   const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) {
+                MaybeLogPushPipelineHealth(interval_sec, camera_impl_, report);
+            };
+            auto [pc, tag] = SelectStatsPeerConnection();
+            (void)tag;
+            if (pc) {
+                auto cb = rflow::core::rtc::MakeStatsCollectorObserver(emit_health);
+                pc->GetStats(cb.get());
+            } else {
+                emit_health(nullptr);
+            }
+            if (push_health_stop_.load(std::memory_order_acquire)) {
+                return;
+            }
+            rflow::thread::post_after(std::chrono::seconds(interval_sec),
+                                      [this]() { SchedulePushHealthTick(); });
+        });
+    }
+
+    void StopPushHealthLoop() {
+        push_health_stop_.store(true, std::memory_order_release);
+        push_health_started_.store(false, std::memory_order_release);
     }
 
     std::pair<webrtc::scoped_refptr<webrtc::PeerConnectionInterface>, std::string> SelectStatsPeerConnection() {
@@ -634,6 +683,7 @@ public:
         video_track_->set_content_hint(webrtc::VideoTrackInterface::ContentHint::kFluid);
 
         RFLOW_LOG_TAG_I("PushStreamer", "Video capture started");
+        MaybeStartPushHealthLoop();
 
         {
             int cam_fps = 0;
@@ -1288,6 +1338,9 @@ private:
     std::atomic<bool> outbound_stats_stop_{false};
     std::atomic<bool> outbound_stats_started_{false};
     std::atomic<int>  outbound_stats_interval_sec_{1};
+    std::atomic<bool> push_health_stop_{false};
+    std::atomic<bool> push_health_started_{false};
+    std::atomic<int>  push_health_interval_sec_{5};
 };
 
 PushStreamer::PushStreamer(const PushStreamerConfig& config) : impl_(std::make_unique<Impl>(config)) {}

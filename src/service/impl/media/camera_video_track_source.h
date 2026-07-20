@@ -81,6 +81,25 @@ public:
         return captured_frames_.load(std::memory_order_relaxed);
     }
 
+    /// V4L2 DQBUF 成功且有效载荷的累计帧数（丢帧统计基准）。
+    uint64_t V4l2CaptureCount() const {
+        return v4l2_capture_count_.load(std::memory_order_relaxed);
+    }
+
+    /// 周期性健康摘要用的采集侧快照（线程安全）。
+    struct PipelineHealthSnapshot {
+        uint64_t v4l2_capture{0};
+        uint64_t dispatched{0};
+        size_t mjpeg_queue_depth{0};
+        uint64_t mjpeg_stale_drops{0};
+        uint64_t mjpeg_queue_full_drops{0};
+        uint64_t mjpeg_latest_only_drops{0};
+        uint64_t empty_payload_drops{0};
+        uint64_t convert_fail_drops{0};
+        uint64_t nv12_pool_busy{0};
+    };
+    PipelineHealthSnapshot GetPipelineHealthSnapshot() const;
+
     // IVideoFrameSource
     std::uint32_t dispatched_frame_count() const noexcept override {
         return captured_frames_.load(std::memory_order_relaxed);
@@ -119,7 +138,10 @@ private:
     webrtc::scoped_refptr<webrtc::VideoFrameBuffer> AcquireNv12PoolBuffer(int w, int h);
     void ReleaseNv12PoolSlot(size_t slot_index);
     void QBufV4l2Index(unsigned int index);
-    void MaybeLogMjpegQueueDropStats(size_t queue_depth, bool force = false);
+    void MaybeLogMjpegQueueDropStats(size_t queue_depth,
+                                     uint64_t stale_delta,
+                                     uint64_t queue_full_delta,
+                                     uint64_t latest_only_delta);
     /// MJPEG：仅传 mmap 索引，解码后再 QBUF，避免压缩 JPEG 再 memcpy 一整份到队列。
     struct MjpegPendingBuf {
         unsigned int index{0};
@@ -133,7 +155,7 @@ private:
 
     std::thread direct_thread_;
     std::thread decode_thread_;
-    std::mutex jpeg_queue_mu_;
+    mutable std::mutex jpeg_queue_mu_;
     std::condition_variable jpeg_queue_cv_;
     std::deque<MjpegPendingBuf> jpeg_queue_;
     bool decode_worker_exit_{false};
@@ -142,6 +164,10 @@ private:
     std::atomic<uint64_t> mjpeg_stale_drop_count_{0};
     std::atomic<uint64_t> mjpeg_queue_full_drop_count_{0};
     std::atomic<uint64_t> mjpeg_latest_only_drop_count_{0};
+    std::atomic<uint64_t> convert_fail_drop_count_{0};
+    std::atomic<uint64_t> empty_capture_drop_count_{0};
+    std::atomic<uint64_t> nv12_pool_busy_count_{0};
+    std::atomic<uint64_t> v4l2_capture_count_{0};
     int nv12_pool_slots_{6};
     int v4l2_buffer_count_{2};
     int v4l2_poll_timeout_ms_{50};

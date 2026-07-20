@@ -136,6 +136,10 @@ constexpr KnobSpec kKnobTable[] = {
     // ---------- Media pipeline ------------------------------------------
     {"RFLOW_PUSH_OUTBOUND_STATS_INTERVAL_SEC", nullptr, KnobGroup::kMediaPipeline, KnobKind::kInt, 5, 0, 60, "",
      "Publisher periodic outbound RTP stats log interval (s); 0 = off."},
+    {"RFLOW_PUSH_HEALTH_INTERVAL_SEC", nullptr, KnobGroup::kMediaPipeline, KnobKind::kInt, 5, 0, 60, "",
+     "Publisher periodic push pipeline health summary interval (s); 0 = off."},
+    {"RFLOW_PUSH_HEALTH_ONLY_ANOMALY", nullptr, KnobGroup::kMediaPipeline, KnobKind::kBool, 0, 0, 1, "",
+     "When set, PushHealth logs only if backlog grows, drops occur, or ql_reason is active."},
     {"RFLOW_SKIP_LOOPBACK_RECV", nullptr, KnobGroup::kMediaPipeline, KnobKind::kBool, 0, 0, 1, "",
      "Benchmark only: skip loopback receive path on publisher to save CPU."},
 

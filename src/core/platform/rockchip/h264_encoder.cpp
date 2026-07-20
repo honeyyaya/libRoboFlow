@@ -22,10 +22,13 @@
 #include <vector>
 
 #include "public/log_tagged.h"
+#include "rtc/push_pipeline_drop_stats.h"
+#include "rtc/push_pipeline_drop_stats.h"
 #include <unistd.h>
 #include "api/array_view.h"
 #include "api/video/video_codec_constants.h"
-#include "modules/video_coding/codecs/interface/common_constants.h"
+#include "modules/video_coding/codecs/h264/include/h264.h"
+#include "rtc_base/experiments/encoder_info_settings.h"
 #include "api/video/nv12_buffer.h"
 #include "api/video/video_timing.h"
 #include "api/video/video_frame_buffer.h"
@@ -1283,14 +1286,26 @@ void RkMppH264Encoder::SetRates(const webrtc::VideoEncoder::RateControlParameter
 
 webrtc::VideoEncoder::EncoderInfo RkMppH264Encoder::GetEncoderInfo() const {
     webrtc::VideoEncoder::EncoderInfo info;
-    // false：弱网时 VideoStreamEncoder 可对 kNative 帧做 CropAndScale（经 ToI420/NV12），
-    // 使 MAINTAIN_FRAMERATE 能真正降分辨率；true 则跳过缩放，始终 1280x720 硬编。
+    // false: allow VideoStreamEncoder to CropAndScale kNative frames (RGA path) under
+    // MAINTAIN_FRAMERATE so weak-network adaptation can reduce resolution.
     info.supports_native_handle =
         ReadEnvIntInRange("RFLOW_MPP_ENC_SUPPORTS_NATIVE_HANDLE", 0, 0, 1) == 1;
     info.implementation_name = "rockchip_mpp_h264";
     info.has_trusted_rate_controller = false;
     info.is_hardware_accelerated = true;
     info.supports_simulcast = false;
+    info.requested_resolution_alignment = 16;
+    info.scaling_settings = webrtc::VideoEncoder::ScalingSettings::kOff;
+    info.resolution_bitrate_limits =
+        webrtc::EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsWhenQpIsUntrusted(
+            webrtc::kVideoCodecH264);
+    if (info.resolution_bitrate_limits.empty()) {
+        info.resolution_bitrate_limits = {
+            webrtc::VideoEncoder::ResolutionBitrateLimits(1280 * 720, 150000, 75000, 2500000),
+            webrtc::VideoEncoder::ResolutionBitrateLimits(640 * 360, 50000, 30000, 1200000),
+            webrtc::VideoEncoder::ResolutionBitrateLimits(320 * 180, 0, 0, 450000),
+        };
+    }
     // kNative for MPP MJPEG decode pass-through; keep NV12/I420 planar paths.
     info.preferred_pixel_formats = {webrtc::VideoFrameBuffer::Type::kNative,
                                     webrtc::VideoFrameBuffer::Type::kNV12,
@@ -1658,6 +1673,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                         return WEBRTC_VIDEO_CODEC_ERROR;
                     } else {
                         ++native_copy_fallback_frames_;
+                        rflow::core::rtc::PushPipelineDropStats::Instance().OnZcFallback(1);
                         DmabufSyncStartRead(MppBufferFdOrNeg1(ext));
                         CopySemiPlanarToMppBuffer(src_y, src_uv, nhs, nhs, dst, hor_stride_, ver_stride_, width_,
                                                   height_);
@@ -1979,6 +1995,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                     const int32_t rc = copy_i420_to_encoder_buffer(vfb);
                     if (rc == WEBRTC_VIDEO_CODEC_OK) {
                         ++native_copy_fallback_frames_;
+                        rflow::core::rtc::PushPipelineDropStats::Instance().OnZcFallback(1);
                         sync_frm_buf_after_cpu_write();
                         used_native_zero_copy = false;
                         input_mpp_buf = reinterpret_cast<MppBuffer>(frm_buf_);
@@ -2176,6 +2193,15 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
                                       empty_eoi_retry_max_, safety, split_assembly_buf_.size());
                 RTC_LOG(LS_WARNING) << "[RkMppH264] empty EOI after " << empty_eoi_retry
                                     << " retries, dropping input frame (MPP skip/drain)";
+                {
+                    static std::atomic<uint64_t> empty_eoi_drop_total{0};
+                    const uint64_t total = empty_eoi_drop_total.fetch_add(1, std::memory_order_relaxed) + 1;
+                    char detail[96];
+                    snprintf(detail, sizeof(detail), "reason=empty_eoi retries=%d rtp_ts=%u",
+                             empty_eoi_retry, frame.rtp_timestamp());
+                    rflow::core::rtc::PushPipelineDropStats::Instance().LogDrop("MppH264/Encode", 1, total,
+                                                                                     detail);
+                }
                 RFLOW_LOG_TAG_W("RkMppH264Warn", "empty_eoi_drop retries=%d rtp_ts=%u tracking_id=%u",
                                 empty_eoi_retry, frame.rtp_timestamp(),
                                 static_cast<unsigned>(next_video_frame_tracking_id_));

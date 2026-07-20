@@ -21,6 +21,10 @@ namespace webrtc {
 class Thread;
 }  // namespace webrtc
 
+namespace rflow::service::impl {
+class CameraVideoTrackSource;
+}
+
 namespace rflow::service::impl::detail::push {
 
 // ---- trace switches -------------------------------------------------------
@@ -67,6 +71,16 @@ webrtc::PeerConnectionInterface::RTCOfferAnswerOptions MakeOfferOptions();
 // 把统计 report 中的 outbound video 项打印出来；pc_tag 用于在多 peer 场景区分。
 void PrintOutboundVideoStats(
     const std::string& pc_tag,
+    const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report);
+
+// WebRTC 发送侧丢帧（VSE/media opt 等）：仅当 frames_dropped 相对上次有增量时打印。
+void MaybeLogWebRtcSendDropStats(
+    const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report);
+
+// 周期性推流链路健康摘要（见 RFLOW_PUSH_HEALTH_INTERVAL_SEC）。
+void MaybeLogPushPipelineHealth(
+    int interval_sec,
+    const rflow::service::impl::CameraVideoTrackSource* camera,
     const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report);
 
 }  // namespace rflow::service::impl::detail::push

@@ -3,6 +3,7 @@
 #include "media/capture_fps_pipeline_policy.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 
@@ -12,6 +13,7 @@
 #include "base/env_reader.h"
 #include "base/trace_switches.h"
 #include "public/log_tagged.h"
+#include "rtc/push_pipeline_drop_stats.h"
 #include "common_video/libyuv/include/webrtc_libyuv.h"
 #include "media/zero_copy_pipeline_policy.h"
 #include "modules/video_capture/video_capture_factory.h"
@@ -445,10 +447,8 @@ webrtc::scoped_refptr<webrtc::VideoFrameBuffer> CameraVideoTrackSource::AcquireN
         return PooledNv12Buffer::Create(std::move(lease));
     }
     static std::atomic<uint64_t> drop_count{0};
-    const uint64_t n_drop = ++drop_count;
-    if ((n_drop % 60) == 1) {
-        RFLOW_LOG_TAG_W("CameraV4L2", "NV12 pool exhausted (slots=%zu), drop frame", n);
-    }
+    ++drop_count;
+    nv12_pool_busy_count_.fetch_add(1, std::memory_order_relaxed);
     return nullptr;
 }
 
@@ -941,14 +941,11 @@ void CameraVideoTrackSource::ProcessV4l2CapturedFrame(unsigned int buf_index,
         ok = (conv == 0);
     }
     if (!ok) {
-        static std::atomic<unsigned> conv_fail_n{0};
-        const unsigned n = ++conv_fail_n;
-        if ((n <= 5u) || ((n % 30u) == 0u)) {
-            RFLOW_LOG_TAG_E(
-                "CameraV4L2",
-                "frame convert failed pixfmt=0x%x bytes=%zu size=%dx%d conv_ret=%d (frame dropped)",
-                static_cast<unsigned>(direct_pixfmt_), static_cast<size_t>(bytesused), w, h, conv_ret);
-        }
+        const uint64_t total = convert_fail_drop_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+        char detail[96];
+        snprintf(detail, sizeof(detail), "pixfmt=0x%x conv_err=%d size=%dx%d",
+                 static_cast<unsigned>(direct_pixfmt_), conv_ret, w, h);
+        rflow::core::rtc::PushPipelineDropStats::Instance().LogDrop("Capture/Convert", 1, total, detail);
     }
     if (ok && log_libyuv_mjpeg) {
         LogMjpegDecodeTiming("libyuv-i420", decode_before_us, webrtc::TimeMicros());
@@ -1007,9 +1004,16 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
         const uint8_t* src = static_cast<const uint8_t*>(direct_mmap_[buf.index]);
         if (direct_pixfmt_ == static_cast<uint32_t>(V4L2_PIX_FMT_MJPEG)) {
             if (buf.bytesused == 0) {
+                v4l2_capture_count_.fetch_add(1, std::memory_order_relaxed);
+                rflow::core::rtc::PushPipelineDropStats::Instance().OnV4l2FrameCaptured(1);
+                const uint64_t total = empty_capture_drop_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+                rflow::core::rtc::PushPipelineDropStats::Instance().LogDrop(
+                    "Capture/EmptyPayload", 1, total, "reason=zero_bytesused");
                 ioctl(direct_fd_, VIDIOC_QBUF, &buf);
                 continue;
             }
+            v4l2_capture_count_.fetch_add(1, std::memory_order_relaxed);
+            rflow::core::rtc::PushPipelineDropStats::Instance().OnV4l2FrameCaptured(1);
             if (mjpeg_decode_inline_) {
                 static std::atomic<unsigned> inline_counter{0};
                 const int64_t t0_us = webrtc::TimeMicros();
@@ -1076,12 +1080,15 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                     QBufV4l2Index(drop.index);
                 }
                 if (stale_drop_n > 0 || queue_full_drop_n > 0 || latest_only_drop_n > 0) {
-                    MaybeLogMjpegQueueDropStats(qdepth_after, true);
+                    MaybeLogMjpegQueueDropStats(qdepth_after, stale_drop_n, queue_full_drop_n,
+                                                latest_only_drop_n);
                 }
             }
             jpeg_queue_cv_.notify_one();
             continue;
         }
+        v4l2_capture_count_.fetch_add(1, std::memory_order_relaxed);
+        rflow::core::rtc::PushPipelineDropStats::Instance().OnV4l2FrameCaptured(1);
         ProcessV4l2CapturedFrame(buf.index, src, buf.bytesused, dq_time_us, v4l2_timestamp_us, poll_wait_us,
                                  dqbuf_ioctl_us, 0);
         ioctl(direct_fd_, VIDIOC_QBUF, &buf);
@@ -1170,26 +1177,38 @@ void CameraVideoTrackSource::OnFrame(const webrtc::VideoFrame& frame) {
     }
 #endif
     captured_frames_.fetch_add(1, std::memory_order_relaxed);
-    MaybeLogMjpegQueueDropStats(0);
+#if defined(WEBRTC_LINUX) && defined(__linux__)
+    if (direct_fd_ < 0) {
+        v4l2_capture_count_.fetch_add(1, std::memory_order_relaxed);
+        rflow::core::rtc::PushPipelineDropStats::Instance().OnV4l2FrameCaptured(1);
+    }
+#endif
+    rflow::core::rtc::PushPipelineDropStats::Instance().OnFrameDispatched(1);
     AdaptedVideoTrackSource::OnFrame(frame);
 }
 
-void CameraVideoTrackSource::MaybeLogMjpegQueueDropStats(size_t queue_depth, bool force) {
-    const uint32_t decoded = captured_frames_.load(std::memory_order_relaxed);
+void CameraVideoTrackSource::MaybeLogMjpegQueueDropStats(size_t queue_depth,
+                                                         uint64_t stale_delta,
+                                                         uint64_t queue_full_delta,
+                                                         uint64_t latest_only_delta) {
+    const uint64_t drop_delta = stale_delta + queue_full_delta + latest_only_delta;
+    if (drop_delta == 0) {
+        return;
+    }
     const uint64_t stale = mjpeg_stale_drop_count_.load(std::memory_order_relaxed);
     const uint64_t queue_full = mjpeg_queue_full_drop_count_.load(std::memory_order_relaxed);
     const uint64_t latest_only = mjpeg_latest_only_drop_count_.load(std::memory_order_relaxed);
     const uint64_t total_drops = stale + queue_full + latest_only;
-    if (!force) {
-        if (decoded == 0 || total_drops == 0 || (decoded % 300u) != 0u) {
-            return;
-        }
-    }
-    RFLOW_LOG_TAG_I("MJPEG_QUEUE",
-                    "decoded=%u qdepth=%zu stale_drop=%llu queue_full_drop=%llu latest_only_drop=%llu",
-                    decoded, queue_depth, static_cast<unsigned long long>(stale),
-                    static_cast<unsigned long long>(queue_full),
-                    static_cast<unsigned long long>(latest_only));
+    char detail[192];
+    snprintf(detail, sizeof(detail),
+             "qdepth=%zu | totals[stale=%llu queue_full=%llu latest_only=%llu] | "
+             "window[stale=%llu queue_full=%llu latest_only=%llu]",
+             queue_depth, static_cast<unsigned long long>(stale),
+             static_cast<unsigned long long>(queue_full), static_cast<unsigned long long>(latest_only),
+             static_cast<unsigned long long>(stale_delta), static_cast<unsigned long long>(queue_full_delta),
+             static_cast<unsigned long long>(latest_only_delta));
+    rflow::core::rtc::PushPipelineDropStats::Instance().LogDrop("Capture/MJPEG_QUEUE", drop_delta,
+                                                                     total_drops, detail);
 }
 
 #if defined(WEBRTC_LINUX) && defined(__linux__) && defined(RFLOW_HAVE_ROCKCHIP_MPP)
@@ -1205,5 +1224,22 @@ bool CameraVideoTrackSource::WantMjpegRgaToMpp() const {
         .use_rga_to_mpp;
 }
 #endif
+
+CameraVideoTrackSource::PipelineHealthSnapshot CameraVideoTrackSource::GetPipelineHealthSnapshot() const {
+    PipelineHealthSnapshot snap;
+    snap.v4l2_capture = v4l2_capture_count_.load(std::memory_order_relaxed);
+    snap.dispatched = captured_frames_.load(std::memory_order_relaxed);
+    snap.mjpeg_stale_drops = mjpeg_stale_drop_count_.load(std::memory_order_relaxed);
+    snap.mjpeg_queue_full_drops = mjpeg_queue_full_drop_count_.load(std::memory_order_relaxed);
+    snap.mjpeg_latest_only_drops = mjpeg_latest_only_drop_count_.load(std::memory_order_relaxed);
+    snap.empty_payload_drops = empty_capture_drop_count_.load(std::memory_order_relaxed);
+    snap.convert_fail_drops = convert_fail_drop_count_.load(std::memory_order_relaxed);
+    snap.nv12_pool_busy = nv12_pool_busy_count_.load(std::memory_order_relaxed);
+#if defined(WEBRTC_LINUX) && defined(__linux__)
+    std::lock_guard<std::mutex> lk(jpeg_queue_mu_);
+    snap.mjpeg_queue_depth = jpeg_queue_.size();
+#endif
+    return snap;
+}
 
 }  // namespace rflow::service::impl

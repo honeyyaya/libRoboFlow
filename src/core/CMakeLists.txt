@@ -96,6 +96,8 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
         rtc/peer_connection_factory_deps.cpp
         rtc/inbound_video_stats_aggregation.cpp
         rtc/outbound_video_stats_aggregation.cpp
+        rtc/push_pipeline_drop_stats.cpp
+        rtc/push_pipeline_health.cpp
         rtc/ice_nominated_pair_rtt.cpp
         rtc/rtc_sync_stats.cpp
         rtc/sdp_observers.cpp
