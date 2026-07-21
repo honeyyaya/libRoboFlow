@@ -54,13 +54,15 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   void* ExternalGroupImportDecBufferForEncodeLocked(void* dec_buf);
   bool RecoverMppSessionLocked();
   bool ApplyRcToCfg();
+  void RefreshHeaderCacheSync();
   static int MppH264LevelForSize(int width, int height, uint32_t fps);
   /// 将 split_assembly_buf_ 中拼好的一帧 Annex B（或等价）码流发出一次 OnEncodedImage。
   int32_t EmitAssembledFrame(const webrtc::VideoFrame& frame,
                              const webrtc::scoped_refptr<webrtc::VideoFrameBuffer>& vfb,
                              int64_t encode_before_us,
                              int64_t on_frame_to_encode_enter_us,
-                             bool mpp_reports_intra);
+                             bool mpp_reports_intra,
+                             webrtc::scoped_refptr<webrtc::EncodedImageBufferInterface> direct_buffer = nullptr);
   /// 编码输出异常时执行软恢复（丢当前帧/必要时关闭分片），返回是否可继续会话。
   bool HandleOutputFailureAndMaybeRecover(const char* stage, int err_code);
 
@@ -119,6 +121,12 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   int native_zero_copy_fail_disable_threshold_{3};
   uint64_t native_zero_copy_frames_{0};
   uint64_t native_copy_fallback_frames_{0};
+  uint64_t vector_move_frames_{0};
+  uint64_t assembly_to_webrtc_copy_bytes_{0};
+  uint64_t native_idr_headers_{0};
+  uint64_t prepend_fallback_{0};
+  uint64_t mpp_buffer_direct_frames_{0};
+  uint64_t assembly_fallback_frames_{0};
   unsigned trace_every_n_{120};
   int simulate_put_frame_fail_remaining_{0};
   std::optional<webrtc::VideoCodec> cached_codec_inst_;

@@ -62,7 +62,7 @@ struct PushStreamerBackendConfig {
     int v4l2_poll_timeout_ms{5};
     int nv12_pool_slots{4};
     bool mjpeg_decode_inline{false};
-    bool mjpeg_v4l2_ext_dma{false};
+    bool mjpeg_v4l2_ext_dma{true};
     bool mjpeg_rga_to_mpp{false};
 };
 

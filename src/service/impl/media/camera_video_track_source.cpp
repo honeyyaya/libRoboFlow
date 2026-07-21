@@ -998,7 +998,7 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
         const int64_t v4l2_timestamp_us =
             static_cast<int64_t>(buf.timestamp.tv_sec) * webrtc::kNumMicrosecsPerSec + buf.timestamp.tv_usec;
         if (buf.index >= direct_mmap_.size() || !direct_mmap_[buf.index]) {
-            ioctl(direct_fd_, VIDIOC_QBUF, &buf);
+            QBufV4l2Index(buf.index);
             continue;
         }
         const uint8_t* src = static_cast<const uint8_t*>(direct_mmap_[buf.index]);
@@ -1009,7 +1009,7 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                 const uint64_t total = empty_capture_drop_count_.fetch_add(1, std::memory_order_relaxed) + 1;
                 rflow::core::rtc::PushPipelineDropStats::Instance().LogDrop(
                     "Capture/EmptyPayload", 1, total, "reason=zero_bytesused");
-                ioctl(direct_fd_, VIDIOC_QBUF, &buf);
+                QBufV4l2Index(buf.index);
                 continue;
             }
             v4l2_capture_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1027,7 +1027,7 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                                         static_cast<unsigned>(n));
                     }
                 }
-                ioctl(direct_fd_, VIDIOC_QBUF, &buf);
+                QBufV4l2Index(buf.index);
                 continue;
             }
             // 延迟 QBUF：解码线程从 mmap 读 JPEG 并入 MPP 后再归还驱动，去掉「整帧 memcpy 到队列」。
@@ -1091,7 +1091,7 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
         rflow::core::rtc::PushPipelineDropStats::Instance().OnV4l2FrameCaptured(1);
         ProcessV4l2CapturedFrame(buf.index, src, buf.bytesused, dq_time_us, v4l2_timestamp_us, poll_wait_us,
                                  dqbuf_ioctl_us, 0);
-        ioctl(direct_fd_, VIDIOC_QBUF, &buf);
+        QBufV4l2Index(buf.index);
     }
 }
 

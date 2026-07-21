@@ -491,6 +491,7 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
         return false;
     }
     MppBuffer mbuf = nullptr;
+    bool ext_dma_input = false;
     const bool want_ext_import = (dma_buf_fd >= 0 && dma_buf_capacity >= jpeg_len && WantExtDmabufImport());
 #if defined(RFLOW_HAVE_LIBRGA)
     const bool want_rga = (dma_buf_fd >= 0 && dma_buf_capacity >= jpeg_len && WantRgaToMpp() && !want_ext_import);
@@ -517,13 +518,20 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
         info.hnd = nullptr;
         info.index = 0;
         if (mpp_buffer_import(&mbuf, &info) != MPP_OK || !mbuf) {
+            ++input_ext_dma_fail_;
             if (MjpegDecTraceEnabled()) {
                 RFLOW_LOG_TAG_E("RkMppMjpeg", "mpp_buffer_import EXT_DMA failed fd=%d cap=%zu", dma_buf_fd,
                                   dma_buf_capacity);
             }
-            return false;
+            // The mmap pointer aliases the same V4L2 buffer and remains valid
+            // until QBUF, so retain the proven memcpy path as a per-frame
+            // fallback when this BSP rejects an exported dma-buf.
+        } else {
+            ++input_ext_dma_ok_;
+            ext_dma_input = true;
         }
-    } else {
+    }
+    if (!mbuf) {
         if (!jpeg && !want_rga) {
             return false;
         }
@@ -589,12 +597,21 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
             }
             const auto t_mc0 = std::chrono::steady_clock::now();
             std::memcpy(dst, jpeg, jpeg_len);
+            ++input_memcpy_fallback_;
             if (LatencyTraceEnabled()) {
                 const double mc_ms =
                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_mc0).count();
                 RFLOW_LOG_TAG_I("Latency", "MPP JPEG input memcpy ms=%f bytes=%zu", mc_ms, jpeg_len);
             }
         }
+    }
+    const uint64_t input_total = input_ext_dma_ok_ + input_memcpy_fallback_;
+    if (input_total > 0 && (input_total % 300u) == 0u) {
+        RFLOW_LOG_TAG_I("RkMppMjpeg",
+                        "input_path ext_dma_ok=%llu ext_dma_fail=%llu memcpy_fallback=%llu",
+                        static_cast<unsigned long long>(input_ext_dma_ok_),
+                        static_cast<unsigned long long>(input_ext_dma_fail_),
+                        static_cast<unsigned long long>(input_memcpy_fallback_));
     }
     mpp_buffer_set_index(mbuf, kMppBufferGroupIndex);
 
@@ -603,8 +620,15 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
         mpp_buffer_put(mbuf);
         return false;
     }
+    if (ext_dma_input) {
+        // This BSP accepts the exported fd but cannot mmap it through MPP.
+        // The MJPEG parser is CPU-side, so use the already-existing V4L2
+        // MMAP address while retaining the imported MppBuffer on the packet.
+        mpp_packet_set_data(packet, const_cast<uint8_t*>(jpeg));
+        mpp_packet_set_pos(packet, const_cast<uint8_t*>(jpeg));
+    }
     mpp_buffer_put(mbuf);
-    mpp_packet_set_size(packet, jpeg_len);
+    mpp_packet_set_size(packet, ext_dma_input ? dma_buf_capacity : jpeg_len);
     mpp_packet_set_length(packet, jpeg_len);
     *out_packet = packet;
     return true;

@@ -21,7 +21,8 @@ MjpegZeroCopyPolicy EvaluateMjpegZeroCopyPolicy(bool v4l2_ext_dma_config_default
     MjpegZeroCopyPolicy p;
     p.prefer_native_zero_copy_to_enc =
         ResolveBoolEnv("RFLOW_MJPEG_ZERO_COPY_TO_ENC", true);
-    p.use_v4l2_ext_dmabuf = v4l2_ext_dma_config_default;
+    p.use_v4l2_ext_dmabuf =
+        ResolveBoolEnv("RFLOW_MJPEG_V4L2_EXT_DMA", v4l2_ext_dma_config_default);
 #if defined(RFLOW_HAVE_LIBRGA)
     p.use_rga_to_mpp = mjpeg_rga_config_default;
 #else

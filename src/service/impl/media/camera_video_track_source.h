@@ -44,7 +44,7 @@ struct V4l2MjpegPipelineOptions {
     /// 为 true 时不使用解码工作线程，MJPEG 在采集线程内解码（低延迟，采集易受解码耗时影响）。
     bool mjpeg_decode_inline = false;
     /// 为 true 时启用 V4L2 MJPEG -> MPP EXT_DMA。
-    bool mjpeg_v4l2_ext_dma = false;
+    bool mjpeg_v4l2_ext_dma = true;
     /// 为 true 时启用 RGA 拷贝路径。
     bool mjpeg_rga_to_mpp = false;
 };
@@ -179,7 +179,7 @@ private:
     size_t nv12_slot_count_{0};
     bool mjpeg_decode_inline_{false};
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-    bool v4l2_ext_dma_config_{false};
+    bool v4l2_ext_dma_config_{true};
     bool mjpeg_rga_config_{false};
     bool WantV4l2ExtDmabufToMpp() const;
     bool WantMjpegRgaToMpp() const;

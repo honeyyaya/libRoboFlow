@@ -107,6 +107,9 @@ class RkMppMjpegDecoder {
   bool session_skip_rga_{false};
   bool pipeline_v4l2_ext_dma_{false};
   bool pipeline_rga_to_mpp_{false};
+  uint64_t input_ext_dma_ok_{0};
+  uint64_t input_ext_dma_fail_{0};
+  uint64_t input_memcpy_fallback_{0};
   int output_pool_limit_count_{0};
   int output_pool_limit_w_{0};
   int output_pool_limit_h_{0};
