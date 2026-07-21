@@ -13,6 +13,7 @@
 
 #include "api/environment/environment.h"
 #include "api/video_codecs/video_encoder.h"
+#include "common_video/h264/h264_bitstream_parser.h"
 #include "modules/video_coding/codecs/h264/include/h264.h"
 
 namespace rflow::rtc::hw::rockchip_mpp {
@@ -115,6 +116,9 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   bool use_sync_encode_{false};
   bool use_task_encode_{false};
   bool task_read_packet_{true};
+  bool enable_idr_ctrl_{false};
+  bool mpp_buffer_direct_enabled_{true};
+  uint64_t direct_max_outstanding_{16};
   bool native_zero_copy_enabled_{true};
   bool native_zero_copy_strict_{false};
   int native_zero_copy_failures_{0};
@@ -161,6 +165,7 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   std::vector<uint8_t> split_assembly_buf_;
   /// Cached codec header (SPS/PPS) converted to Annex-B at InitEncode.
   std::vector<uint8_t> cached_extra_info_annexb_;
+  webrtc::H264BitstreamParser qp_parser_;
 
   /// 与 WebRTC-VideoFrameTrackingIdAdvertised 配合，供接收端 RTP 扩展关联帧。
   uint16_t next_video_frame_tracking_id_{0};

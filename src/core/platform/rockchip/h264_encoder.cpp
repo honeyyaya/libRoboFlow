@@ -33,8 +33,6 @@
 #include "api/video/video_timing.h"
 #include "api/video/video_frame_buffer.h"
 #include "api/video_codecs/video_codec.h"
-#include "common_video/h264/h264_common.h"
-#include "common_video/h264/h264_bitstream_parser.h"
 #include "modules/video_coding/include/video_codec_interface.h"
 #include "modules/video_coding/include/video_error_codes.h"
 #include "rtc_base/logging.h"
@@ -77,7 +75,9 @@ std::atomic<uint64_t> g_mpp_output_outstanding_max{0};
 class MppEncodedImageBuffer : public webrtc::EncodedImageBufferInterface {
  public:
     MppEncodedImageBuffer(MppBuffer buffer, size_t offset, size_t size)
-        : buffer_(buffer), offset_(offset), size_(size) {
+        : buffer_(buffer),
+          data_(static_cast<uint8_t*>(mpp_buffer_get_ptr(buffer)) + offset),
+          size_(size) {
         const uint64_t current =
             g_mpp_output_outstanding.fetch_add(1, std::memory_order_relaxed) + 1;
         uint64_t old_max = g_mpp_output_outstanding_max.load(std::memory_order_relaxed);
@@ -94,17 +94,13 @@ class MppEncodedImageBuffer : public webrtc::EncodedImageBufferInterface {
         g_mpp_output_outstanding.fetch_sub(1, std::memory_order_relaxed);
     }
 
-    const uint8_t* data() const override {
-        return static_cast<const uint8_t*>(mpp_buffer_get_ptr(buffer_)) + offset_;
-    }
-    uint8_t* data() override {
-        return static_cast<uint8_t*>(mpp_buffer_get_ptr(buffer_)) + offset_;
-    }
+    const uint8_t* data() const override { return data_; }
+    uint8_t* data() override { return data_; }
     size_t size() const override { return size_; }
 
  private:
     MppBuffer buffer_;
-    size_t offset_;
+    uint8_t* data_;
     size_t size_;
 };
 
@@ -169,32 +165,38 @@ static size_t EncMdInfoBytesH264MpiEncTest(int hor_stride, int ver_stride) {
            static_cast<size_t>(MPP_ALIGN(ver_stride, 16) >> 4) * 16;
 }
 
-static bool AnnexBHasIdrNalu(const uint8_t* p, size_t len) {
+struct AnnexBNalSummary {
+    bool valid{false};
+    bool has_sps{false};
+    bool has_pps{false};
+    bool has_idr{false};
+};
+
+static AnnexBNalSummary ScanAnnexBNalus(const uint8_t* p, size_t len) {
+    AnnexBNalSummary result;
+    if (!p) {
+        return result;
+    }
     size_t i = 0;
     while (i + 3 < len) {
-        if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1) {
-            if (i + 3 < len) {
-                uint8_t nal = static_cast<uint8_t>(p[i + 3] & 0x1f);
-                if (nal == 5) {
-                    return true;
-                }
-            }
-            i += 3;
-            continue;
-        }
+        size_t start_code_size = 0;
         if (i + 4 < len && p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 0 && p[i + 3] == 1) {
-            if (i + 4 < len) {
-                uint8_t nal = static_cast<uint8_t>(p[i + 4] & 0x1f);
-                if (nal == 5) {
-                    return true;
-                }
-            }
-            i += 4;
-            continue;
+            start_code_size = 4;
+        } else if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1) {
+            start_code_size = 3;
         }
-        ++i;
+        if (start_code_size > 0 && i + start_code_size < len) {
+            const uint8_t type = static_cast<uint8_t>(p[i + start_code_size] & 0x1f);
+            result.valid = true;
+            result.has_sps = result.has_sps || type == 7;
+            result.has_pps = result.has_pps || type == 8;
+            result.has_idr = result.has_idr || type == 5;
+            i += start_code_size + 1;
+        } else {
+            ++i;
+        }
     }
-    return false;
+    return result;
 }
 
 // MPP stream_type=1 uses 4-byte length-prefixed NAL payload. WebRTC RTP packetizer expects Annex-B.
@@ -743,7 +745,7 @@ void RkMppH264Encoder::RefreshHeaderCacheSync() {
     const uint8_t* data = static_cast<const uint8_t*>(mpp_packet_get_pos(packet));
     const size_t len = static_cast<size_t>(mpp_packet_get_length(packet));
     if (ret == MPP_OK && data && len > 0) {
-        if (!webrtc::H264::FindNaluIndices(webrtc::ArrayView<const uint8_t>(data, len)).empty()) {
+        if (ScanAnnexBNalus(data, len).valid) {
             cached_extra_info_annexb_.assign(data, data + len);
         } else if (!FillAvcLengthPrefixedToAnnexB(data, len, &cached_extra_info_annexb_) &&
                    !FillAvcLengthPrefixed16ToAnnexB(data, len, &cached_extra_info_annexb_)) {
@@ -831,6 +833,11 @@ void RkMppH264Encoder::ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* i
     mjpeg_to_h264_trace_enabled_ = ReadEnvIntInRange("RFLOW_MJPEG_TO_H264_TRACE", 0, 0, 1) == 1;
     use_sync_encode_ = ReadEnvIntInRange("RFLOW_MPP_ENC_USE_SYNC", 0, 0, 1) == 1;
     use_task_encode_ = ReadEnvIntInRange("RFLOW_MPP_ENC_USE_TASK", 0, 0, 1) == 1;
+    enable_idr_ctrl_ = ReadEnvIntInRange("RFLOW_MPP_ENC_ENABLE_IDR_CTRL", 0, 0, 1) == 1;
+    mpp_buffer_direct_enabled_ =
+        ReadEnvIntInRange("RFLOW_MPP_ENC_MPP_BUFFER_DIRECT", 1, 0, 1) == 1;
+    direct_max_outstanding_ = static_cast<uint64_t>(
+        ReadEnvIntInRange("RFLOW_MPP_ENC_DIRECT_MAX_OUTSTANDING", 16, 1, 128));
     if (use_task_encode_) {
         RTC_LOG(LS_WARNING) << "[RkMppH264] task encode path is temporarily disabled; falling back to sync/non-task";
         use_task_encode_ = false;
@@ -1457,23 +1464,28 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
         return WEBRTC_VIDEO_CODEC_OK;
     }
     const bool started_direct = direct_buffer != nullptr;
+    bool used_mpp_direct = false;
     if (!direct_buffer) {
         ++assembly_fallback_frames_;
     }
     const uint8_t* raw = direct_buffer ? direct_buffer->data() : split_assembly_buf_.data();
     const size_t len = direct_buffer ? direct_buffer->size() : split_assembly_buf_.size();
     webrtc::scoped_refptr<webrtc::EncodedImageBufferInterface> buf;
-    const auto nal_indices = webrtc::H264::FindNaluIndices(webrtc::ArrayView<const uint8_t>(raw, len));
-    const bool detected_annexb = !nal_indices.empty();
+    AnnexBNalSummary nal_summary = ScanAnnexBNalus(raw, len);
+    const bool detected_annexb = nal_summary.valid;
     if (detected_annexb) {
         if (direct_buffer) {
             buf = std::move(direct_buffer);
             ++mpp_buffer_direct_frames_;
+            used_mpp_direct = true;
         } else {
             buf = webrtc::make_ref_counted<VectorEncodedImageBuffer>(std::move(split_assembly_buf_));
             ++vector_move_frames_;
         }
     } else {
+        if (started_direct) {
+            ++assembly_fallback_frames_;
+        }
         bool annex_ok = FillAvcLengthPrefixedToAnnexB(raw, len, &annex_scratch_);
         if (!annex_ok) {
             annex_ok = FillAvcLengthPrefixed16ToAnnexB(raw, len, &annex_scratch_);
@@ -1488,22 +1500,12 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
         }
         buf = webrtc::make_ref_counted<VectorEncodedImageBuffer>(std::move(annex_scratch_));
         ++vector_move_frames_;
+        nal_summary = ScanAnnexBNalus(buf->data(), buf->size());
     }
     {
-        const auto out_nals = webrtc::H264::FindNaluIndices(
-            webrtc::ArrayView<const uint8_t>(buf->data(), buf->size()));
-        bool has_sps = false;
-        bool has_pps = false;
-        bool has_idr = false;
-        for (const auto& nalu : out_nals) {
-            if (nalu.payload_start_offset >= buf->size()) {
-                continue;
-            }
-            const uint8_t t = static_cast<uint8_t>(buf->data()[nalu.payload_start_offset] & 0x1f);
-            has_sps = has_sps || (t == 7);
-            has_pps = has_pps || (t == 8);
-            has_idr = has_idr || (t == 5);
-        }
+        const bool has_sps = nal_summary.has_sps;
+        const bool has_pps = nal_summary.has_pps;
+        const bool has_idr = nal_summary.has_idr;
         if (has_idr && has_sps && has_pps) {
             ++native_idr_headers_;
         }
@@ -1513,7 +1515,7 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
             memcpy(merged->data() + cached_extra_info_annexb_.size(), buf->data(), buf->size());
             assembly_to_webrtc_copy_bytes_ += merged->size();
             ++prepend_fallback_;
-            if (started_direct) {
+            if (used_mpp_direct) {
                 --mpp_buffer_direct_frames_;
                 ++assembly_fallback_frames_;
             }
@@ -1549,9 +1551,6 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
                         static_cast<unsigned long long>(
                             g_mpp_output_outstanding_max.load(std::memory_order_relaxed)));
     }
-    (void)detected_annexb;
-    (void)nal_indices;
-    webrtc::H264BitstreamParser qp_parser;
     webrtc::EncodedImage encoded;
     encoded.SetEncodedData(buf);
     encoded._encodedWidth = width_;
@@ -1575,7 +1574,7 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
 
     if (mpp_reports_intra) {
         encoded._frameType = webrtc::VideoFrameType::kVideoFrameKey;
-    } else if (AnnexBHasIdrNalu(buf->data(), buf->size())) {
+    } else if (nal_summary.has_idr) {
         encoded._frameType = webrtc::VideoFrameType::kVideoFrameKey;
     } else {
         encoded._frameType = webrtc::VideoFrameType::kVideoFrameDelta;
@@ -1584,8 +1583,8 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
         last_idr_emit_us_ = webrtc::TimeMicros();
     }
 
-    qp_parser.ParseBitstream(encoded);
-    encoded.qp_ = qp_parser.GetLastSliceQp().value_or(-1);
+    qp_parser_.ParseBitstream(encoded);
+    encoded.qp_ = qp_parser_.GetLastSliceQp().value_or(-1);
 
     const uint32_t trace_tid = next_video_frame_tracking_id_;
     const bool trace_periodic_log = (trace_tid % trace_every_n_ == 0u);
@@ -1930,8 +1929,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             }
         }
     }
-    const bool enable_idr_ctrl = ReadEnvIntInRange("RFLOW_MPP_ENC_ENABLE_IDR_CTRL", 0, 0, 1) == 1;
-    if (want_key && enable_idr_ctrl) {
+    if (want_key && enable_idr_ctrl_) {
         bool allow_force_idr = true;
         const int64_t now_us = webrtc::TimeMicros();
         const int64_t min_interval_us = static_cast<int64_t>(std::max(0, idr_min_interval_ms_)) * 1000;
@@ -2341,11 +2339,7 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         }
         if (pos) {
             const uint8_t* raw = static_cast<const uint8_t*>(pos);
-            const bool direct_enabled =
-                !split_by_byte_enabled_ &&
-                ReadEnvIntInRange("RFLOW_MPP_ENC_MPP_BUFFER_DIRECT", 1, 0, 1) == 1;
-            const uint64_t max_outstanding = static_cast<uint64_t>(
-                ReadEnvIntInRange("RFLOW_MPP_ENC_DIRECT_MAX_OUTSTANDING", 16, 1, 128));
+            const bool direct_enabled = !split_by_byte_enabled_ && mpp_buffer_direct_enabled_;
             MppBuffer packet_buffer = direct_enabled ? mpp_packet_get_buffer(out_pkt) : nullptr;
             uint8_t* base =
                 packet_buffer ? static_cast<uint8_t*>(mpp_buffer_get_ptr(packet_buffer)) : nullptr;
@@ -2355,10 +2349,8 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             const bool in_buffer = base && raw_addr >= base_addr &&
                                    raw_addr - base_addr <= capacity &&
                                    len <= capacity - (raw_addr - base_addr);
-            const bool annexb =
-                !webrtc::H264::FindNaluIndices(webrtc::ArrayView<const uint8_t>(raw, len)).empty();
-            if (packet_buffer && in_buffer && annexb &&
-                g_mpp_output_outstanding.load(std::memory_order_relaxed) < max_outstanding &&
+            if (packet_buffer && in_buffer &&
+                g_mpp_output_outstanding.load(std::memory_order_relaxed) < direct_max_outstanding_ &&
                 mpp_buffer_inc_ref(packet_buffer) == MPP_OK) {
                 direct_output_buffer = webrtc::make_ref_counted<MppEncodedImageBuffer>(
                     packet_buffer, raw_addr - base_addr, len);
