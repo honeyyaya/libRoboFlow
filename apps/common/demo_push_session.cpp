@@ -6,6 +6,25 @@
 #include <cstdlib>
 #include <iostream>
 
+namespace {
+
+int DemoEnvInt(const char* name, int default_val, int min_val, int max_val) {
+    const char* v = std::getenv(name);
+    if (!v || !*v) {
+        return default_val;
+    }
+    const int n = std::atoi(v);
+    if (n < min_val) {
+        return min_val;
+    }
+    if (n > max_val) {
+        return max_val;
+    }
+    return n;
+}
+
+}  // namespace
+
 namespace rflow::apps::common {
 
 PushDemoSession::PushDemoSession(PushDemoConfig config) : config_(std::move(config)) {
@@ -181,7 +200,11 @@ librflow_svc_stream_param_t PushDemoSession::MakeStreamParam() const {
     librflow_svc_stream_param_set_out_size(sp, static_cast<uint32_t>(config_.width),
                                            static_cast<uint32_t>(config_.height));
     librflow_svc_stream_param_set_fps(sp, static_cast<uint32_t>(config_.fps));
-    librflow_svc_stream_param_set_bitrate(sp, 1000, 2500);
+    const uint32_t bitrate_kbps =
+        static_cast<uint32_t>(DemoEnvInt("RFLOW_DEMO_BITRATE_KBPS", 1000, 100, 20000));
+    const uint32_t max_bitrate_kbps =
+        static_cast<uint32_t>(DemoEnvInt("RFLOW_DEMO_MAX_BITRATE_KBPS", 2500, 100, 50000));
+    librflow_svc_stream_param_set_bitrate(sp, bitrate_kbps, std::max(bitrate_kbps, max_bitrate_kbps));
     librflow_svc_stream_param_set_bitrate_mode(sp, RFLOW_BITRATE_MODE_VBR);
     librflow_svc_stream_param_set_degradation_preference(sp, RFLOW_DEGRADATION_MAINTAIN_FRAMERATE);
     librflow_svc_stream_param_set_h264_profile(sp, "main");

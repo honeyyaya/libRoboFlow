@@ -86,6 +86,11 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   int target_bps_{0};
   int min_bps_{0};
   int max_bps_{0};
+  int applied_target_bps_{0};
+  int applied_min_bps_{0};
+  int applied_max_bps_{0};
+  int64_t last_rc_apply_us_{0};
+  bool has_encoded_output_{false};
   int gop_{0};
   int mpp_rc_mode_{0};  // MppEncRcMode
   int intra_refresh_mode_{0};

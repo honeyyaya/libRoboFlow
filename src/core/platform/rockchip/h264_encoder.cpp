@@ -23,7 +23,6 @@
 
 #include "public/log_tagged.h"
 #include "rtc/push_pipeline_drop_stats.h"
-#include "rtc/push_pipeline_drop_stats.h"
 #include <unistd.h>
 #include "api/array_view.h"
 #include "api/video/video_codec_constants.h"
@@ -515,16 +514,44 @@ static size_t MjpegDecOutputBufSizeBytes(int width, int height) {
     return static_cast<size_t>(std::max(nv12, plane0 * 2u));
 }
 
-void FillMppEncRcFields(MppEncCfg cfg, int target_bps, int min_bps, int max_bps, uint32_t fps) {
+// MPP official RC bps window (mpi_enc_test / GStreamer mppenc / issue #152):
+// CBR uses a narrow band; VBR/AVBR uses a wide band. All three bps fields are required.
+void ComputeMppRcBpsRange(int target_bps, int mpp_rc_mode, int* min_bps, int* max_bps) {
+    if (target_bps <= 0) {
+        target_bps = 2'000'000;
+    }
+    if (mpp_rc_mode == MPP_ENC_RC_MODE_CBR) {
+        *min_bps = target_bps * 15 / 16;
+        *max_bps = target_bps * 17 / 16;
+    } else {
+        *min_bps = std::max(10'000, target_bps / 16);
+        *max_bps = target_bps * 17 / 16;
+    }
+}
+
+int MppRcStatsTimeSec() {
+    return ReadEnvIntInRange("RFLOW_MPP_ENC_RC_STATS_TIME_SEC", 3, 1, 60);
+}
+
+void FillMppEncRcBps(MppEncCfg cfg, int target_bps, int min_bps, int max_bps) {
     mpp_enc_cfg_set_s32(cfg, "rc:bps_target", target_bps);
     mpp_enc_cfg_set_s32(cfg, "rc:bps_min", min_bps);
     mpp_enc_cfg_set_s32(cfg, "rc:bps_max", max_bps);
+}
+
+void FillMppEncRcFps(MppEncCfg cfg, uint32_t fps) {
     mpp_enc_cfg_set_s32(cfg, "rc:fps_in_num", static_cast<RK_S32>(fps));
     mpp_enc_cfg_set_s32(cfg, "rc:fps_in_denorm", 1);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_in_flex", 0);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_out_num", static_cast<RK_S32>(fps));
     mpp_enc_cfg_set_s32(cfg, "rc:fps_out_denorm", 1);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_out_flex", 0);
+}
+
+void FillMppEncRcFields(MppEncCfg cfg, int target_bps, int min_bps, int max_bps, uint32_t fps) {
+    FillMppEncRcBps(cfg, target_bps, min_bps, max_bps);
+    FillMppEncRcFps(cfg, fps);
+    mpp_enc_cfg_set_s32(cfg, "rc:stats_time", MppRcStatsTimeSec());
 }
 
 }  // namespace
@@ -552,6 +579,11 @@ void RkMppH264Encoder::DestroyMpp() {
     last_forced_idr_ctrl_us_ = -1;
     last_idr_emit_us_ = -1;
     consecutive_output_failures_ = 0;
+    applied_target_bps_ = 0;
+    applied_min_bps_ = 0;
+    applied_max_bps_ = 0;
+    last_rc_apply_us_ = 0;
+    has_encoded_output_ = false;
     if (frm_buf_) {
         mpp_buffer_put(reinterpret_cast<MppBuffer>(frm_buf_));
         frm_buf_ = nullptr;
@@ -590,14 +622,58 @@ void RkMppH264Encoder::DestroyMpp() {
 }
 
 bool RkMppH264Encoder::ApplyRcToCfg() {
-    if (!mpp_cfg_ || !mpi_) {
+    if (!initialized_ || !mpp_cfg_ || !mpi_ || !mpp_ctx_) {
         return false;
     }
+    const int64_t now_us = webrtc::TimeMicros();
+    const bool bps_changed = applied_target_bps_ <= 0 || target_bps_ != applied_target_bps_ ||
+                             min_bps_ != applied_min_bps_ || max_bps_ != applied_max_bps_;
+    if (!bps_changed) {
+        return false;
+    }
+
+    const int min_interval_ms = ReadEnvIntInRange("RFLOW_MPP_ENC_RC_APPLY_MIN_MS", 200, 0, 5000);
+    if (applied_target_bps_ > 0 && bps_changed) {
+        const int bps_delta = std::abs(target_bps_ - applied_target_bps_);
+        const int min_bps_delta = ReadEnvIntInRange("RFLOW_MPP_ENC_RC_APPLY_MIN_BPS_DELTA", 50000, 1000, 500000);
+        const int pct = ReadEnvIntInRange("RFLOW_MPP_ENC_RC_APPLY_BPS_DELTA_PCT", 5, 1, 50);
+        const int bps_threshold = std::max(min_bps_delta, applied_target_bps_ * pct / 100);
+        if (bps_delta < bps_threshold) {
+            return false;
+        }
+        if (min_interval_ms > 0 && last_rc_apply_us_ > 0 &&
+            (now_us - last_rc_apply_us_) < static_cast<int64_t>(min_interval_ms) * 1000) {
+            const int urgent_threshold = std::max(100'000, applied_target_bps_ * 20 / 100);
+            if (bps_delta < urgent_threshold) {
+                return false;
+            }
+        }
+    }
+
     MppEncCfg cfg = reinterpret_cast<MppEncCfg>(mpp_cfg_);
     MppCtx ctx = reinterpret_cast<MppCtx>(mpp_ctx_);
     MppApi* mpi = reinterpret_cast<MppApi*>(mpi_);
-    FillMppEncRcFields(cfg, target_bps_, min_bps_, max_bps_, fps_);
-    return mpi->control(ctx, MPP_ENC_SET_CFG, cfg) == MPP_OK;
+    // Follow Rockchip's gstmppenc/mpi_enc_test usage: update the persistent
+    // MppEncCfg through its setters, then submit it with MPP_ENC_SET_CFG.
+    // The setters maintain the internal change mask. MPP_ENC_GET_CFG must not
+    // be called here: on this BSP, refreshing an active config object before
+    // SET_CFG corrupts the asynchronous encoder state.
+    FillMppEncRcBps(cfg, target_bps_, min_bps_, max_bps_);
+    if (mpi->control(ctx, MPP_ENC_SET_CFG, cfg) != MPP_OK) {
+        RFLOW_LOG_TAG_W("RkMppH264Warn",
+                        "runtime MPP_ENC_SET_CFG failed target_bps=%d min_bps=%d max_bps=%d",
+                        target_bps_, min_bps_, max_bps_);
+        return false;
+    }
+    applied_target_bps_ = target_bps_;
+    applied_min_bps_ = min_bps_;
+    applied_max_bps_ = max_bps_;
+    last_rc_apply_us_ = now_us;
+    if (debug_enabled_) {
+        RFLOW_LOG_TAG_I("RkMppH264Dbg", "ApplyRcToCfg ok target_bps=%d min_bps=%d max_bps=%d", target_bps_,
+                        min_bps_, max_bps_);
+    }
+    return true;
 }
 
 int RkMppH264Encoder::MppH264LevelForSize(int width, int height, uint32_t fps) {
@@ -640,20 +716,11 @@ void RkMppH264Encoder::ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* i
     fps_ = inst->maxFramerate > 0 ? inst->maxFramerate : 30u;
 
     target_bps_ = static_cast<int>(inst->startBitrate) * 1000;
-    min_bps_ = static_cast<int>(inst->minBitrate) * 1000;
-    max_bps_ = static_cast<int>(inst->maxBitrate) * 1000;
     if (target_bps_ <= 0) {
         target_bps_ = 2'000'000;
     }
-    if (min_bps_ <= 0) {
-        min_bps_ = target_bps_ / 2;
-    }
-    if (max_bps_ <= 0) {
-        max_bps_ = target_bps_ * 2;
-    }
-    if (min_bps_ > max_bps_) {
-        std::swap(min_bps_, max_bps_);
-    }
+    mpp_rc_mode_ = rockchip_mpp_rc_cbr_ ? MPP_ENC_RC_MODE_CBR : MPP_ENC_RC_MODE_VBR;
+    ComputeMppRcBpsRange(target_bps_, mpp_rc_mode_, &min_bps_, &max_bps_);
 
     int ki = inst->H264().keyFrameInterval;
     if (ki <= 0) {
@@ -664,7 +731,6 @@ void RkMppH264Encoder::ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* i
     if (const char* lt = std::getenv("RFLOW_LATENCY_TRACE"); lt && lt[0] == '1') {
         RFLOW_LOG_TAG_I("Latency", "MPP H264 GOP frames=%d fps=%u", gop_, static_cast<unsigned>(fps_));
     }
-    mpp_rc_mode_ = rockchip_mpp_rc_cbr_ ? MPP_ENC_RC_MODE_CBR : MPP_ENC_RC_MODE_VBR;
     intra_refresh_mode_ = ReadEnvIntInRange("RFLOW_MPP_ENC_INTRA_REFRESH_MODE", 0, 0, 3);
     const int mb_rows = std::max(1, (height_ + 15) / 16);
     const int fps_i = std::max(1, static_cast<int>(fps_));
@@ -838,6 +904,11 @@ int RkMppH264Encoder::InitMppHardwareLocked(const webrtc::VideoCodec* inst) {
         DestroyMpp();
         return WEBRTC_VIDEO_CODEC_ERROR;
     }
+    applied_target_bps_ = target_bps_;
+    applied_min_bps_ = min_bps_;
+    applied_max_bps_ = max_bps_;
+    last_rc_apply_us_ = webrtc::TimeMicros();
+    has_encoded_output_ = false;
     if (split_by_byte_enabled_) {
         MppEncSliceSplit split_cfg {};
         split_cfg.change = MPP_ENC_SPLIT_CFG_CHANGE_MODE | MPP_ENC_SPLIT_CFG_CHANGE_ARG |
@@ -1267,21 +1338,17 @@ void RkMppH264Encoder::SetRates(const webrtc::VideoEncoder::RateControlParameter
     if (sum > 0) {
         target_bps_ = static_cast<int>(sum);
     }
-    if (parameters.framerate_fps > 0.0) {
-        fps_ = static_cast<uint32_t>(parameters.framerate_fps + 0.5);
-        if (fps_ < 1) {
-            fps_ = 1;
-        }
-    }
-    min_bps_ = std::max(10'000, target_bps_ * 3 / 4);
-    max_bps_ = std::max(target_bps_, min_bps_) * 4 / 3;
+    ComputeMppRcBpsRange(target_bps_, mpp_rc_mode_, &min_bps_, &max_bps_);
     if (debug_enabled_) {
         RFLOW_LOG_TAG_I("RkMppH264Dbg", "SetRates sum_bps=%u target_bps=%d min_bps=%d max_bps=%d fps=%f",
                         static_cast<unsigned>(sum), target_bps_, min_bps_, max_bps_, parameters.framerate_fps);
     }
-    // Temporary stabilization: avoid runtime MPP_ENC_SET_CFG churn until encoder path is stable.
-    // TODO: restore guarded ApplyRcToCfg once crash root cause is fully resolved.
-    // ApplyRcToCfg();
+    // This BSP crashes if MPP_ENC_SET_CFG is issued after header generation
+    // but before the first frame. Cache the latest request until one complete
+    // output frame has drained; subsequent updates are safe between frames.
+    if (has_encoded_output_) {
+        (void)ApplyRcToCfg();
+    }
 }
 
 webrtc::VideoEncoder::EncoderInfo RkMppH264Encoder::GetEncoderInfo() const {
@@ -2239,6 +2306,8 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     MaybeShrinkScratchBuffer(&split_assembly_buf_, 1024 * 1024, 0, next_video_frame_tracking_id_);
     MaybeShrinkScratchBuffer(&annex_scratch_, 1024 * 1024, 64 * 1024, next_video_frame_tracking_id_);
     consecutive_output_failures_ = 0;
+    has_encoded_output_ = true;
+    (void)ApplyRcToCfg();
     return WEBRTC_VIDEO_CODEC_OK;
 }
 
