@@ -26,7 +26,6 @@
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
 #include "platform/rockchip/native_dec_frame_buffer.h"
 #include "platform/rockchip/mjpeg_decoder.h"
-#include <linux/dma-buf.h>
 #endif
 #include <cerrno>
 #include <fcntl.h>
@@ -273,26 +272,39 @@ void CameraVideoTrackSource::StopDirectV4l2() {
     nv12_slot_count_ = 0;
     nv12_pool_w_ = nv12_pool_h_ = 0;
     nv12_ring_next_ = 0;
-#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-    mjpeg_mpp_.reset();
-#endif
     if (direct_fd_ >= 0) {
         enum v4l2_buf_type t = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         ioctl(direct_fd_, VIDIOC_STREAMOFF, &t);
     }
-    for (size_t i = 0; i < direct_mmap_.size(); ++i) {
-        if (direct_mmap_[i] && direct_mmap_len_[i] > 0) {
-            munmap(direct_mmap_[i], direct_mmap_len_[i]);
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    if (direct_mpp_dmabuf_capture_) {
+        if (mjpeg_mpp_) {
+            for (void* buffer : direct_mpp_input_buffers_) {
+                mjpeg_mpp_->ReleaseInputDmabuf(buffer);
+            }
         }
-    }
-    for (int fd : direct_expbuf_fd_) {
-        if (fd >= 0) {
-            close(fd);
+    } else
+#endif
+    {
+        for (size_t i = 0; i < direct_mmap_.size(); ++i) {
+            if (direct_mmap_[i] && direct_mmap_len_[i] > 0) {
+                munmap(direct_mmap_[i], direct_mmap_len_[i]);
+            }
+        }
+        for (int fd : direct_expbuf_fd_) {
+            if (fd >= 0) {
+                close(fd);
+            }
         }
     }
     direct_expbuf_fd_.clear();
     direct_mmap_.clear();
     direct_mmap_len_.clear();
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    direct_mpp_input_buffers_.clear();
+    direct_mpp_dmabuf_capture_ = false;
+    mjpeg_mpp_.reset();
+#endif
     if (direct_fd_ >= 0) {
         close(direct_fd_);
         direct_fd_ = -1;
@@ -364,29 +376,29 @@ void CameraVideoTrackSource::ApplyMjpegPipelineOptions(const V4l2MjpegPipelineOp
     }
 }
 
-void CameraVideoTrackSource::QBufV4l2Index(unsigned int index) {
+bool CameraVideoTrackSource::QBufV4l2Index(unsigned int index) {
     if (direct_fd_ < 0) {
-        return;
+        return false;
     }
-#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-    if (index < direct_expbuf_fd_.size()) {
-        const int exp_fd = direct_expbuf_fd_[index];
-        if (exp_fd >= 0) {
-            struct dma_buf_sync sync {};
-            sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
-            if (ioctl(exp_fd, DMA_BUF_IOCTL_SYNC, &sync) < 0) {
-                RFLOW_LOG_TAG_W("CameraV4L2", "EXPBUF DMA_BUF_SYNC_END index=%u errno=%d", index, errno);
-            }
-        }
-    }
-#endif
     struct v4l2_buffer buf {};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buf.memory = V4L2_MEMORY_MMAP;
+    buf.memory = direct_mpp_dmabuf_capture_ ? V4L2_MEMORY_DMABUF : V4L2_MEMORY_MMAP;
     buf.index = index;
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    if (direct_mpp_dmabuf_capture_) {
+        if (index >= direct_expbuf_fd_.size() || direct_expbuf_fd_[index] < 0 ||
+            index >= direct_mmap_len_.size()) {
+            return false;
+        }
+        buf.m.fd = direct_expbuf_fd_[index];
+        buf.length = static_cast<__u32>(direct_mmap_len_[index]);
+    }
+#endif
     if (ioctl(direct_fd_, VIDIOC_QBUF, &buf) < 0) {
         RTC_LOG(LS_WARNING) << "[CameraV4L2] VIDIOC_QBUF index=" << index << " errno=" << errno;
+        return false;
     }
+    return true;
 }
 
 void CameraVideoTrackSource::EnsureNv12Pool(int w, int h) {
@@ -648,76 +660,140 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
         ioctl(direct_fd_, VIDIOC_S_PARM, &parm);
     }
 
-    struct v4l2_requestbuffers rb {};
-    rb.count = static_cast<unsigned int>(v4l2_buffer_count_);
-    rb.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    rb.memory = V4L2_MEMORY_MMAP;
-    if (ioctl(direct_fd_, VIDIOC_REQBUFS, &rb) < 0 || rb.count < 2) {
-        RFLOW_LOG_TAG_E("CameraV4L2", "VIDIOC_REQBUFS failed errno=%d", errno);
-        close(direct_fd_);
-        direct_fd_ = -1;
-        return false;
+    bool want_mpp_dmabuf_capture = false;
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    const auto zc_policy = rflow::service::impl::policy::EvaluateMjpegZeroCopyPolicy(
+        v4l2_ext_dma_config_, mjpeg_rga_config_);
+    want_mpp_dmabuf_capture = prefer_mpp_mjpeg_decode_ &&
+                              direct_pixfmt_ == static_cast<uint32_t>(V4L2_PIX_FMT_MJPEG) &&
+                              zc_policy.use_v4l2_ext_dmabuf;
+    if (want_mpp_dmabuf_capture) {
+        auto dec = std::make_shared<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder>();
+        if (dec->Init()) {
+            dec->SetPipelineV4l2ExtDmabuf(v4l2_ext_dma_config_);
+            dec->SetPipelineRgaToMpp(mjpeg_rga_config_);
+            mjpeg_mpp_ = std::move(dec);
+        } else {
+            want_mpp_dmabuf_capture = false;
+            RFLOW_LOG_TAG_W("CameraV4L2", "MPP input allocator unavailable; falling back to V4L2 MMAP");
+        }
     }
+#endif
 
-    const unsigned int nbuf = rb.count;
-    direct_mmap_.resize(nbuf, nullptr);
-    direct_mmap_len_.resize(nbuf, 0);
-    direct_expbuf_fd_.assign(nbuf, -1);
-    for (unsigned int i = 0; i < nbuf; ++i) {
-        struct v4l2_buffer buf {};
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
-        buf.index = i;
-        if (ioctl(direct_fd_, VIDIOC_QUERYBUF, &buf) < 0) {
-            StopDirectV4l2();
-            return false;
+    unsigned int nbuf = 0;
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    if (want_mpp_dmabuf_capture && mjpeg_mpp_) {
+        struct v4l2_format fmt {};
+        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        size_t input_capacity = static_cast<size_t>(direct_cap_w_) * static_cast<size_t>(direct_cap_h_) * 2u;
+        if (ioctl(direct_fd_, VIDIOC_G_FMT, &fmt) == 0 && fmt.fmt.pix.sizeimage > 0) {
+            input_capacity = std::max(input_capacity, static_cast<size_t>(fmt.fmt.pix.sizeimage));
         }
-        void* p = mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, direct_fd_, buf.m.offset);
-        if (p == MAP_FAILED) {
-            StopDirectV4l2();
-            return false;
+
+        struct v4l2_requestbuffers rb {};
+        rb.count = static_cast<unsigned int>(v4l2_buffer_count_);
+        rb.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        rb.memory = V4L2_MEMORY_DMABUF;
+        bool dmabuf_ok = ioctl(direct_fd_, VIDIOC_REQBUFS, &rb) == 0 && rb.count >= 2;
+        if (dmabuf_ok) {
+            nbuf = rb.count;
+            direct_mmap_.assign(nbuf, nullptr);
+            direct_mmap_len_.assign(nbuf, 0);
+            direct_expbuf_fd_.assign(nbuf, -1);
+            direct_mpp_input_buffers_.assign(nbuf, nullptr);
+            direct_mpp_dmabuf_capture_ = true;
+            for (unsigned int i = 0; i < nbuf; ++i) {
+                uint8_t* ptr = nullptr;
+                size_t capacity = 0;
+                if (!mjpeg_mpp_->AllocateInputDmabuf(input_capacity, &direct_mpp_input_buffers_[i],
+                                                      &direct_expbuf_fd_[i], &ptr, &capacity)) {
+                    dmabuf_ok = false;
+                    break;
+                }
+                direct_mmap_[i] = ptr;
+                direct_mmap_len_[i] = capacity;
+                if (!QBufV4l2Index(i)) {
+                    dmabuf_ok = false;
+                    break;
+                }
+            }
         }
-        direct_mmap_[i] = p;
-        direct_mmap_len_[i] = buf.length;
-        if (ioctl(direct_fd_, VIDIOC_QBUF, &buf) < 0) {
-            StopDirectV4l2();
-            return false;
+        if (!dmabuf_ok) {
+            struct v4l2_requestbuffers release {};
+            release.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            release.memory = V4L2_MEMORY_DMABUF;
+            ioctl(direct_fd_, VIDIOC_REQBUFS, &release);
+            for (void* buffer : direct_mpp_input_buffers_) {
+                mjpeg_mpp_->ReleaseInputDmabuf(buffer);
+            }
+            direct_mpp_input_buffers_.clear();
+            direct_mmap_.clear();
+            direct_mmap_len_.clear();
+            direct_expbuf_fd_.clear();
+            direct_mpp_dmabuf_capture_ = false;
+            nbuf = 0;
+            RFLOW_LOG_TAG_W("CameraV4L2", "V4L2_MEMORY_DMABUF setup failed; falling back to MMAP");
+        } else {
+            RFLOW_LOG_TAG_I("CameraV4L2",
+                            "V4L2_MEMORY_DMABUF: %u MPP DRM buffer(s) -> camera -> MPP JPEG", nbuf);
         }
     }
+#endif
+
+    if (!direct_mpp_dmabuf_capture_) {
+        struct v4l2_requestbuffers rb {};
+        rb.count = static_cast<unsigned int>(v4l2_buffer_count_);
+        rb.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        rb.memory = V4L2_MEMORY_MMAP;
+        if (ioctl(direct_fd_, VIDIOC_REQBUFS, &rb) < 0 || rb.count < 2) {
+            RFLOW_LOG_TAG_E("CameraV4L2", "VIDIOC_REQBUFS failed errno=%d", errno);
+            StopDirectV4l2();
+            return false;
+        }
+        nbuf = rb.count;
+        direct_mmap_.resize(nbuf, nullptr);
+        direct_mmap_len_.resize(nbuf, 0);
+        direct_expbuf_fd_.assign(nbuf, -1);
+        for (unsigned int i = 0; i < nbuf; ++i) {
+            struct v4l2_buffer buf {};
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+            buf.index = i;
+            if (ioctl(direct_fd_, VIDIOC_QUERYBUF, &buf) < 0) {
+                StopDirectV4l2();
+                return false;
+            }
+            void* p = mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, direct_fd_, buf.m.offset);
+            if (p == MAP_FAILED) {
+                StopDirectV4l2();
+                return false;
+            }
+            direct_mmap_[i] = p;
+            direct_mmap_len_[i] = buf.length;
+            if (ioctl(direct_fd_, VIDIOC_QBUF, &buf) < 0) {
+                StopDirectV4l2();
+                return false;
+            }
+        }
 
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
-    {
-        const auto zc_policy = rflow::service::impl::policy::EvaluateMjpegZeroCopyPolicy(
-            v4l2_ext_dma_config_, mjpeg_rga_config_);
-    if (zc_policy.use_v4l2_ext_dmabuf || zc_policy.use_rga_to_mpp) {
-        unsigned exp_ok = 0;
-        for (unsigned int i = 0; i < nbuf; ++i) {
-            struct v4l2_exportbuffer exp {};
-            exp.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            exp.index = i;
-            exp.plane = 0;
-            exp.flags = O_CLOEXEC;
-            if (ioctl(direct_fd_, VIDIOC_EXPBUF, &exp) == 0 && exp.fd >= 0) {
-                direct_expbuf_fd_[i] = exp.fd;
-                ++exp_ok;
+        if (zc_policy.use_rga_to_mpp) {
+            unsigned exp_ok = 0;
+            for (unsigned int i = 0; i < nbuf; ++i) {
+                struct v4l2_exportbuffer exp {};
+                exp.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                exp.index = i;
+                exp.plane = 0;
+                exp.flags = O_CLOEXEC;
+                if (ioctl(direct_fd_, VIDIOC_EXPBUF, &exp) == 0 && exp.fd >= 0) {
+                    direct_expbuf_fd_[i] = exp.fd;
+                    ++exp_ok;
+                }
             }
+            RFLOW_LOG_TAG_I("CameraV4L2", "VIDIOC_EXPBUF for RGA: %u/%u", exp_ok, nbuf);
         }
-        if (exp_ok == nbuf) {
-            if (zc_policy.use_v4l2_ext_dmabuf) {
-                RFLOW_LOG_TAG_I("CameraV4L2", "VIDIOC_EXPBUF: %u dma-buf fd(s) → MPP JPEG EXT_DMA import", nbuf);
-            } else {
-                RFLOW_LOG_TAG_I("CameraV4L2",
-                                "VIDIOC_EXPBUF: %u dma-buf fd(s) -> RGA copy to MPP input",
-                                nbuf);
-            }
-        } else if (exp_ok > 0) {
-            RFLOW_LOG_TAG_I("CameraV4L2", "VIDIOC_EXPBUF: %u/%u (per-buffer dma or memcpy)", exp_ok, nbuf);
-        } else {
-            RFLOW_LOG_TAG_I("CameraV4L2", "VIDIOC_EXPBUF unsupported; MPP JPEG uses memcpy from mmap");
-        }
-    }
-    }  // zc_policy scope
 #endif
+    }
 
     enum v4l2_buf_type typ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(direct_fd_, VIDIOC_STREAMON, &typ) < 0) {
@@ -755,15 +831,19 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
     decode_worker_exit_ = false;
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     if (prefer_mpp_mjpeg_decode_ && direct_pixfmt_ == V4L2_PIX_FMT_MJPEG) {
-        auto dec = std::make_shared<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder>();
-        if (dec->Init()) {
-            dec->SetPipelineV4l2ExtDmabuf(v4l2_ext_dma_config_);
-            dec->SetPipelineRgaToMpp(mjpeg_rga_config_);
+        if (!mjpeg_mpp_) {
+            auto dec = std::make_shared<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder>();
+            if (dec->Init()) {
+                dec->SetPipelineV4l2ExtDmabuf(v4l2_ext_dma_config_);
+                dec->SetPipelineRgaToMpp(mjpeg_rga_config_);
+                mjpeg_mpp_ = std::move(dec);
+            }
+        }
+        if (mjpeg_mpp_) {
             const int pool_slack =
                 rflow::common::util::ReadEnvIntInRange("RFLOW_MJPEG_DEC_OUT_POOL_SLACK", 2, 0, 8);
             const int pool_max = v4l2_buffer_count_ + static_cast<int>(mjpeg_queue_max_) + pool_slack;
-            dec->SetOutputBufferPoolLimit(pool_max, direct_cap_w_, direct_cap_h_);
-            mjpeg_mpp_ = dec;
+            mjpeg_mpp_->SetOutputBufferPoolLimit(pool_max, direct_cap_w_, direct_cap_h_);
             RFLOW_LOG_TAG_I(
                 "CameraV4L2",
                 "MJPEG: Rockchip MPP decode -> NV12 (zero I420/libyuv chroma conversion in HW encode path) "
@@ -781,7 +861,8 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
     std::ostringstream cap_line;
     cap_line << "Direct capture " << device_path << " " << direct_cap_w_ << "x" << direct_cap_h_
              << " @" << negotiated_capture_fps_ << "fps fourcc=0x" << std::hex << direct_pixfmt_ << std::dec
-             << " mmap_bufs=" << nbuf << " poll_timeout_ms=" << v4l2_poll_timeout_ms_;
+             << (direct_mpp_dmabuf_capture_ ? " dmabuf_bufs=" : " mmap_bufs=") << nbuf
+             << " poll_timeout_ms=" << v4l2_poll_timeout_ms_;
     if (direct_pixfmt_ == static_cast<uint32_t>(V4L2_PIX_FMT_MJPEG)) {
         if (mjpeg_decode_inline_) {
             cap_line << " mjpeg_inline_decode=1";
@@ -988,7 +1069,7 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
         }
         struct v4l2_buffer buf {};
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
+        buf.memory = direct_mpp_dmabuf_capture_ ? V4L2_MEMORY_DMABUF : V4L2_MEMORY_MMAP;
         const int64_t dq_ioctl_t0_us = webrtc::TimeMicros();
         if (ioctl(direct_fd_, VIDIOC_DQBUF, &buf) < 0) {
             continue;
@@ -1030,7 +1111,8 @@ void CameraVideoTrackSource::DirectCaptureThreadMain() {
                 QBufV4l2Index(buf.index);
                 continue;
             }
-            // 延迟 QBUF：解码线程从 mmap 读 JPEG 并入 MPP 后再归还驱动，去掉「整帧 memcpy 到队列」。
+            // 延迟 QBUF：解码线程读取当前 V4L2 buffer，提交 MPP 后再归还驱动，
+            // 避免为了异步队列额外复制整帧 JPEG。
             {
                 std::deque<MjpegPendingBuf> dropped;
                 size_t stale_drop_n = 0;

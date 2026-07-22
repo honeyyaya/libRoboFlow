@@ -40,8 +40,17 @@ class RkMppMjpegDecoder {
   /// 限制 decoder output DRM 池大小（count=0 表示不限制）。
   void SetOutputBufferPoolLimit(int max_buffers, int width, int height);
 
-  /// dma_buf_fd>=0：按配置选择 EXT_DMA 或 RGA；capacity 一般取 QUERYBUF.length。
-  /// 建议始终传入 jpeg（mmap）：RGA 失败时 memcpy 回退；EXT_DMA 成功时可忽略指针。
+  /// 从 decoder 的 DRM input group 分配可供 V4L2_MEMORY_DMABUF 捕获的缓冲。
+  /// out_handle 仅可传回 ReleaseInputDmabuf，且必须在 Close/析构前释放。
+  bool AllocateInputDmabuf(size_t size,
+                           void** out_handle,
+                           int* out_fd,
+                           uint8_t** out_ptr,
+                           size_t* out_capacity);
+  void ReleaseInputDmabuf(void* handle);
+
+  /// dma_buf_fd>=0：按配置选择 EXT_DMA 或 RGA；capacity 为对应 dma-buf 的实际容量。
+  /// 建议始终传入 jpeg 的 CPU 映射：RGA/EXT_DMA 失败时可安全回退 memcpy。
   bool DecodeJpegToI420(const uint8_t* jpeg,
                         size_t jpeg_len,
                         int expect_w,

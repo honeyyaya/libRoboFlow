@@ -16,9 +16,6 @@
 #include "public/log_tagged.h"
 #include <unistd.h>
 
-#include <linux/dma-buf.h>
-#include <sys/ioctl.h>
-
 #include "api/video/i420_buffer.h"
 #include "api/video/nv12_buffer.h"
 #include "rtc_base/time_utils.h"
@@ -482,6 +479,44 @@ bool RkMppMjpegDecoder::ApplyOutputBufferPoolLimitLocked() {
     return false;
 }
 
+bool RkMppMjpegDecoder::AllocateInputDmabuf(size_t size,
+                                             void** out_handle,
+                                             int* out_fd,
+                                             uint8_t** out_ptr,
+                                             size_t* out_capacity) {
+    if (!input_group_ || size == 0 || !out_handle || !out_fd || !out_ptr || !out_capacity) {
+        return false;
+    }
+    *out_handle = nullptr;
+    *out_fd = -1;
+    *out_ptr = nullptr;
+    *out_capacity = 0;
+
+    MppBuffer buffer = nullptr;
+    MppBufferGroup group = reinterpret_cast<MppBufferGroup>(input_group_);
+    if (mpp_buffer_get(group, &buffer, size) != MPP_OK || !buffer) {
+        return false;
+    }
+    void* ptr = mpp_buffer_get_ptr(buffer);
+    const int fd = mpp_buffer_get_fd(buffer);
+    const size_t capacity = mpp_buffer_get_size(buffer);
+    if (!ptr || fd < 0 || capacity < size) {
+        mpp_buffer_put(buffer);
+        return false;
+    }
+    *out_handle = buffer;
+    *out_fd = fd;
+    *out_ptr = static_cast<uint8_t*>(ptr);
+    *out_capacity = capacity;
+    return true;
+}
+
+void RkMppMjpegDecoder::ReleaseInputDmabuf(void* handle) {
+    if (handle) {
+        mpp_buffer_put(reinterpret_cast<MppBuffer>(handle));
+    }
+}
+
 bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
                                             size_t dma_buf_capacity,
                                             const uint8_t* jpeg,
@@ -500,16 +535,6 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
 #endif
 
     if (want_ext_import) {
-        // Keep DMA visibility coherent before import on some BSPs.
-        {
-            struct dma_buf_sync sync {};
-            sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
-            if (ioctl(dma_buf_fd, DMA_BUF_IOCTL_SYNC, &sync) != 0) {
-                if (MjpegDecTraceEnabled()) {
-                    RFLOW_LOG_TAG_E("RkMppMjpeg", "DMA_BUF_IOCTL_SYNC failed errno=%d", errno);
-                }
-            }
-        }
         MppBufferInfo info{};
         info.type = MPP_BUFFER_TYPE_EXT_DMA;
         info.size = dma_buf_capacity;
@@ -526,6 +551,18 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
             // The mmap pointer aliases the same V4L2 buffer and remains valid
             // until QBUF, so retain the proven memcpy path as a per-frame
             // fallback when this BSP rejects an exported dma-buf.
+        } else if (!mpp_buffer_get_ptr(mbuf)) {
+            // JPEG parsing and jpegd_vdpu_tail_0xFF_patch() both access the
+            // imported buffer from the CPU. Keep packet pointer and HW fd on
+            // one MPP mapping; a foreign V4L2 MMAP pointer is not equivalent.
+            ++input_ext_dma_fail_;
+            if (MjpegDecTraceEnabled()) {
+                RFLOW_LOG_TAG_E("RkMppMjpeg",
+                                "EXT_DMA import is not CPU-mappable fd=%d cap=%zu; falling back to memcpy",
+                                dma_buf_fd, dma_buf_capacity);
+            }
+            mpp_buffer_put(mbuf);
+            mbuf = nullptr;
         } else {
             ++input_ext_dma_ok_;
             ext_dma_input = true;
@@ -619,13 +656,6 @@ bool RkMppMjpegDecoder::BuildMppInputPacket(int dma_buf_fd,
     if (mpp_packet_init_with_buffer(&packet, mbuf) != MPP_OK || !packet) {
         mpp_buffer_put(mbuf);
         return false;
-    }
-    if (ext_dma_input) {
-        // This BSP accepts the exported fd but cannot mmap it through MPP.
-        // The MJPEG parser is CPU-side, so use the already-existing V4L2
-        // MMAP address while retaining the imported MppBuffer on the packet.
-        mpp_packet_set_data(packet, const_cast<uint8_t*>(jpeg));
-        mpp_packet_set_pos(packet, const_cast<uint8_t*>(jpeg));
     }
     mpp_buffer_put(mbuf);
     mpp_packet_set_size(packet, ext_dma_input ? dma_buf_capacity : jpeg_len);

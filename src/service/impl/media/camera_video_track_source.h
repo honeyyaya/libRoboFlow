@@ -137,7 +137,7 @@ private:
     void EnsureNv12Pool(int w, int h);
     webrtc::scoped_refptr<webrtc::VideoFrameBuffer> AcquireNv12PoolBuffer(int w, int h);
     void ReleaseNv12PoolSlot(size_t slot_index);
-    void QBufV4l2Index(unsigned int index);
+    bool QBufV4l2Index(unsigned int index);
     void MaybeLogMjpegQueueDropStats(size_t queue_depth,
                                      uint64_t stale_delta,
                                      uint64_t queue_full_delta,
@@ -191,9 +191,12 @@ private:
     uint32_t direct_pixfmt_{0};
     std::vector<void*> direct_mmap_;
     std::vector<size_t> direct_mmap_len_;
-    /// VIDIOC_EXPBUF 得到的 dma-buf fd，与 mmap 同一块物理内存；-1 表示未导出或失败。
+    /// MMAP 模式为 VIDIOC_EXPBUF fd；DMABUF 模式为 MPP DRM buffer fd。
     std::vector<int> direct_expbuf_fd_;
+    /// true 时缓冲由 MPP 分配，并通过 V4L2_MEMORY_DMABUF 交给相机。
+    bool direct_mpp_dmabuf_capture_{false};
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    std::vector<void*> direct_mpp_input_buffers_;
     std::shared_ptr<rflow::rtc::hw::rockchip_mpp::RkMppMjpegDecoder> mjpeg_mpp_;
 #endif
 #endif
