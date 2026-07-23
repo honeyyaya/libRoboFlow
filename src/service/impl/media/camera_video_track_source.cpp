@@ -485,6 +485,8 @@ bool CameraVideoTrackSource::QBufV4l2Index(unsigned int index) {
     return true;
 }
 
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+
 void CameraVideoTrackSource::EnsureNv12Pool(int w, int h) {
     const int slots = nv12_pool_slots_;
     if (w <= 0 || h <= 0 || slots < 4) {
@@ -547,6 +549,19 @@ webrtc::scoped_refptr<webrtc::VideoFrameBuffer> CameraVideoTrackSource::AcquireN
     nv12_pool_busy_count_.fetch_add(1, std::memory_order_relaxed);
     return nullptr;
 }
+
+#else
+
+void CameraVideoTrackSource::EnsureNv12Pool(int /*w*/, int /*h*/) {}
+
+void CameraVideoTrackSource::ReleaseNv12PoolSlot(size_t /*slot_index*/) {}
+
+webrtc::scoped_refptr<webrtc::VideoFrameBuffer> CameraVideoTrackSource::AcquireNv12PoolBuffer(int /*w*/,
+                                                                                              int /*h*/) {
+    return nullptr;
+}
+
+#endif
 
 bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width, int height, int fps) {
     StopDirectV4l2();
@@ -744,8 +759,8 @@ bool CameraVideoTrackSource::StartDirectV4l2(const char* device_path, int width,
         ioctl(direct_fd_, VIDIOC_S_PARM, &parm);
     }
 
-    bool want_mpp_dmabuf_capture = false;
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    bool want_mpp_dmabuf_capture = false;
     const auto zc_policy = rflow::service::impl::policy::EvaluateMjpegZeroCopyPolicy(
         v4l2_ext_dma_config_, mjpeg_rga_config_);
     want_mpp_dmabuf_capture = prefer_mpp_mjpeg_decode_ &&
