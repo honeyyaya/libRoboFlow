@@ -142,6 +142,9 @@ private:
                                      uint64_t stale_delta,
                                      uint64_t queue_full_delta,
                                      uint64_t latest_only_delta);
+    /// Apply merged VideoSinkWants (max_pixels etc.) before AdaptedVideoTrackSource::OnFrame.
+    /// WebRTC's default path may not CropAndScale kNative MPP buffers; RGA scale here closes the loop.
+    bool ApplySinkAdaptation(const webrtc::VideoFrame& frame, webrtc::VideoFrame* out_frame);
     /// MJPEG：仅传 mmap 索引，解码后再 QBUF，避免压缩 JPEG 再 memcpy 一整份到队列。
     struct MjpegPendingBuf {
         unsigned int index{0};

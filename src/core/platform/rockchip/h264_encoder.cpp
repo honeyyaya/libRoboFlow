@@ -782,11 +782,59 @@ int RkMppH264Encoder::InitEncode(const webrtc::VideoCodec* inst,
         return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
     }
 
+    const int prev_w = width_;
+    const int prev_h = height_;
+    const int new_w = static_cast<int>(inst->width);
+    const int new_h = static_cast<int>(inst->height);
+    const bool resolution_change =
+        prev_w >= 2 && prev_h >= 2 && (prev_w != new_w || prev_h != new_h);
+
     ConfigureFromVideoCodecLocked(inst);
     cached_codec_inst_ = *inst;
     mpp_recover_attempts_ = 0;
     last_mpp_recover_us_ = 0;
-    return InitMppHardwareLocked(inst);
+    const int rc = InitMppHardwareLocked(inst);
+    if (rc == WEBRTC_VIDEO_CODEC_OK && resolution_change) {
+        RFLOW_LOG_TAG_I("RkMppH264", "resolution adapted %dx%d -> %dx%d (InitEncode reconfigured for scaled input)",
+                        prev_w, prev_h, width_, height_);
+    }
+    return rc;
+}
+
+bool RkMppH264Encoder::ReconfigureForFrameSizeLocked(int frame_width, int frame_height) {
+    if (frame_width < 2 || frame_height < 2) {
+        return false;
+    }
+    if (frame_width == width_ && frame_height == height_) {
+        return true;
+    }
+    if (!cached_codec_inst_.has_value()) {
+        return false;
+    }
+
+    const int old_w = width_;
+    const int old_h = height_;
+
+    width_ = frame_width;
+    height_ = frame_height;
+    hor_stride_ = MPP_ALIGN(width_, MppEncHorStrideAlignPixels());
+    ver_stride_ = MPP_ALIGN(height_, 16);
+
+    webrtc::VideoCodec inst = *cached_codec_inst_;
+    inst.width = static_cast<uint16_t>(frame_width);
+    inst.height = static_cast<uint16_t>(frame_height);
+    cached_codec_inst_ = inst;
+
+    const int rc = InitMppHardwareLocked(&inst);
+    if (rc != WEBRTC_VIDEO_CODEC_OK) {
+        RFLOW_LOG_TAG_E("RkMppH264Err", "resolution reconfigure failed %dx%d -> %dx%d rc=%d", old_w, old_h,
+                        frame_width, frame_height, rc);
+        return false;
+    }
+
+    RFLOW_LOG_TAG_I("RkMppH264", "resolution adapted %dx%d -> %dx%d (MPP reconfigured for scaled input)",
+                    old_w, old_h, width_, height_);
+    return true;
 }
 
 void RkMppH264Encoder::ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* inst) {
@@ -1124,6 +1172,8 @@ int RkMppH264Encoder::InitMppHardwareLocked(const webrtc::VideoCodec* inst) {
                      << " idr_min_interval_ms=" << idr_min_interval_ms_
                      << " idr_loss_quick_ms=" << idr_loss_quick_trigger_ms_
                      << " idr_force_max_wait_ms=" << idr_force_max_wait_ms_;
+    RFLOW_LOG_TAG_I("RkMppH264", "InitEncode ok %dx%d@%ufps bps=%d", width_, height_,
+                    static_cast<unsigned>(fps_), target_bps_);
     return WEBRTC_VIDEO_CODEC_OK;
 }
 
@@ -1435,16 +1485,36 @@ webrtc::VideoEncoder::EncoderInfo RkMppH264Encoder::GetEncoderInfo() const {
     info.is_hardware_accelerated = true;
     info.supports_simulcast = false;
     info.requested_resolution_alignment = 16;
-    info.scaling_settings = webrtc::VideoEncoder::ScalingSettings::kOff;
-    info.resolution_bitrate_limits =
-        webrtc::EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsWhenQpIsUntrusted(
-            webrtc::kVideoCodecH264);
-    if (info.resolution_bitrate_limits.empty()) {
+    // QualityScaler (is_qp_trusted=true) uses QP thresholds; BandwidthQualityScaler
+    // (is_qp_trusted=false, default) uses resolution_bitrate_limits vs available bitrate.
+    const int min_pixels = ReadEnvIntInRange("RFLOW_ADAPT_MIN_PIXELS", 640 * 360, 320 * 180, 1280 * 720);
+    const int qp_low = ReadEnvIntInRange("RFLOW_MPP_ENC_QP_SCALE_LOW", 24, 0, 51);
+    const int qp_high = ReadEnvIntInRange("RFLOW_MPP_ENC_QP_SCALE_HIGH", 36, qp_low + 1, 51);
+    info.scaling_settings = webrtc::VideoEncoder::ScalingSettings(qp_low, qp_high, min_pixels);
+    const bool qp_trusted = ReadEnvIntInRange("RFLOW_MPP_ENC_QP_TRUSTED", 0, 0, 1) == 1;
+    info.is_qp_trusted = qp_trusted;
+    if (qp_trusted) {
+        info.resolution_bitrate_limits =
+            webrtc::EncoderInfoSettings::GetDefaultSinglecastBitrateLimitsWhenQpIsUntrusted(
+                webrtc::kVideoCodecH264);
+        if (info.resolution_bitrate_limits.empty()) {
+            info.resolution_bitrate_limits = {
+                webrtc::VideoEncoder::ResolutionBitrateLimits(1280 * 720, 150000, 75000, 2500000),
+                webrtc::VideoEncoder::ResolutionBitrateLimits(640 * 360, 50000, 30000, 1200000),
+            };
+        }
+    } else {
+        // BandwidthQualityScaler: 720p needs ~300 kbps; 640p floor for typical 150–200 kbps caps.
         info.resolution_bitrate_limits = {
-            webrtc::VideoEncoder::ResolutionBitrateLimits(1280 * 720, 150000, 75000, 2500000),
-            webrtc::VideoEncoder::ResolutionBitrateLimits(640 * 360, 50000, 30000, 1200000),
-            webrtc::VideoEncoder::ResolutionBitrateLimits(320 * 180, 0, 0, 450000),
+            webrtc::VideoEncoder::ResolutionBitrateLimits(1280 * 720, 400000, 300000, 2500000),
+            webrtc::VideoEncoder::ResolutionBitrateLimits(640 * 360, 150000, 100000, 1200000),
         };
+    }
+    static std::atomic<bool> logged_encoder_info{false};
+    if (!logged_encoder_info.exchange(true)) {
+        RFLOW_LOG_TAG_I("RkMppH264",
+                        "EncoderInfo scaling qp=%d/%d min_pixels=%d qp_trusted=%d supports_native_handle=%d",
+                        qp_low, qp_high, min_pixels, qp_trusted ? 1 : 0, info.supports_native_handle ? 1 : 0);
     }
     // kNative for MPP MJPEG decode pass-through; keep NV12/I420 planar paths.
     info.preferred_pixel_formats = {webrtc::VideoFrameBuffer::Type::kNative,
@@ -1553,6 +1623,7 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
     }
     webrtc::EncodedImage encoded;
     encoded.SetEncodedData(buf);
+    // Report actual encoded frame dimensions (matches scaled input after ReconfigureForFrameSizeLocked).
     encoded._encodedWidth = width_;
     encoded._encodedHeight = height_;
     encoded.SetRtpTimestamp(frame.rtp_timestamp());
@@ -1620,10 +1691,10 @@ int32_t RkMppH264Encoder::EmitAssembledFrame(const webrtc::VideoFrame& frame,
         const unsigned n = ++enc_cb_n;
         if ((n <= 5u) || ((n % 60u) == 0u)) {
             RFLOW_LOG_TAG_I("RkMppH264Dbg",
-                              "OnEncodedImage #%u size=%zu type=%s cb_error=%d", static_cast<unsigned>(n),
+                              "OnEncodedImage #%u size=%zu type=%s qp=%d cb_error=%d", static_cast<unsigned>(n),
                               encoded.size(),
                               (encoded._frameType == webrtc::VideoFrameType::kVideoFrameKey ? "key" : "delta"),
-                              static_cast<int>(res.error));
+                              encoded.qp_, static_cast<int>(res.error));
         }
     }
     if (res.error != webrtc::EncodedImageCallback::Result::OK) {
@@ -1759,12 +1830,30 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
     MppCtx ctx = reinterpret_cast<MppCtx>(mpp_ctx_);
     MppApi* mpi = reinterpret_cast<MppApi*>(mpi_);
 
+    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> vfb = frame.video_frame_buffer();
+    if (!vfb) {
+        return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
+    }
+
+    const int frame_w = vfb->width();
+    const int frame_h = vfb->height();
+    bool resolution_adapted = false;
+    if (frame_w != width_ || frame_h != height_) {
+        if (!ReconfigureForFrameSizeLocked(frame_w, frame_h)) {
+            RTC_LOG(LS_WARNING) << "[RkMppH264] encode skipped: cannot reconfigure for frame " << frame_w << "x"
+                                << frame_h << " (encoder " << width_ << "x" << height_ << ")";
+            return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
+        }
+        resolution_adapted = true;
+        ctx = reinterpret_cast<MppCtx>(mpp_ctx_);
+        mpi = reinterpret_cast<MppApi*>(mpi_);
+    }
+
     uint8_t* dst = static_cast<uint8_t*>(mpp_buffer_get_ptr(reinterpret_cast<MppBuffer>(frm_buf_)));
     if (!dst) {
         return WEBRTC_VIDEO_CODEC_ERROR;
     }
 
-    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> vfb = frame.video_frame_buffer();
     const int64_t encode_enter_us = webrtc::TimeMicros();
     int64_t on_frame_to_encode_enter_us = -1;
     if (MppNativeDecFrameBuffer* nfb = MppNativeDecFrameBuffer::TryGet(vfb)) {
@@ -1953,6 +2042,13 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             } else {
                 RTC_LOG(LS_WARNING) << "[RkMppH264] MPP_ENC_SET_IDR_FRAME failed";
             }
+        }
+    } else if (resolution_adapted) {
+        const int64_t now_us = webrtc::TimeMicros();
+        if (mpi->control(ctx, MPP_ENC_SET_IDR_FRAME, nullptr) == MPP_OK) {
+            last_forced_idr_ctrl_us_ = now_us;
+        } else {
+            RTC_LOG(LS_WARNING) << "[RkMppH264] MPP_ENC_SET_IDR_FRAME after resolution adapt failed";
         }
     }
 

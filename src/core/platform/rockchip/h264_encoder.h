@@ -54,6 +54,8 @@ class RkMppH264Encoder final : public webrtc::VideoEncoder {
   void* BindDecBufferForEncodeLocked(void* dec_buf);
   void* ExternalGroupImportDecBufferForEncodeLocked(void* dec_buf);
   bool RecoverMppSessionLocked();
+  /// WebRTC 弱网缩放后输入帧尺寸变化时，重建 MPP 会话以匹配新分辨率。
+  bool ReconfigureForFrameSizeLocked(int frame_width, int frame_height);
   bool ApplyRcToCfg();
   void RefreshHeaderCacheSync();
   static int MppH264LevelForSize(int width, int height, uint32_t fps);

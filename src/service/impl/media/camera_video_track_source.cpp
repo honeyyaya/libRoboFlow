@@ -2,6 +2,9 @@
 
 #include "media/capture_fps_pipeline_policy.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -53,6 +56,87 @@ namespace capture_policy = rflow::service::impl::policy;
 
 #if defined(WEBRTC_LINUX) && defined(__linux__)
 namespace {
+
+int AlignDown16(int v) {
+    return std::max(16, v & ~15);
+}
+
+int AdaptMinPixelsFloor() {
+    static const int min_pixels =
+        rflow::common::util::ReadEnvIntInRange("RFLOW_ADAPT_MIN_PIXELS", 640 * 360, 320 * 180, 1280 * 720);
+    return min_pixels;
+}
+
+void ClampAdaptOutputToMinPixels(int crop_w, int crop_h, int* out_w, int* out_h) {
+    if (!out_w || !out_h || crop_w <= 0 || crop_h <= 0) {
+        return;
+    }
+    const int min_pixels = AdaptMinPixelsFloor();
+    if ((*out_w) * (*out_h) >= min_pixels) {
+        return;
+    }
+    const double aspect = static_cast<double>(crop_w) / static_cast<double>(crop_h);
+    int h = static_cast<int>(std::sqrt(static_cast<double>(min_pixels) / aspect));
+    int w = static_cast<int>(h * aspect);
+    w = AlignDown16(w);
+    h = AlignDown16(h);
+    while (w > 16 && h > 16 && w * h < min_pixels) {
+        if (w <= h) {
+            w += 16;
+        } else {
+            h += 16;
+        }
+    }
+    *out_w = w;
+    *out_h = h;
+}
+
+webrtc::VideoFrame MaybeForceDebugCaptureScale(const webrtc::VideoFrame& frame) {
+    static const int dst_w =
+        rflow::common::util::ReadEnvIntInRange("RFLOW_DEBUG_FORCE_CAPTURE_SCALE_W", 0, 0, 4096);
+    static const int dst_h =
+        rflow::common::util::ReadEnvIntInRange("RFLOW_DEBUG_FORCE_CAPTURE_SCALE_H", 0, 0, 4096);
+    static const unsigned after_n = static_cast<unsigned>(
+        rflow::common::util::ReadEnvIntInRange("RFLOW_DEBUG_FORCE_CAPTURE_SCALE_AFTER_N", 0, 0, 1000000));
+    static std::atomic<unsigned> capture_n{0};
+    if (dst_w < 2 || dst_h < 2) {
+        return frame;
+    }
+    const unsigned n = ++capture_n;
+    if (after_n > 0 && n <= after_n) {
+        return frame;
+    }
+    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> vfb = frame.video_frame_buffer();
+    if (!vfb) {
+        return frame;
+    }
+    if (vfb->width() == dst_w && vfb->height() == dst_h) {
+        return frame;
+    }
+    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> scaled =
+        vfb->CropAndScale(0, 0, vfb->width(), vfb->height(), dst_w, dst_h);
+    if (!scaled) {
+        static std::atomic<bool> logged_fail{false};
+        if (!logged_fail.exchange(true)) {
+            RFLOW_LOG_TAG_W("CameraVideoTrackSource",
+                            "RFLOW_DEBUG_FORCE_CAPTURE_SCALE %dx%d failed (src=%dx%d)", dst_w, dst_h, vfb->width(),
+                            vfb->height());
+        }
+        return frame;
+    }
+    static std::atomic<bool> logged_ok{false};
+    if (!logged_ok.exchange(true)) {
+        RFLOW_LOG_TAG_I("CameraVideoTrackSource",
+                        "RFLOW_DEBUG_FORCE_CAPTURE_SCALE active %dx%d -> %dx%d (after_n=%u frame#%u)",
+                        vfb->width(), vfb->height(), dst_w, dst_h, after_n, n);
+    }
+    return webrtc::VideoFrame::Builder()
+        .set_video_frame_buffer(scaled)
+        .set_timestamp_us(frame.timestamp_us())
+        .set_rotation(frame.rotation())
+        .build();
+}
+
 bool LatencyTraceEnabled() {
     static const bool enabled = rflow::common::util::TraceFlagEnabled("RFLOW_LATENCY_TRACE");
     return enabled;
@@ -1266,7 +1350,63 @@ void CameraVideoTrackSource::OnFrame(const webrtc::VideoFrame& frame) {
     }
 #endif
     rflow::core::rtc::PushPipelineDropStats::Instance().OnFrameDispatched(1);
-    AdaptedVideoTrackSource::OnFrame(frame);
+    webrtc::VideoFrame adapted_frame = frame;
+    if (!ApplySinkAdaptation(frame, &adapted_frame)) {
+        OnFrameDropped();
+        return;
+    }
+#if defined(WEBRTC_LINUX) && defined(__linux__)
+    const webrtc::VideoFrame scaled_frame = MaybeForceDebugCaptureScale(adapted_frame);
+    AdaptedVideoTrackSource::OnFrame(scaled_frame);
+#else
+    AdaptedVideoTrackSource::OnFrame(adapted_frame);
+#endif
+}
+
+bool CameraVideoTrackSource::ApplySinkAdaptation(const webrtc::VideoFrame& frame,
+                                                 webrtc::VideoFrame* out_frame) {
+    if (!out_frame) {
+        return false;
+    }
+    *out_frame = frame;
+    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> vfb = frame.video_frame_buffer();
+    if (!vfb) {
+        return false;
+    }
+    int out_w = 0;
+    int out_h = 0;
+    int crop_w = 0;
+    int crop_h = 0;
+    int crop_x = 0;
+    int crop_y = 0;
+    if (!AdaptFrame(vfb->width(), vfb->height(), frame.timestamp_us(), &out_w, &out_h, &crop_w, &crop_h,
+                    &crop_x, &crop_y)) {
+        return false;
+    }
+    ClampAdaptOutputToMinPixels(crop_w, crop_h, &out_w, &out_h);
+    if (out_w == vfb->width() && out_h == vfb->height() && crop_w == vfb->width() && crop_h == vfb->height() &&
+        crop_x == 0 && crop_y == 0) {
+        return true;
+    }
+    webrtc::scoped_refptr<webrtc::VideoFrameBuffer> scaled =
+        vfb->CropAndScale(crop_x, crop_y, crop_w, crop_h, out_w, out_h);
+    if (!scaled) {
+        RFLOW_LOG_TAG_W("CameraVideoTrackSource",
+                        "sink adaptation CropAndScale failed %dx%d -> %dx%d (crop %dx%d@%d,%d)", vfb->width(),
+                        vfb->height(), out_w, out_h, crop_w, crop_h, crop_x, crop_y);
+        return false;
+    }
+    static std::atomic<bool> logged_adapt{false};
+    if (!logged_adapt.exchange(true)) {
+        RFLOW_LOG_TAG_I("CameraVideoTrackSource", "sink adaptation active %dx%d -> %dx%d (weak-network scale)",
+                        vfb->width(), vfb->height(), out_w, out_h);
+    }
+    *out_frame = webrtc::VideoFrame::Builder()
+                     .set_video_frame_buffer(scaled)
+                     .set_timestamp_us(frame.timestamp_us())
+                     .set_rotation(frame.rotation())
+                     .build();
+    return true;
 }
 
 void CameraVideoTrackSource::MaybeLogMjpegQueueDropStats(size_t queue_depth,
