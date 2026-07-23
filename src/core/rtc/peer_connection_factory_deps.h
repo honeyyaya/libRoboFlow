@@ -29,6 +29,15 @@ struct PeerConnectionFactoryMediaOptions {
     bool rockchip_h264_encoder_mpp_rc_cbr{false};
 };
 
+/// 构建时是否启用了 Rockchip MPP（RFLOW_ENABLE_ROCKCHIP_MPP=ON）。
+bool RockchipMppCompiledIn();
+
+/// 将「希望用 MPP」与编译宏对齐；MPP 未编入时恒为 kBuiltin。
+VideoCodecBackendPreference ResolveVideoCodecBackendPreference(bool prefer_rockchip_mpp);
+
+/// 日志用短标签：rockchip_mpp / builtin。
+const char* VideoCodecBackendPreferenceLabel(VideoCodecBackendPreference backend);
+
 void ConfigurePeerConnectionFactoryDependencies(
     webrtc::PeerConnectionFactoryDependencies& deps,
     const PeerConnectionFactoryMediaOptions* media_options = nullptr);

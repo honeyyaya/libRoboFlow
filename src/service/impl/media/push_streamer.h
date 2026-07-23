@@ -53,8 +53,13 @@ struct PushStreamerCommonConfig {
 };
 
 struct PushStreamerBackendConfig {
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     bool use_rockchip_mpp_h264{true};
     bool use_rockchip_mpp_mjpeg_decode{true};
+#else
+    bool use_rockchip_mpp_h264{false};
+    bool use_rockchip_mpp_mjpeg_decode{false};
+#endif
     bool use_rockchip_dual_mpp_mjpeg_h264{true};
     bool mjpeg_queue_latest_only{true};
     int mjpeg_queue_max{2};

@@ -133,8 +133,13 @@ bool initialize() {
         StopThreads(s);
         return false;
     }
-    RFLOW_CORE_LOGI("[rtc] peer_connection_factory ready decoder=%s",
-                    DecoderBackendLabel(media_opts.decoder_backend));
+    if (!RockchipMppCompiledIn()) {
+        RFLOW_CORE_LOGI("[rtc] peer_connection_factory ready decoder=builtin "
+                        "(RFLOW_ENABLE_ROCKCHIP_MPP=OFF)");
+    } else {
+        RFLOW_CORE_LOGI("[rtc] peer_connection_factory ready decoder=%s",
+                        DecoderBackendLabel(media_opts.decoder_backend));
+    }
     return true;
 }
 

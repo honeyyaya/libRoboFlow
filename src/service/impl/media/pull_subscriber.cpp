@@ -97,9 +97,17 @@ public:
         }
         webrtc::PeerConnectionFactoryDependencies deps;
         rflow::rtc::PeerConnectionFactoryMediaOptions media_opts;
-        media_opts.decoder_backend = recv_config_.backend.use_rockchip_mpp_h264_decode
-                                         ? rflow::rtc::VideoCodecBackendPreference::kRockchipMpp
-                                         : rflow::rtc::VideoCodecBackendPreference::kBuiltin;
+        const bool want_mpp_decode = recv_config_.backend.use_rockchip_mpp_h264_decode;
+        media_opts.decoder_backend =
+            rflow::rtc::ResolveVideoCodecBackendPreference(want_mpp_decode);
+        if (media_opts.decoder_backend == rflow::rtc::VideoCodecBackendPreference::kRockchipMpp) {
+            RFLOW_LOG_TAG_I("PullSubscriber", "H.264 decoder: Rockchip MPP");
+        } else if (!rflow::rtc::RockchipMppCompiledIn()) {
+            RFLOW_LOG_TAG_I("PullSubscriber",
+                            "H.264 decoder: builtin (RFLOW_ENABLE_ROCKCHIP_MPP=OFF)");
+        } else {
+            RFLOW_LOG_TAG_I("PullSubscriber", "H.264 decoder: builtin");
+        }
         rflow::rtc::ConfigurePeerConnectionFactoryDependencies(deps, &media_opts);
         rflow::rtc::EnsureDedicatedPeerConnectionSignalingThread(deps, &owned_signaling_thread_);
         factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(deps));

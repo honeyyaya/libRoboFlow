@@ -19,8 +19,12 @@ struct PullSubscriberCommonConfig {
 };
 
 struct PullSubscriberBackendConfig {
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     /// 为 true 时优先 Rockchip MPP H.264 硬解；否则使用 builtin decoder backend。
     bool use_rockchip_mpp_h264_decode{true};
+#else
+    bool use_rockchip_mpp_h264_decode{false};
+#endif
 };
 
 /// 拉流端接收侧可选参数（低时延 / 平滑权衡 + backend 偏好）

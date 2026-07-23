@@ -126,9 +126,9 @@ public:
         }
 
         rflow::rtc::PeerConnectionFactoryMediaOptions media_opts;
-        media_opts.encoder_backend = config_.backend.use_rockchip_mpp_h264
-                                         ? rflow::rtc::VideoCodecBackendPreference::kRockchipMpp
-                                         : rflow::rtc::VideoCodecBackendPreference::kBuiltin;
+        const bool want_mpp_h264 = config_.backend.use_rockchip_mpp_h264;
+        media_opts.encoder_backend =
+            rflow::rtc::ResolveVideoCodecBackendPreference(want_mpp_h264);
         {
             std::string bm = config_.common.bitrate_mode;
             for (auto& ch : bm) {
@@ -136,9 +136,14 @@ public:
             }
             media_opts.rockchip_h264_encoder_mpp_rc_cbr = (bm == "cbr");
         }
-        if (config_.backend.use_rockchip_mpp_h264) {
-            RFLOW_LOG_TAG_I("PushStreamer", "Rockchip MPP H.264 encoder rc:mode=%s",
+        if (media_opts.encoder_backend == rflow::rtc::VideoCodecBackendPreference::kRockchipMpp) {
+            RFLOW_LOG_TAG_I("PushStreamer", "H.264 encoder: Rockchip MPP rc:mode=%s",
                             media_opts.rockchip_h264_encoder_mpp_rc_cbr ? "CBR" : "VBR");
+        } else if (!rflow::rtc::RockchipMppCompiledIn()) {
+            RFLOW_LOG_TAG_I("PushStreamer",
+                            "H.264 encoder: OpenH264 (builtin, RFLOW_ENABLE_ROCKCHIP_MPP=OFF)");
+        } else {
+            RFLOW_LOG_TAG_I("PushStreamer", "H.264 encoder: OpenH264 (builtin)");
         }
 
         if (!rflow::rtc::RecreatePeerConnectionFactory(media_opts)) {
@@ -150,7 +155,8 @@ public:
             RFLOW_LOG_TAG_E("PushStreamer", "peer_connection_factory not ready after recreate");
             return false;
         }
-        RFLOW_LOG_TAG_I("PushStreamer", "Using process PeerConnectionFactory (MPP/service media options)");
+        RFLOW_LOG_TAG_I("PushStreamer", "PeerConnectionFactory ready encoder=%s",
+                        rflow::rtc::VideoCodecBackendPreferenceLabel(media_opts.encoder_backend));
 
         return CreatePeerConnection();
     }
@@ -634,12 +640,18 @@ public:
             mpp_mjpeg_decode = false;
             RFLOW_LOG_TAG_I(
                 "PushStreamer",
-                "MPP MJPEG decode off while MPP H.264 encode on (use libyuv for MJPEG). "
-                "Concurrent MPP probe failed or dual MPP is disabled by backend config.");
+                "MJPEG decode: libyuv -> I420 (MPP H.264 encode on; concurrent MPP probe failed or dual MPP disabled)");
         } else if (mpp_mjpeg_decode && config_.backend.use_rockchip_mpp_h264 && allow_dual_mpp) {
             RFLOW_LOG_TAG_I(
-                "PushStreamer", "Dual MPP: MJPEG hardware decode + H.264 hardware encode (experimental).");
+                "PushStreamer",
+                "MJPEG decode: Rockchip MPP -> NV12 (dual MPP with H.264 hardware encode, experimental)");
+        } else if (mpp_mjpeg_decode) {
+            RFLOW_LOG_TAG_I("PushStreamer", "MJPEG decode: Rockchip MPP -> NV12");
         }
+#else
+        RFLOW_LOG_TAG_I("PushStreamer",
+                        "MJPEG decode: libyuv -> I420 (RFLOW_ENABLE_ROCKCHIP_MPP=OFF)");
+        mpp_mjpeg_decode = false;
 #endif
         V4l2MjpegPipelineOptions mjpeg_pipe;
         mjpeg_pipe.mjpeg_queue_latest_only = config_.backend.mjpeg_queue_latest_only;

@@ -15,6 +15,35 @@
 
 namespace rflow::rtc {
 
+bool RockchipMppCompiledIn() {
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    return true;
+#else
+    return false;
+#endif
+}
+
+VideoCodecBackendPreference ResolveVideoCodecBackendPreference(bool prefer_rockchip_mpp) {
+    if (prefer_rockchip_mpp && RockchipMppCompiledIn()) {
+        return VideoCodecBackendPreference::kRockchipMpp;
+    }
+    return VideoCodecBackendPreference::kBuiltin;
+}
+
+const char* VideoCodecBackendPreferenceLabel(VideoCodecBackendPreference backend) {
+    switch (backend) {
+        case VideoCodecBackendPreference::kRockchipMpp:
+            return "rockchip_mpp";
+#if defined(WEBRTC_ANDROID)
+        case VideoCodecBackendPreference::kAndroidMediaCodec:
+            return "android_mediacodec";
+#endif
+        case VideoCodecBackendPreference::kBuiltin:
+        default:
+            return "builtin";
+    }
+}
+
 void ConfigurePeerConnectionFactoryDependencies(
     webrtc::PeerConnectionFactoryDependencies& deps,
     const PeerConnectionFactoryMediaOptions* media_options) {

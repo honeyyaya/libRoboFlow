@@ -129,8 +129,14 @@ bool Publisher::Start() {
         cfg.common.capture_gate_max_wait_sec = *media_opts_.capture_gate_max_wait_sec;
     }
 
-    // Rockchip MPP 硬件编解码：根据编译宏默认打开；策略由 SDK 配置与内部探测决定。
+    // Rockchip MPP 硬件编解码：仅 RFLOW_ENABLE_ROCKCHIP_MPP=ON 时默认启用。
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
     cfg.backend.use_rockchip_mpp_h264 = true;
+    cfg.backend.use_rockchip_mpp_mjpeg_decode = true;
+#else
+    cfg.backend.use_rockchip_mpp_h264 = false;
+    cfg.backend.use_rockchip_mpp_mjpeg_decode = false;
+#endif
     policy::ApplyCaptureFpsPipelineDefaults(cfg.backend, cfg.common.video_fps);
 
     streamer_ = std::make_unique<PushStreamer>(cfg);
