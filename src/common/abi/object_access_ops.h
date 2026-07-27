@@ -17,6 +17,15 @@ inline T* CreateMagicObject(uint32_t magic) {
     return obj;
 }
 
+template <typename T, typename InitFn>
+inline T* CreateMagicObject(uint32_t magic, InitFn&& init) {
+    auto* obj = CreateMagicObject<T>(magic);
+    if (obj) {
+        init(*obj);
+    }
+    return obj;
+}
+
 // 校验 magic，匹配则置 0 + delete；不匹配则什么都不做（防双 free / 传错指针）。
 template <typename T>
 inline void DestroyMagicObject(T* obj, uint32_t magic) {

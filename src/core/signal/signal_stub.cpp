@@ -1,16 +1,5 @@
 #include "signal/signal.h"
 
-#include "base/logging.h"
+#include "runtime/module_stub.h"
 
-namespace rflow::signal {
-
-bool initialize() {
-    RFLOW_CORE_LOGI("signal::initialize (stub)");
-    return true;
-}
-
-void shutdown() {
-    RFLOW_CORE_LOGI("signal::shutdown (stub)");
-}
-
-}  // namespace rflow::signal
+RFLOW_DEFINE_MODULE_STUB(rflow::signal, "signal")

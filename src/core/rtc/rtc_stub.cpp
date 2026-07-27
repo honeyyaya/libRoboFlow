@@ -1,16 +1,5 @@
 #include "rtc.h"
 
-#include "base/logging.h"
+#include "runtime/module_stub.h"
 
-namespace rflow::rtc {
-
-bool initialize() {
-    RFLOW_CORE_LOGI("rtc::initialize (stub)");
-    return true;
-}
-
-void shutdown() {
-    RFLOW_CORE_LOGI("rtc::shutdown (stub)");
-}
-
-}  // namespace rflow::rtc
+RFLOW_DEFINE_MODULE_STUB(rflow::rtc, "rtc")

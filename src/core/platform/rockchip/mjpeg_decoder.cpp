@@ -2,6 +2,7 @@
 
 #include "platform/rockchip/mjpeg_decoder.h"
 
+#include "base/latency_trace.h"
 #include "platform/rockchip/native_dec_frame_buffer.h"
 #include "platform/rockchip/rga_dmabuf_sync.h"
 
@@ -42,19 +43,11 @@ namespace rflow::rtc::hw::rockchip_mpp {
 
 namespace {
 
+using rflow::common::util::LatencyTraceEnabled;
+
 static bool MjpegDecTraceEnabled() {
     static const char* k = std::getenv("RFLOW_MJPEG_DEC_TRACE");
     return k && k[0] != '0';
-}
-
-static bool LatencyTraceEnabled() {
-    static int cached = -1;
-    if (cached >= 0) {
-        return cached != 0;
-    }
-    const char* e = std::getenv("RFLOW_LATENCY_TRACE");
-    cached = (e && e[0] == '1') ? 1 : 0;
-    return cached != 0;
 }
 
 static bool MjpegDecLowLatency() {

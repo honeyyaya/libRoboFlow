@@ -1,6 +1,6 @@
 set(CLIENT_SOURCES
-    api_handles.cpp
-    api_stream_objects.cpp
+    api/api_handles.cpp
+    api/api_stream_objects.cpp
     infrastructure.cpp
     lifecycle.cpp
     stream.cpp
@@ -11,9 +11,9 @@ set(CLIENT_SOURCES
 # 真实拉流、信令在开启 RFLOW_CLIENT_ENABLE_WEBRTC_IMPL 时编译；WebRTC 工厂与 init 在 core/rtc
 if(RFLOW_CLIENT_ENABLE_WEBRTC_IMPL)
     list(APPEND CLIENT_SOURCES
-        impl/rtc_stream/rtc_stream_frame_converter.cpp
-        impl/rtc_stream/rtc_stream_session.cpp
-        impl/rtc_stream/rtc_stream_manager.cpp
+        rtc/rtc_stream_frame_converter.cpp
+        rtc/rtc_stream_session.cpp
+        rtc/rtc_stream_manager.cpp
     )
 endif()
 
@@ -59,7 +59,6 @@ target_include_directories(rflow_client
         ${CMAKE_SOURCE_DIR}/src/common
         ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_SOURCE_DIR}/src/client
-        ${CMAKE_SOURCE_DIR}/src/client/impl
 )
 
 # 与预编译 libwebrtc 链接（定义在 src/core/CMakeLists.txt）

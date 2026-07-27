@@ -8,7 +8,7 @@ namespace rflow::service::internal {
 
 std::shared_ptr<librflow_svc_stream_s> FindStreamByHandleLocked(State& state,
                                                                  librflow_svc_stream_handle_t handle) {
-    return rflow::common::base::LookupSharedFromMap(state.streams, handle);
+    return rflow::common::base::FindStreamByHandleLocked(state, handle);
 }
 
 void MarkStreamStarted(const std::shared_ptr<librflow_svc_stream_s>& stream,
@@ -27,10 +27,12 @@ void MarkStreamStopped(const std::shared_ptr<librflow_svc_stream_s>& stream,
 
 void MarkStreamDestroyed(const std::shared_ptr<librflow_svc_stream_s>& stream,
                          librflow_svc_stream_handle_t handle) {
+    if (!stream) {
+        return;
+    }
     stream->started = false;
     stream->started_at = {};
-    rflow::common::base::EmitStreamStateChange(*stream, handle, RFLOW_STREAM_CLOSED, RFLOW_OK);
-    stream->magic = 0;
+    rflow::common::base::MarkStreamClosed(*stream, handle);
 }
 
 rflow_err_t InitSubsystems() {

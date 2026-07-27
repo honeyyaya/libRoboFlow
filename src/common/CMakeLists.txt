@@ -1,8 +1,8 @@
 # src/common — Client / Service 共享实现
 # 生成对象库，由 client / service 目标各自链接
 add_library(rflow_common OBJECT
-    base/last_error.cpp
-    base/logger.cpp
+    log/last_error.cpp
+    log/logger.cpp
     base/memory.cpp
     base/version.cpp
 

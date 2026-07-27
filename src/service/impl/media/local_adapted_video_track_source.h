@@ -1,0 +1,4 @@
+#ifndef __RFLOW_SERVICE_IMPL_MEDIA_LOCAL_ADAPTED_VIDEO_TRACK_SOURCE_H__
+#define __RFLOW_SERVICE_IMPL_MEDIA_LOCAL_ADAPTED_VIDEO_TRACK_SOURCE_H__
+#include "media/push/local_adapted_video_track_source.h"
+#endif

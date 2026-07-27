@@ -90,19 +90,30 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
     message(STATUS "rflow webrtc (core rtc) : ${RFLOW_WEBRTC_LIB} (variant=${_rflow_webrtc_variant}, CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE})")
 
     set(_RTC_DOMAIN_SRCS
-        rtc/rtc_factory_common.cpp
-        rtc/rtc_ice_config.cpp
-        rtc/peer_connection_factory.cpp
-        rtc/peer_connection_factory_deps.cpp
-        rtc/inbound_video_stats_aggregation.cpp
-        rtc/outbound_video_stats_aggregation.cpp
-        rtc/push_pipeline_drop_stats.cpp
-        rtc/push_pipeline_health.cpp
-        rtc/ice_nominated_pair_rtt.cpp
-        rtc/rtc_sync_stats.cpp
-        rtc/sdp_observers.cpp
-        rtc/stats_observer.cpp
-        rtc/video_codec_preferences.cpp
+        rtc/factory/rtc_factory_common.cpp
+        rtc/ice/rtc_ice_config.cpp
+        rtc/factory/peer_connection_factory.cpp
+        rtc/factory/peer_connection_factory_deps.cpp
+        rtc/stats/inbound_video_stats_aggregation.cpp
+        rtc/stats/outbound_video_stats_aggregation.cpp
+        rtc/stats/push_pipeline_drop_stats.cpp
+        rtc/stats/push_pipeline_health.cpp
+        rtc/stats/ice_nominated_pair_rtt.cpp
+        rtc/session/rtc_session_common.cpp
+        rtc/session/rtc_sync_stats.cpp
+        rtc/session/sdp_observers.cpp
+        rtc/session/stats_observer.cpp
+        rtc/codec/video_codec_preferences.cpp
+        hw/frame/frame_buffer.cpp
+        hw/frame/encoded_packet.cpp
+        hw/frame/simple_video_frame.cpp
+        hw/frame/frame_bridge.cpp
+        hw/frame/webrtc_frame_bridge.cpp
+        hw/registry/backend_registry.cpp
+        hw/service/codec_service.cpp
+        hw/capture/mjpeg_hw_capture_factory.cpp
+        rtc/adapt/webrtc_codec_factory.cpp
+        rtc/adapt/webrtc_encoder_adapter.cpp
         rtc/hw/backend_registry.cpp
         rtc/shims/builtin_video_decoder_recovery.cpp
         rtc/shims/sme_abi_stubs.c
@@ -130,6 +141,11 @@ if(_RFLOW_NEED_WEBRTC_IMPL)
             platform/rockchip/native_dec_frame_buffer.cpp
             platform/rockchip/rga_dmabuf_sync.cpp
             platform/rockchip/rga_nv12_scale.cpp
+            platform/rockchip/mpp/mpp_hw_frame_buffer.cpp
+            platform/rockchip/mpp/mpp_h264_hw_encoder.cpp
+            platform/rockchip/mpp/mpp_h264_hw_decoder.cpp
+            platform/rockchip/capture/rockchip_mjpeg_hw_capture.cpp
+            platform/rockchip/rockchip_backend.cpp
             platform/rockchip/video_decoder_factory.cpp
             platform/rockchip/video_encoder_factory.cpp
         )

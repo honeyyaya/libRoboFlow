@@ -1,0 +1,168 @@
+#ifndef __RFLOW_SERVICE_IMPL_MEDIA_PUSH_PUSH_STREAMER_H__
+#define __RFLOW_SERVICE_IMPL_MEDIA_PUSH_PUSH_STREAMER_H__
+
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "media/connection_state.h"
+
+struct librflow_stream_stats_s;
+
+namespace rflow::service::impl {
+
+struct PushStreamerCommonConfig {
+    std::string stream_id{"stream_001"};
+    int video_width{1280};
+    int video_height{720};
+    int video_fps{60};
+    int video_device_index{0};
+    std::string video_device_path;
+    bool test_capture_only{false};
+    bool test_encode_mode{false};
+    bool signaling_subscriber_offer_only{false};
+    /// 为 true 时跳过 V4L2 采集，改由业务侧主动 PushExternalI420/Nv12 投帧。
+    /// 该模式下：video_device_index / video_device_path / capture_gate_* / mjpeg 相关
+    /// 配置全部失效；视频宽高以实际 PushExternal* 的帧为准（首帧作为 SDP 参考）。
+    bool use_external_video_source{false};
+    std::string stun_server{"stun:stun.l.google.com:19302"};
+    std::string turn_server;
+    std::string turn_username;
+    std::string turn_password;
+    bool has_stun_server{false};
+    bool has_turn_server{false};
+
+    std::string bitrate_mode{"vbr"};
+    int target_bitrate_kbps{1000};
+    int min_bitrate_kbps{100};
+    int max_bitrate_kbps{2000};
+    /// WebRTC 弱网降质：maintain_framerate = 优先保帧率、倾向降分辨率（非 balanced / maintain_resolution）。
+    std::string degradation_preference{"maintain_framerate"};
+    bool ice_prioritize_likely_pairs{true};
+    std::string video_network_priority{"high"};
+    int video_encoding_max_framerate{0};
+
+    std::string video_codec{"h264"};
+    std::string h264_profile{"main"};
+    std::string h264_level{"3.0"};
+    int keyframe_interval{0};
+    int capture_warmup_sec{0};
+    int capture_gate_min_frames{0};
+    int capture_gate_max_wait_sec{20};
+};
+
+struct PushStreamerBackendConfig {
+#if defined(RFLOW_HAVE_ROCKCHIP_MPP)
+    bool use_rockchip_mpp_h264{true};
+    bool use_rockchip_mpp_mjpeg_decode{true};
+#else
+    bool use_rockchip_mpp_h264{false};
+    bool use_rockchip_mpp_mjpeg_decode{false};
+#endif
+    bool use_rockchip_dual_mpp_mjpeg_h264{true};
+    bool mjpeg_queue_latest_only{true};
+    int mjpeg_queue_max{2};
+    int v4l2_buffer_count{2};
+    int v4l2_poll_timeout_ms{5};
+    int nv12_pool_slots{4};
+    bool mjpeg_decode_inline{false};
+    bool mjpeg_v4l2_ext_dma{true};
+    bool mjpeg_rga_to_mpp{false};
+};
+
+/// 推流配置
+struct PushStreamerConfig {
+    PushStreamerCommonConfig common{};
+    PushStreamerBackendConfig backend{};
+};
+
+/// SDP 回调：用于将 SDP 发送到信令服务器
+using OnSdpCallback = std::function<void(const std::string& peer_id, const std::string& type,
+                                         const std::string& sdp)>;
+
+/// ICE 候选回调：用于将 ICE 候选发送到信令服务器
+using OnIceCandidateCallback = std::function<void(const std::string& peer_id, const std::string& mid,
+                                                  int mline_index, const std::string& candidate)>;
+
+/// 帧回调：每收到一帧调用，参数为 (帧数, 宽, 高)，用于验证采集是否正常
+using OnFrameCallback = std::function<void(unsigned int frame_count, int width, int height)>;
+
+/// 连接状态回调
+using ConnectionState = rflow::common::media::ConnectionState;
+using OnConnectionStateCallback = std::function<void(ConnectionState state)>;
+
+/// WebRTC 推流器
+class PushStreamer {
+public:
+    explicit PushStreamer(const PushStreamerConfig& config);
+    ~PushStreamer();
+
+    PushStreamer(const PushStreamer&) = delete;
+    PushStreamer& operator=(const PushStreamer&) = delete;
+
+    /// 初始化并开始推流
+    bool Start();
+
+    /// 停止推流
+    void Stop();
+
+    /// 设置远端 SDP（Answer），用于 P2P 模式
+    bool SetRemoteDescription(const std::string& type, const std::string& sdp);
+    bool SetRemoteDescriptionForPeer(const std::string& peer_id, const std::string& type,
+                                     const std::string& sdp);
+
+    /// 添加远端 ICE 候选
+    void AddRemoteIceCandidate(const std::string& mid, int mline_index, const std::string& candidate);
+    void AddRemoteIceCandidateForPeer(const std::string& peer_id, const std::string& mid,
+                                      int mline_index, const std::string& candidate);
+    void CreateOfferForPeer(const std::string& peer_id);
+    /// 订阅者离开时关闭并移除对应 PeerConnection，避免旧发送链/编码器残留。
+    void ClosePeerForSubscriber(const std::string& peer_id);
+
+    /// 回调设置
+    void SetOnSdpCallback(OnSdpCallback cb);
+    void SetOnIceCandidateCallback(OnIceCandidateCallback cb);
+    void SetOnConnectionStateCallback(OnConnectionStateCallback cb);
+    void SetOnFrameCallback(OnFrameCallback cb);
+
+    /// 外部帧 push（use_external_video_source=true 且 Start() 成功后可调用）
+    /// 线程安全，可在任意业务线程调用；timestamp_us 为媒体时间戳，0 表示 SDK 内部按单调钟生成。
+    bool PushExternalI420(const uint8_t* data_y, int stride_y,
+                          const uint8_t* data_u, int stride_u,
+                          const uint8_t* data_v, int stride_v,
+                          int width, int height, int64_t timestamp_us);
+    bool PushExternalI420Contiguous(const uint8_t* buf, uint32_t size,
+                                    int width, int height, int64_t timestamp_us);
+    bool PushExternalNv12(const uint8_t* data_y, int stride_y,
+                          const uint8_t* data_uv, int stride_uv,
+                          int width, int height, int64_t timestamp_us);
+    bool PushExternalNv12Contiguous(const uint8_t* buf, uint32_t size,
+                                    int width, int height, int64_t timestamp_us);
+
+    /// 获取采集帧数（需先 SetOnFrameCallback 或 --test-capture）
+    unsigned int GetFrameCount() const;
+
+    /// 获取解码帧数（--test-encode 模式下，接收端收到的 H264 解码后帧数）
+    unsigned int GetDecodedFrameCount() const;
+
+    /// 是否正在推流
+    bool IsStreaming() const { return is_streaming_.load(std::memory_order_acquire); }
+
+    /// 同步采集真实 outbound RTC stats，填到 librflow_stream_stats_s。
+    /// 内部挑选一个有效 PeerConnection（subscriber 优先）调用 GetStats() 阻塞最多 1.5s；
+    /// 调用方应保证 stats 对象由 AllocStreamStats() 分配。返回 false 表示
+    /// 没有可用 PC 或 GetStats 超时（此时 out_stats 中 base 字段未被改写）。
+    bool CollectStats(librflow_stream_stats_s* out_stats);
+
+private:
+    class Impl;
+    std::unique_ptr<Impl> impl_;
+    std::atomic<bool> is_streaming_{false};
+};
+
+}  // namespace rflow::service::impl
+
+#endif  // __RFLOW_SERVICE_IMPL_MEDIA_PUSH_PUSH_STREAMER_H__

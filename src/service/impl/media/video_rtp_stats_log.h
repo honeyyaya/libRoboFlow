@@ -1,0 +1,4 @@
+#ifndef __RFLOW_SERVICE_IMPL_MEDIA_VIDEO_RTP_STATS_LOG_H__
+#define __RFLOW_SERVICE_IMPL_MEDIA_VIDEO_RTP_STATS_LOG_H__
+#include "media/rtc/video_rtp_stats_log.h"
+#endif

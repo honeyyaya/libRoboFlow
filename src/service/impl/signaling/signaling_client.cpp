@@ -1,35 +1,18 @@
 #include "signaling/signaling_client.h"
 
-#include "base/trace_switches.h"
+#include "base/signaling_trace.h"
 #include "public/logger_api.h"
 #include "signal/protocol.h"
 #include "signal/tcp_session.h"
 
-#include <chrono>
 #include <utility>
 
 namespace rflow::service::impl {
 
 namespace {
 
-bool SignalingTimingTraceEnabled() {
-    static const bool enabled =
-        rflow::common::base::TraceFlagEnabled("RFLOW_SIGNALING_TIMING_TRACE");
-    return enabled;
-}
-
-int64_t NowUs() {
-    return std::chrono::duration_cast<std::chrono::microseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-
 void TraceSig(const std::string& msg) {
-    if (!SignalingTimingTraceEnabled()) {
-        return;
-    }
-    RFLOW_LOGI("[SIG_TIMING] t_us=%lld %s",
-               static_cast<long long>(NowUs()), msg.c_str());
+    rflow::common::base::TraceSigTimingPlain(msg);
 }
 
 rflow::signal::SessionConfig MakeSessionConfig(const std::string& server_addr,

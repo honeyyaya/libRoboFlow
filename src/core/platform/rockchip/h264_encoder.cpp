@@ -4,7 +4,9 @@
 
 #include "platform/rockchip/h264_encoder.h"
 
+#include "base/buffer_shrink_utils.h"
 #include "base/env_reader.h"
+#include "base/latency_trace.h"
 #include "platform/rockchip/native_dec_frame_buffer.h"
 #include "platform/rockchip/rga_dmabuf_sync.h"
 
@@ -21,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "base/media_timing_trace.h"
 #include "public/log_tagged.h"
 #include "rtc/push_pipeline_drop_stats.h"
 #include <unistd.h>
@@ -53,6 +56,9 @@
 #include "rk_venc_rc.h"
 
 namespace rflow::rtc::hw::rockchip_mpp {
+
+using rflow::common::base::LatencyTraceEnabled;
+using rflow::common::util::MaybeShrinkVectorIfIdle;
 
 namespace {
 
@@ -104,27 +110,8 @@ class MppEncodedImageBuffer : public webrtc::EncodedImageBufferInterface {
     size_t size_;
 };
 
-bool MediaTimingTraceEnabled() {
-    static const bool enabled = []() {
-        const char* v = std::getenv("RFLOW_MEDIA_TIMING_TRACE");
-        return v && v[0] == '1';
-    }();
-    return enabled;
-}
-
-unsigned MediaTimingTraceEveryN() {
-    static const unsigned every_n = []() {
-        const char* v = std::getenv("RFLOW_MEDIA_TIMING_TRACE_EVERY_N");
-        if (v) {
-            const int n = std::atoi(v);
-            if (n >= 1 && n <= 600) {
-                return static_cast<unsigned>(n);
-            }
-        }
-        return 30u;
-    }();
-    return every_n;
-}
+using rflow::common::base::MediaTimingTraceEnabled;
+using rflow::common::base::MediaTimingTraceEveryN;
 
 // ????????????????????????????? 2026-04-01 14:30:05.123
 std::string CurrentLocalDateTimeYmdHmsMs() {
@@ -518,27 +505,7 @@ static void LogEmptyEoiPacketDiag(bool enabled,
         static_cast<long long>(mpp_packet_get_pts(out_pkt)), static_cast<long long>(mpp_packet_get_dts(out_pkt)),
         static_cast<unsigned>(mpp_packet_get_flag(out_pkt)), mpp_packet_has_meta(out_pkt) ? 1 : 0, frame_rtp_ts,
         static_cast<unsigned>(tracking_id), split_by_byte_enabled ? 1 : 0, assembly_bytes, empty_eoi_retry,
-        empty_eoi_retry_max, get_packet_safety);
-}
-
-void MaybeShrinkScratchBuffer(std::vector<uint8_t>* buf,
-                              size_t max_capacity,
-                              size_t max_live_size,
-                              uint16_t periodic_tick) {
-    if (!buf || buf->capacity() <= max_capacity) {
-        return;
-    }
-    if ((periodic_tick % 300u) != 0u) {
-        return;
-    }
-    if (buf->size() > max_live_size) {
-        return;
-    }
-    std::vector<uint8_t> compact;
-    if (!buf->empty()) {
-        compact.assign(buf->begin(), buf->end());
-    }
-    buf->swap(compact);
+        empty_eoi_retry_max,         get_packet_safety);
 }
 
 /// MPP JPEG 解码 NV12 默认 16 像素 hor 对齐；编码 prep 需与之匹配才能零拷贝。
@@ -857,7 +824,7 @@ void RkMppH264Encoder::ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* i
     }
     gop_ = ki;
     RefreshImportPoolLimitCountLocked();
-    if (const char* lt = std::getenv("RFLOW_LATENCY_TRACE"); lt && lt[0] == '1') {
+    if (LatencyTraceEnabled()) {
         RFLOW_LOG_TAG_I("Latency", "MPP H264 GOP frames=%d fps=%u", gop_, static_cast<unsigned>(fps_));
     }
     intra_refresh_mode_ = ReadEnvIntInRange("RFLOW_MPP_ENC_INTRA_REFRESH_MODE", 0, 0, 3);
@@ -876,7 +843,7 @@ void RkMppH264Encoder::ConfigureFromVideoCodecLocked(const webrtc::VideoCodec* i
     recover_hard_fail_threshold_ = 30;
     recover_disable_split_on_failure_ = true;
     debug_enabled_ = ReadEnvIntInRange("RFLOW_MPP_ENC_DEBUG", 0, 0, 1) == 1;
-    latency_trace_enabled_ = ReadEnvIntInRange("RFLOW_LATENCY_TRACE", 0, 0, 1) == 1;
+    latency_trace_enabled_ = LatencyTraceEnabled();
     e2e_trace_enabled_ = ReadEnvIntInRange("RFLOW_E2E_LATENCY_TRACE", 0, 0, 1) == 1;
     mjpeg_to_h264_trace_enabled_ = ReadEnvIntInRange("RFLOW_MJPEG_TO_H264_TRACE", 0, 0, 1) == 1;
     use_sync_encode_ = ReadEnvIntInRange("RFLOW_MPP_ENC_USE_SYNC", 0, 0, 1) == 1;
@@ -2356,8 +2323,8 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
             output_task = nullptr;
         }
         held_input_guard.release();
-        MaybeShrinkScratchBuffer(&split_assembly_buf_, 1024 * 1024, 0, next_video_frame_tracking_id_);
-        MaybeShrinkScratchBuffer(&annex_scratch_, 1024 * 1024, 64 * 1024, next_video_frame_tracking_id_);
+        MaybeShrinkVectorIfIdle(&split_assembly_buf_, next_video_frame_tracking_id_, 300, 1024 * 1024, 0);
+        MaybeShrinkVectorIfIdle(&annex_scratch_, next_video_frame_tracking_id_, 300, 1024 * 1024, 64 * 1024);
         return WEBRTC_VIDEO_CODEC_OK;
     };
     do {
@@ -2511,8 +2478,8 @@ int32_t RkMppH264Encoder::Encode(const webrtc::VideoFrame& frame,
         mpi->enqueue(ctx, MPP_PORT_OUTPUT, output_task);
     }
     held_input_guard.release();
-    MaybeShrinkScratchBuffer(&split_assembly_buf_, 1024 * 1024, 0, next_video_frame_tracking_id_);
-    MaybeShrinkScratchBuffer(&annex_scratch_, 1024 * 1024, 64 * 1024, next_video_frame_tracking_id_);
+    MaybeShrinkVectorIfIdle(&split_assembly_buf_, next_video_frame_tracking_id_, 300, 1024 * 1024, 0);
+    MaybeShrinkVectorIfIdle(&annex_scratch_, next_video_frame_tracking_id_, 300, 1024 * 1024, 64 * 1024);
     consecutive_output_failures_ = 0;
     has_encoded_output_ = true;
     (void)ApplyRcToCfg();

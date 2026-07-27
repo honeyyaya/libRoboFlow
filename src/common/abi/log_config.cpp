@@ -1,38 +1,30 @@
 #include "rflow/librflow_common.h"
 
+#include "abi/object_access_ops.h"
 #include "abi/object_layouts.h"
-
-#include <new>
 
 extern "C" {
 
 librflow_log_config_t librflow_log_config_create(void) {
-    auto* config_obj = new (std::nothrow) librflow_log_config_s();
-    if (!config_obj) return nullptr;
-    config_obj->magic = rflow::kMagicLogConfig;
-    config_obj->level = RFLOW_LOG_INFO;
-    config_obj->enable = true;
-    config_obj->cb = nullptr;
-    config_obj->userdata = nullptr;
-    return config_obj;
+    return rflow::common::abi::CreateMagicObject<librflow_log_config_s>(
+        rflow::kMagicLogConfig, [](librflow_log_config_s& config_obj) {
+            config_obj.level = RFLOW_LOG_INFO;
+            config_obj.enable = true;
+            config_obj.cb = nullptr;
+            config_obj.userdata = nullptr;
+        });
 }
 
 void librflow_log_config_destroy(librflow_log_config_t config_obj) {
-    if (config_obj == nullptr || config_obj->magic != rflow::kMagicLogConfig) return;
-    config_obj->magic = 0;
-    delete config_obj;
+    rflow::common::abi::DestroyMagicObject(config_obj, rflow::kMagicLogConfig);
 }
 
 rflow_err_t librflow_log_config_set_level(librflow_log_config_t config_obj, rflow_log_level_t level) {
-    RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicLogConfig);
-    config_obj->level = level;
-    return RFLOW_OK;
+    RFLOW_SET_FIELD(config_obj, rflow::kMagicLogConfig, level, level);
 }
 
 rflow_err_t librflow_log_config_set_enable(librflow_log_config_t config_obj, bool enable) {
-    RFLOW_CHECK_HANDLE(config_obj, rflow::kMagicLogConfig);
-    config_obj->enable = enable;
-    return RFLOW_OK;
+    RFLOW_SET_FIELD(config_obj, rflow::kMagicLogConfig, enable, enable);
 }
 
 rflow_err_t librflow_log_config_set_callback(librflow_log_config_t config_obj,

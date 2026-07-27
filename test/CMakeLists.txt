@@ -78,9 +78,9 @@ add_rflow_unit_test(test_pending_ice_buffer
 add_rflow_unit_test(test_subscriber_offer_pump
     SOURCES
         unit/test_subscriber_offer_pump.cpp
-        ${CMAKE_SOURCE_DIR}/src/service/impl/subscriber_offer_pump.cpp
+        ${CMAKE_SOURCE_DIR}/src/service/impl/publish/subscriber_offer_pump.cpp
         ${CMAKE_SOURCE_DIR}/src/core/thread/thread_pool.cpp
-        ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp)
+        ${CMAKE_SOURCE_DIR}/src/common/log/logger.cpp)
 target_include_directories(test_subscriber_offer_pump PRIVATE
     ${CMAKE_SOURCE_DIR}/src/service/impl)
 
@@ -90,17 +90,17 @@ add_rflow_unit_test(test_runtime_knobs
     SOURCES
         unit/test_runtime_knobs.cpp
         ${CMAKE_SOURCE_DIR}/src/core/runtime/runtime_knobs.cpp
-        ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp)
+        ${CMAKE_SOURCE_DIR}/src/common/log/logger.cpp)
 
 # service：stream_param 常用 ABI + ResolvePublisherStartup（不显式启用 RFLOW_SVC_WEBRTC_IMPL，避免 Publisher）
 add_rflow_unit_test(test_svc_stream_param_knobs
     SOURCES
         unit/test_svc_stream_param_knobs.cpp
-        ${CMAKE_SOURCE_DIR}/src/service/api_stream_objects.cpp
+        ${CMAKE_SOURCE_DIR}/src/service/api/api_stream_objects.cpp
         ${CMAKE_SOURCE_DIR}/src/service/internal/stream_startup_policy.cpp
         ${CMAKE_SOURCE_DIR}/src/service/internal/service_default_params.cpp
         ${CMAKE_SOURCE_DIR}/src/core/runtime/runtime_knobs.cpp
-        ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp)
+        ${CMAKE_SOURCE_DIR}/src/common/log/logger.cpp)
 target_include_directories(test_svc_stream_param_knobs PRIVATE ${CMAKE_SOURCE_DIR}/src/service)
 
 # -------------------------------------------------------------------- common/public
@@ -108,21 +108,21 @@ target_include_directories(test_svc_stream_param_knobs PRIVATE ${CMAKE_SOURCE_DI
 add_rflow_unit_test(test_log_tagged
     SOURCES
         unit/test_log_tagged.cpp
-        ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp)
+        ${CMAKE_SOURCE_DIR}/src/common/log/logger.cpp)
 
 # -------------------------------------------------------------------- service/impl/media
 # zero_copy_pipeline_policy.cpp 是纯 std + std::getenv，可独立编入。
 add_rflow_unit_test(test_zero_copy_pipeline_policy
     SOURCES
         unit/test_zero_copy_pipeline_policy.cpp
-        ${CMAKE_SOURCE_DIR}/src/service/impl/media/zero_copy_pipeline_policy.cpp)
+        ${CMAKE_SOURCE_DIR}/src/service/impl/media/policy/zero_copy_pipeline_policy.cpp)
 target_include_directories(test_zero_copy_pipeline_policy PRIVATE
     ${CMAKE_SOURCE_DIR}/src/service/impl)
 
 add_rflow_unit_test(test_capture_fps_pipeline_policy
     SOURCES
         unit/test_capture_fps_pipeline_policy.cpp
-        ${CMAKE_SOURCE_DIR}/src/service/impl/media/capture_fps_pipeline_policy.cpp)
+        ${CMAKE_SOURCE_DIR}/src/service/impl/media/policy/capture_fps_pipeline_policy.cpp)
 target_include_directories(test_capture_fps_pipeline_policy PRIVATE
     ${CMAKE_SOURCE_DIR}/src/service/impl)
 
@@ -131,7 +131,7 @@ add_rflow_unit_test(test_builtin_video_decoder_recovery
         unit/test_builtin_video_decoder_recovery.cpp
         ${CMAKE_SOURCE_DIR}/src/core/rtc/shims/builtin_video_decoder_recovery.cpp
         ${CMAKE_SOURCE_DIR}/src/core/runtime/runtime_knobs.cpp
-        ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp
+        ${CMAKE_SOURCE_DIR}/src/common/log/logger.cpp
         ${CMAKE_SOURCE_DIR}/src/core/rtc/shims/sme_abi_stubs.c)
 target_include_directories(test_builtin_video_decoder_recovery PRIVATE
     ${CMAKE_SOURCE_DIR}/src/core
@@ -147,7 +147,7 @@ target_link_libraries(test_builtin_video_decoder_recovery PRIVATE rflow_webrtc_p
 add_rflow_unit_test(test_last_error
     SOURCES
         unit/test_last_error.cpp
-        ${CMAKE_SOURCE_DIR}/src/common/base/last_error.cpp)
+        ${CMAKE_SOURCE_DIR}/src/common/log/last_error.cpp)
 
 # -------------------------------------------------------------------- core/thread
 # thread_pool.cpp 依赖 RFLOW_CORE_LOGI → ::rflow::logf；与 runtime_knobs 同款做法。
@@ -155,7 +155,7 @@ add_rflow_unit_test(test_thread_pool
     SOURCES
         unit/test_thread_pool.cpp
         ${CMAKE_SOURCE_DIR}/src/core/thread/thread_pool.cpp
-        ${CMAKE_SOURCE_DIR}/src/common/base/logger.cpp)
+        ${CMAKE_SOURCE_DIR}/src/common/log/logger.cpp)
 
 # -------------------------------------------------------------------- ABI checks (Python, no linkage)
 add_test(

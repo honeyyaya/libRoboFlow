@@ -13,13 +13,15 @@ namespace rflow::client::internal {
 
 std::shared_ptr<librflow_stream_s> FindStreamByHandleLocked(State& state,
                                                             librflow_stream_handle_t handle) {
-    return rflow::common::base::LookupSharedFromMap(state.streams, handle);
+    return rflow::common::base::FindStreamByHandleLocked(state, handle);
 }
 
 void MarkStreamClosed(const std::shared_ptr<librflow_stream_s>& stream,
                       librflow_stream_handle_t handle) {
-    rflow::common::base::EmitStreamStateChange(*stream, handle, RFLOW_STREAM_CLOSED, RFLOW_OK);
-    stream->magic = 0;
+    if (!stream) {
+        return;
+    }
+    rflow::common::base::MarkStreamClosed(*stream, handle);
 }
 
 rflow_err_t ValidateConnectTransitionLocked(const State& state) {

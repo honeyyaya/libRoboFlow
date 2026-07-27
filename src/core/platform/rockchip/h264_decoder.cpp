@@ -6,6 +6,8 @@
 #include <atomic>
 #include <string>
 
+#include "base/buffer_shrink_utils.h"
+#include "base/media_timing_trace.h"
 #include "public/log_tagged.h"
 
 #include "api/video/i420_buffer.h"
@@ -27,50 +29,16 @@
 
 namespace rflow::rtc::hw::rockchip_mpp {
 
+using rflow::common::util::MaybeShrinkVectorToLiveBytes;
+
 namespace {
 
 int DecodePollTimeoutMs() {
     return 5;
 }
 
-bool MediaTimingTraceEnabled() {
-    static const bool enabled = []() {
-        const char* v = std::getenv("RFLOW_MEDIA_TIMING_TRACE");
-        return v && v[0] == '1';
-    }();
-    return enabled;
-}
-
-unsigned MediaTimingTraceEveryN() {
-    static const unsigned every_n = []() {
-        const char* v = std::getenv("RFLOW_MEDIA_TIMING_TRACE_EVERY_N");
-        if (v) {
-            const int n = std::atoi(v);
-            if (n >= 1 && n <= 600) {
-                return static_cast<unsigned>(n);
-            }
-        }
-        return 30u;
-    }();
-    return every_n;
-}
-
-void MaybeShrinkBitstreamCopy(std::vector<uint8_t>* buf, size_t current_bytes, unsigned tick) {
-    if (!buf) {
-        return;
-    }
-    if ((tick % 240u) != 0u) {
-        return;
-    }
-    if (buf->capacity() <= (2 * 1024 * 1024) || current_bytes > (256 * 1024)) {
-        return;
-    }
-    std::vector<uint8_t> compact(current_bytes);
-    if (current_bytes > 0) {
-        std::memcpy(compact.data(), buf->data(), current_bytes);
-    }
-    buf->swap(compact);
-}
+using rflow::common::base::MediaTimingTraceEnabled;
+using rflow::common::base::MediaTimingTraceEveryN;
 
 }  // namespace
 
@@ -332,7 +300,8 @@ int32_t H264Decoder::Decode(const webrtc::EncodedImage& input_image, bool /*miss
 
     while (TryDrainOneDecodedFrame(render_time_ms, input_image)) {
     }
-    MaybeShrinkBitstreamCopy(&bitstream_copy_, len + 64, decode_calls);
+    MaybeShrinkVectorToLiveBytes(&bitstream_copy_, decode_calls, 240, 2 * 1024 * 1024, 256 * 1024,
+                                 len + 64);
     return WEBRTC_VIDEO_CODEC_OK;
 }
 

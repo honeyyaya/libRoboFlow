@@ -1,27 +1,23 @@
 #include "rflow/librflow_common.h"
 
+#include "abi/object_access_ops.h"
 #include "abi/object_layouts.h"
 #include "base/abi_string_copy.h"
-
-#include <new>
 
 extern "C" {
 
 librflow_global_config_t librflow_global_config_create(void) {
-    auto* config_obj = new (std::nothrow) librflow_global_config_s();
-    if (!config_obj) return nullptr;
-    config_obj->magic = rflow::kMagicGlobalConfig;
-    config_obj->has_log = false;
-    config_obj->has_signal = false;
-    config_obj->has_license = false;
-    config_obj->region = RFLOW_REGION_CN;
-    return config_obj;
+    return rflow::common::abi::CreateMagicObject<librflow_global_config_s>(
+        rflow::kMagicGlobalConfig, [](librflow_global_config_s& config_obj) {
+            config_obj.has_log = false;
+            config_obj.has_signal = false;
+            config_obj.has_license = false;
+            config_obj.region = RFLOW_REGION_CN;
+        });
 }
 
 void librflow_global_config_destroy(librflow_global_config_t config_obj) {
-    if (!config_obj || config_obj->magic != rflow::kMagicGlobalConfig) return;
-    config_obj->magic = 0;
-    delete config_obj;
+    rflow::common::abi::DestroyMagicObject(config_obj, rflow::kMagicGlobalConfig);
 }
 
 rflow_err_t librflow_global_config_set_log(librflow_global_config_t config_obj,

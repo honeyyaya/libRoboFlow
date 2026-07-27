@@ -1,6 +1,6 @@
 set(SERVICE_SOURCES
-    api_handles.cpp
-    api_stream_objects.cpp
+    api/api_handles.cpp
+    api/api_stream_objects.cpp
     lifecycle.cpp
     stream.cpp
     internal/stream_startup_policy.cpp

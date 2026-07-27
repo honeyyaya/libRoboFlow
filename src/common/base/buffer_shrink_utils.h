@@ -1,0 +1,4 @@
+#ifndef __RFLOW_COMMON_BASE_BUFFER_SHRINK_UTILS_H__
+#define __RFLOW_COMMON_BASE_BUFFER_SHRINK_UTILS_H__
+#include "util/buffer_shrink_utils.h"
+#endif

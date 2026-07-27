@@ -1,0 +1,4 @@
+#ifndef __RFLOW_CORE_RTC_PEER_CONNECTION_STATE_MAP_H__
+#define __RFLOW_CORE_RTC_PEER_CONNECTION_STATE_MAP_H__
+#include "rtc/session/peer_connection_state_map.h"
+#endif

@@ -1,22 +1,16 @@
 #include "rflow/librflow_common.h"
 
+#include "abi/object_access_ops.h"
 #include "abi/object_layouts.h"
-
-#include <new>
 
 extern "C" {
 
 librflow_license_config_t librflow_license_config_create(void) {
-    auto* config_obj = new (std::nothrow) librflow_license_config_s();
-    if (!config_obj) return nullptr;
-    config_obj->magic = rflow::kMagicLicenseConfig;
-    return config_obj;
+    return rflow::common::abi::CreateMagicObject<librflow_license_config_s>(rflow::kMagicLicenseConfig);
 }
 
 void librflow_license_config_destroy(librflow_license_config_t config_obj) {
-    if (!config_obj || config_obj->magic != rflow::kMagicLicenseConfig) return;
-    config_obj->magic = 0;
-    delete config_obj;
+    rflow::common::abi::DestroyMagicObject(config_obj, rflow::kMagicLicenseConfig);
 }
 
 rflow_err_t librflow_license_config_set_file(librflow_license_config_t config_obj, const char* path) {

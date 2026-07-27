@@ -1,0 +1,148 @@
+/**
+ * @file   rtc_stream_session.h
+ * @brief  Single rtc stream session for client pull-side playback
+ */
+
+#ifndef __RFLOW_CLIENT_RTC_RTC_STREAM_SESSION_H__
+#define __RFLOW_CLIENT_RTC_RTC_STREAM_SESSION_H__
+
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "rflow/librflow_common.h"
+#include "rtc/pending_ice_buffer.h"
+#include "rtc/rtc_ice_config.h"
+#include "rtc/rtc_session_common.h"
+#include "signal/session.h"
+
+#include "api/jsep.h"
+#include "api/media_stream_interface.h"
+#include "api/peer_connection_interface.h"
+#include "api/scoped_refptr.h"
+#include "api/set_remote_description_observer_interface.h"
+#include "api/stats/rtc_stats_collector_callback.h"
+#include "api/stats/rtc_stats_report.h"
+#include "api/stats/rtcstats_objects.h"
+#include "api/video/video_frame.h"
+#include "api/video/video_sink_interface.h"
+
+struct librflow_stream_stats_s;
+
+namespace rflow::client::impl {
+
+class RtcStreamSession : public std::enable_shared_from_this<RtcStreamSession>,
+                         private rflow::signal::SessionDelegate {
+ public:
+    using FrameSink = std::function<void(const webrtc::VideoFrame& frame)>;
+    using StateSink = std::function<void(rflow_stream_state_t state, rflow_err_t reason)>;
+
+    RtcStreamSession(int32_t index,
+                     webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory,
+                     std::string signaling_url,
+                     std::string device_id,
+                     rflow::rtc::IceRtcServerConfig ice_config);
+    ~RtcStreamSession();
+
+    RtcStreamSession(const RtcStreamSession&) = delete;
+    RtcStreamSession& operator=(const RtcStreamSession&) = delete;
+
+    int32_t index() const { return index_; }
+
+    void SetFrameSink(FrameSink sink);
+    void SetStateSink(StateSink sink);
+    bool Start();
+    void Close();
+    bool CollectStats(librflow_stream_stats_s* out_stats);
+
+ private:
+    class PeerConnectionObserverImpl;
+    class FrameAdapter;
+    friend class PeerConnectionObserverImpl;
+
+    void OnSignalMessage(const rflow::signal::Message& msg) override;
+    void OnSignalError(std::string_view error) override;
+
+    void HandleOffer(const std::string& sdp);
+    void HandleRemoteIceCandidate(const std::string& mid, int mline_index,
+                                  const std::string& candidate);
+
+    void CreatePeerConnectionLocked();
+    bool RunOnPeerConnectionSignalingThread(const std::function<void()>& task);
+    void DoCreateAnswerAfterSetRemote();
+    void AddRemoteIceCandidateNow(const std::string& mid, int mline_index,
+                                  const std::string& candidate);
+    void FlushPendingRemoteIceCandidates();
+    void EmitState(rflow_stream_state_t state, rflow_err_t reason);
+
+    void StartWatchdogThread();
+    void StopWatchdogThread();
+    void RunWatchdogLoop();
+    void TickWatchdog();
+    void OnWatchdogStats(const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report);
+    void KickJitterBufferForKeyframe();
+
+    const int32_t index_;
+    const std::string signaling_url_;
+    const std::string device_id_;
+    const rflow::rtc::IceRtcServerConfig ice_config_;
+
+    webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory_;
+
+    std::unique_ptr<rflow::signal::Session> signaling_;
+    std::unique_ptr<PeerConnectionObserverImpl> observer_;
+    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
+    std::unique_ptr<FrameAdapter> frame_adapter_;
+    webrtc::scoped_refptr<webrtc::VideoTrackInterface> current_video_track_;
+
+    webrtc::scoped_refptr<webrtc::SetRemoteDescriptionObserverInterface> pending_set_remote_observer_;
+    webrtc::scoped_refptr<webrtc::CreateSessionDescriptionObserver> pending_create_answer_observer_;
+    webrtc::scoped_refptr<webrtc::SetSessionDescriptionObserver> pending_set_local_observer_;
+
+    rflow::core::rtc::PendingIceBuffer pending_ice_buffer_;
+
+    std::atomic<int32_t> stream_state_{RFLOW_STREAM_IDLE};
+    std::atomic<bool> closed_{false};
+
+    std::atomic<double> jitter_min_delay_seconds_{0.02};
+
+    std::thread             stats_thread_;
+    std::atomic<bool>       stats_running_{false};
+    std::condition_variable stats_cv_;
+    std::mutex              stats_cv_mu_;
+    bool                    watchdog_enabled_               = true;
+    int64_t                 watchdog_stuck_threshold_ms_  = 300;
+    int64_t                 watchdog_cooldown_ms_         = 600;
+
+    uint64_t prev_frames_decoded_           = 0;
+    uint64_t prev_packets_received_         = 0;
+    int64_t   last_decode_progress_mono_ms_ = 0;
+    int64_t   last_keyframe_kick_mono_ms_   = 0;
+    uint64_t last_keyframe_kick_packets_    = 0;
+
+    bool        stats_log_baseline_done_        = false;
+    uint64_t    prev_frames_dropped_             = 0;
+    double      prev_total_decode_time_s_       = 0.0;
+    double      prev_total_processing_delay_s_  = 0.0;
+    double      prev_total_assembly_time_s_     = 0.0;
+    std::string last_codec_fmtp_;
+    std::string last_codec_mime_;
+    uint32_t    last_codec_payload_type_        = 0;
+
+    std::mutex stats_bitrate_mu_;
+    rflow::core::rtc::InboundBitrateTracker inbound_bitrate_;
+
+    std::mutex mu_;
+    FrameSink frame_sink_;
+    StateSink state_sink_;
+};
+
+}  // namespace rflow::client::impl
+
+#endif  // __RFLOW_CLIENT_RTC_RTC_STREAM_SESSION_H__

@@ -16,8 +16,7 @@
 
 #if defined(RFLOW_HAVE_ROCKCHIP_MPP)
 #include "platform/rockchip/backend_capabilities.h"
-#include "platform/rockchip/video_decoder_factory.h"
-#include "platform/rockchip/video_encoder_factory.h"
+#include "platform/rockchip/video_codec_factory.h"
 #endif
 
 namespace rflow::rtc::hw {
